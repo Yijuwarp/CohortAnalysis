@@ -16,8 +16,41 @@ class ColumnMappingRequest(BaseModel):
     event_time_column: str
 
 
+class CreateCohortRequest(BaseModel):
+    name: str
+    event_name: str
+    min_event_count: int
+
+
 def get_connection() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(str(DATABASE_PATH))
+
+
+def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cohorts (
+            cohort_id INTEGER PRIMARY KEY,
+            name TEXT,
+            event_name TEXT,
+            min_event_count INTEGER
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE SEQUENCE IF NOT EXISTS cohorts_id_sequence START 1
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cohort_membership (
+            user_id TEXT,
+            cohort_id INTEGER,
+            join_time TIMESTAMP
+        )
+        """
+    )
 
 
 def quote_identifier(identifier: str) -> str:
@@ -125,3 +158,56 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         connection.close()
 
     return {"status": "normalized", "row_count": int(row_count)}
+
+
+@app.post("/cohorts")
+def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
+    if payload.min_event_count < 1:
+        raise HTTPException(status_code=400, detail="min_event_count must be at least 1")
+
+    connection = get_connection()
+    try:
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()
+        if not normalized_exists or normalized_exists[0] == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="No normalized events found. Upload a CSV and map columns first.",
+            )
+
+        ensure_cohort_tables(connection)
+
+        cohort_id = connection.execute(
+            """
+            INSERT INTO cohorts (cohort_id, name, event_name, min_event_count)
+            VALUES (nextval('cohorts_id_sequence'), ?, ?, ?)
+            RETURNING cohort_id
+            """,
+            [payload.name, payload.event_name, payload.min_event_count],
+        ).fetchone()[0]
+
+        users_joined = connection.execute(
+            """
+            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+            WITH ranked_events AS (
+                SELECT
+                    user_id,
+                    event_time,
+                    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS event_rank
+                FROM events_normalized
+                WHERE event_name = ?
+            )
+            SELECT
+                user_id,
+                ?,
+                event_time
+            FROM ranked_events
+            WHERE event_rank = ?
+            """,
+            [payload.event_name, cohort_id, payload.min_event_count],
+        ).rowcount
+    finally:
+        connection.close()
+
+    return {"cohort_id": int(cohort_id), "users_joined": int(users_joined)}
