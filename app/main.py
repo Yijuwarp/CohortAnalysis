@@ -2,7 +2,7 @@ from pathlib import Path
 
 import duckdb
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
 app = FastAPI(title="Behavioral Cohort Analysis API")
@@ -220,3 +220,86 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
         connection.close()
 
     return {"cohort_id": int(cohort_id), "users_joined": int(users_joined)}
+
+
+@app.get("/retention")
+def get_retention(max_day: int = Query(7, ge=0)) -> dict[str, int | list[dict[str, object]]]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+
+        cohorts = connection.execute(
+            """
+            SELECT cohort_id, name
+            FROM cohorts
+            ORDER BY cohort_id
+            """
+        ).fetchall()
+        if not cohorts:
+            return {"max_day": int(max_day), "retention_table": []}
+
+        cohort_sizes = {
+            row[0]: int(row[1])
+            for row in connection.execute(
+                """
+                SELECT c.cohort_id, COUNT(cm.user_id) AS cohort_size
+                FROM cohorts c
+                LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
+                GROUP BY c.cohort_id
+                """
+            ).fetchall()
+        }
+
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()[0]
+
+        active_by_day: dict[tuple[int, int], int] = {}
+        if normalized_exists:
+            active_rows = connection.execute(
+                """
+                WITH activity_deltas AS (
+                    SELECT
+                        cm.cohort_id,
+                        cm.user_id,
+                        DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE) AS day_number
+                    FROM cohort_membership cm
+                    JOIN events_normalized e ON cm.user_id = e.user_id
+                    WHERE DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE) BETWEEN 0 AND ?
+                )
+                SELECT
+                    cohort_id,
+                    day_number,
+                    COUNT(DISTINCT user_id) AS active_users
+                FROM activity_deltas
+                GROUP BY cohort_id, day_number
+                """,
+                [max_day],
+            ).fetchall()
+
+            active_by_day = {
+                (int(cohort_id), int(day_number)): int(active_users)
+                for cohort_id, day_number, active_users in active_rows
+            }
+
+        retention_table = []
+        for cohort_id, cohort_name in cohorts:
+            cohort_size = cohort_sizes.get(cohort_id, 0)
+            retention = {}
+            for day_number in range(max_day + 1):
+                active_users = active_by_day.get((cohort_id, day_number), 0)
+                percent = (active_users / cohort_size * 100.0) if cohort_size > 0 else 0.0
+                retention[str(day_number)] = float(percent)
+
+            retention_table.append(
+                {
+                    "cohort_id": int(cohort_id),
+                    "cohort_name": str(cohort_name),
+                    "size": int(cohort_size),
+                    "retention": retention,
+                }
+            )
+
+        return {"max_day": int(max_day), "retention_table": retention_table}
+    finally:
+        connection.close()
