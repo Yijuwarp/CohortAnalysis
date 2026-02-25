@@ -1,0 +1,75 @@
+:root {
+  font-family: Inter, system-ui, sans-serif;
+  color: #111827;
+  background: #f3f4f6;
+}
+
+body {
+  margin: 0;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 24px;
+}
+
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+
+input,
+select,
+button {
+  padding: 8px;
+  font-size: 14px;
+}
+
+button {
+  cursor: pointer;
+}
+
+.inline-controls {
+  display: flex;
+  align-items: end;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+.success {
+  color: #047857;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+th,
+td {
+  border: 1px solid #e5e7eb;
+  padding: 8px;
+  text-align: left;
+}

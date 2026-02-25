@@ -3,9 +3,18 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 app = FastAPI(title="Behavioral Cohort Analysis API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "cohort_analysis.duckdb"
 

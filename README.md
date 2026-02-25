@@ -1,58 +1,80 @@
-# CohortAnalysis Backend API
+# Cohort Analysis (Full Stack)
 
-This repository contains the initial FastAPI backend setup for the behavioral cohort analysis tool.
+This repository contains a full-stack cohort analysis app:
+
+- **Backend**: FastAPI + DuckDB analytics engine
+- **Frontend**: React + Vite UI for upload, mapping, cohort creation, and retention visualization
 
 ## Project Structure
 
 ```text
-.
-├── app/
-│   ├── __init__.py
-│   ├── main.py
-│   ├── models/
-│   │   └── __init__.py
-│   ├── routers/
-│   │   └── __init__.py
-│   ├── schemas/
-│   │   └── __init__.py
-│   └── services/
-│       └── __init__.py
-├── requirements.txt
+cohort-analysis/
+├── backend/
+│   ├── app/
+│   ├── tests/
+│   ├── requirements.txt
+│   └── main.py
+├── frontend/
+│   ├── package.json
+│   ├── vite.config.js
+│   ├── src/
+│   │   ├── App.jsx
+│   │   ├── api.js
+│   │   └── components/
+│   │       ├── Upload.jsx
+│   │       ├── Mapping.jsx
+│   │       ├── CohortForm.jsx
+│   │       └── RetentionTable.jsx
+│   └── index.html
 └── README.md
 ```
 
-## Setup
-
-1. (Optional) Create and activate a virtual environment.
-2. Install dependencies:
+## Backend Setup
 
 ```bash
+cd backend
+python -m venv venv
+# Windows:
+venv\Scripts\activate
+# macOS/Linux:
+# source venv/bin/activate
 pip install -r requirements.txt
-```
-
-## Run the Development Server
-
-Start the API with:
-
-```bash
 uvicorn app.main:app --reload
 ```
 
-The root endpoint is available at `[GET /](http://127.0.0.1:8000/docs)` and returns:
+Backend runs on **http://127.0.0.1:8000**.
 
-```json
-{"status": "ok"}
+## Frontend Setup
+
+```bash
+cd frontend
+npm install
+npm run dev
 ```
+
+Frontend runs on **http://localhost:5173**.
+
+## CORS / Integration
+
+The backend enables CORS for `http://localhost:5173` so the Vite app can call FastAPI endpoints from the browser.
 
 ## API Endpoints
 
-- `POST /upload`: Upload raw CSV event data into the `events` table.
-- `POST /map-columns`: Map uploaded columns to `user_id`, `event_name`, and `event_time` and create `events_normalized`.
-- `POST /cohorts`: Create cohort definitions and persist user membership rows in `cohort_membership`.
-- `GET /retention`: Compute dynamic cohort retention from `events_normalized` and `cohort_membership` for day buckets `0..max_day` (default `7`).
+- `POST /upload`
+- `POST /map-columns`
+- `POST /cohorts`
+- `GET /retention?max_day=7`
 
-Example:
+## End-to-End Flow
+
+1. Upload CSV in the frontend.
+2. Map CSV columns to user/event/time.
+3. Create cohort rules.
+4. Load retention table for dynamic day columns (`D0..Dn`).
+
+## Run Backend Tests
 
 ```bash
-curl "http://127.0.0.1:8000/retention?max_day=7"
+cd backend
+pytest
 ```
