@@ -69,7 +69,11 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, int | list[str]]
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
     try:
-        dataframe = pd.read_csv(file.file, keep_default_na=False)
+        dataframe = pd.read_csv(
+            file.file,
+            keep_default_na=False,
+            na_values=[""],
+        )
     except Exception as exc:  # pragma: no cover - defensive parsing guard
         raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
     finally:
