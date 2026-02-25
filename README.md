@@ -38,7 +38,7 @@ Start the API with:
 uvicorn app.main:app --reload
 ```
 
-The root endpoint is available at `GET /` and returns:
+The root endpoint is available at `[GET /](http://127.0.0.1:8000/docs)` and returns:
 
 ```json
 {"status": "ok"}
