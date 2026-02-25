@@ -96,3 +96,31 @@ def test_mapping_stores_extra_columns_in_raw_data_json(
         "plan": "free",
         "region": "NA",
     }, f"raw_data should contain only unmapped columns; got {parsed}"
+
+
+def test_mapping_allows_empty_timestamp_cells_as_null(
+    client: TestClient,
+    db_connection,
+) -> None:
+    csv_text = (
+        "uid,event,timestamp,plan,region\n"
+        "u1,signup,,free,NA\n"
+        "u2,click,2024-01-02 11:00:00,pro,EU\n"
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, f"Precondition failed: upload endpoint returned {upload.text}"
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    event_time = db_connection.execute(
+        "SELECT event_time FROM events_normalized WHERE user_id = 'u1'"
+    ).fetchone()[0]
+    assert event_time is None, "Blank timestamp cells should be ingested as NULL"

@@ -69,7 +69,11 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, int | list[str]]
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
     try:
-        dataframe = pd.read_csv(file.file)
+        dataframe = pd.read_csv(
+            file.file,
+            keep_default_na=False,
+            na_values=[""],
+        )
     except Exception as exc:  # pragma: no cover - defensive parsing guard
         raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
     finally:
@@ -187,7 +191,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
             [payload.name, payload.event_name, payload.min_event_count],
         ).fetchone()[0]
 
-        users_joined = connection.execute(
+        connection.execute(
             """
             INSERT INTO cohort_membership (user_id, cohort_id, join_time)
             WITH ranked_events AS (
@@ -206,7 +210,12 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
             WHERE event_rank = ?
             """,
             [payload.event_name, cohort_id, payload.min_event_count],
-        ).rowcount
+        )
+
+        users_joined = connection.execute(
+            "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()[0]
     finally:
         connection.close()
 
