@@ -43,3 +43,16 @@ The root endpoint is available at `[GET /](http://127.0.0.1:8000/docs)` and retu
 ```json
 {"status": "ok"}
 ```
+
+## API Endpoints
+
+- `POST /upload`: Upload raw CSV event data into the `events` table.
+- `POST /map-columns`: Map uploaded columns to `user_id`, `event_name`, and `event_time` and create `events_normalized`.
+- `POST /cohorts`: Create cohort definitions and persist user membership rows in `cohort_membership`.
+- `GET /retention`: Compute dynamic cohort retention from `events_normalized` and `cohort_membership` for day buckets `0..max_day` (default `7`).
+
+Example:
+
+```bash
+curl "http://127.0.0.1:8000/retention?max_day=7"
+```
