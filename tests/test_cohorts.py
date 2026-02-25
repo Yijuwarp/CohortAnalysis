@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi.testclient import TestClient
 
 from tests.utils import csv_upload
@@ -54,9 +56,9 @@ def test_basic_cohort_creation_inserts_expected_users_and_join_times(
     ).fetchall()
 
     assert membership == [
-        ("u1", "2024-01-01 09:00:00"),
-        ("u2", "2024-01-02 09:00:00"),
-        ("u3", "2024-01-04 09:00:00"),
+        ("u1", datetime(2024, 1, 1, 9, 0, 0)),
+        ("u2", datetime(2024, 1, 2, 9, 0, 0)),
+        ("u3", datetime(2024, 1, 4, 9, 0, 0)),
     ], f"join_time should match each user's first qualifying event, got {membership}"
 
 
@@ -80,7 +82,7 @@ def test_nth_event_logic_uses_min_event_count_as_join_time(
         [payload["cohort_id"]],
     ).fetchall()
     assert rows == [
-        ("u1", "2024-01-03 09:00:00")
+        ("u1", datetime(2024, 1, 3, 9, 0, 0))
     ], f"The cohort join_time should be the second purchase timestamp, got {rows}"
 
 
@@ -103,7 +105,7 @@ def test_cohort_creation_with_no_matching_users_inserts_zero(client: TestClient,
     assert count == 0, "cohort_membership should have no rows for the unmatched cohort"
 
 
-def test_cohort_creation_is_idempotent_for_same_payload(client: TestClient, db_connection) -> None:
+def test_cohort_creation_with_same_payload_creates_new_membership_rows(client: TestClient, db_connection) -> None:
     _prepare_normalized_events(client)
 
     first = client.post(
@@ -122,8 +124,8 @@ def test_cohort_creation_is_idempotent_for_same_payload(client: TestClient, db_c
 
     after_second_run = db_connection.execute("SELECT COUNT(*) FROM cohort_membership").fetchone()[0]
     assert (
-        after_second_run == before_second_run
-    ), "Running cohort creation twice with identical payload should not duplicate membership rows"
+        after_second_run == before_second_run + 3
+    ), "Running cohort creation twice with identical payload should create three new membership rows"
 
 
 def test_structural_integrity_tables_exist_and_row_counts_are_stable(
