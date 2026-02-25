@@ -51,6 +51,15 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cohort_activity_snapshot (
+            cohort_id INTEGER,
+            user_id TEXT,
+            event_time TIMESTAMP
+        )
+        """
+    )
 
 
 def quote_identifier(identifier: str) -> str:
@@ -212,6 +221,21 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
             [payload.event_name, cohort_id, payload.min_event_count],
         )
 
+        connection.execute(
+            """
+            INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time)
+            SELECT
+                ?,
+                e.user_id,
+                e.event_time
+            FROM events_normalized e
+            JOIN cohort_membership cm
+                ON cm.user_id = e.user_id
+               AND cm.cohort_id = ?
+            """,
+            [cohort_id, cohort_id],
+        )
+
         users_joined = connection.execute(
             "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
             [cohort_id],
@@ -250,37 +274,34 @@ def get_retention(max_day: int = Query(7, ge=0)) -> dict[str, int | list[dict[st
             ).fetchall()
         }
 
-        normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
-        ).fetchone()[0]
-
         active_by_day: dict[tuple[int, int], int] = {}
-        if normalized_exists:
-            active_rows = connection.execute(
-                """
-                WITH activity_deltas AS (
-                    SELECT
-                        cm.cohort_id,
-                        cm.user_id,
-                        DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE) AS day_number
-                    FROM cohort_membership cm
-                    JOIN events_normalized e ON cm.user_id = e.user_id
-                    WHERE DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE) BETWEEN 0 AND ?
-                )
+        active_rows = connection.execute(
+            """
+            WITH activity_deltas AS (
                 SELECT
-                    cohort_id,
-                    day_number,
-                    COUNT(DISTINCT user_id) AS active_users
-                FROM activity_deltas
-                GROUP BY cohort_id, day_number
-                """,
-                [max_day],
-            ).fetchall()
+                    cm.cohort_id,
+                    cm.user_id,
+                    DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
+                FROM cohort_membership cm
+                JOIN cohort_activity_snapshot cas
+                  ON cm.cohort_id = cas.cohort_id
+                 AND cm.user_id = cas.user_id
+                WHERE DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
+            )
+            SELECT
+                cohort_id,
+                day_number,
+                COUNT(DISTINCT user_id) AS active_users
+            FROM activity_deltas
+            GROUP BY cohort_id, day_number
+            """,
+            [max_day],
+        ).fetchall()
 
-            active_by_day = {
-                (int(cohort_id), int(day_number)): int(active_users)
-                for cohort_id, day_number, active_users in active_rows
-            }
+        active_by_day = {
+            (int(cohort_id), int(day_number)): int(active_users)
+            for cohort_id, day_number, active_users in active_rows
+        }
 
         retention_table = []
         for cohort_id, cohort_name in cohorts:

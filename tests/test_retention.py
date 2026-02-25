@@ -110,3 +110,41 @@ def test_retention_returns_empty_when_no_cohorts_exist(client: TestClient) -> No
 
     assert response.status_code == 200, response.text
     assert response.json() == {"max_day": 7, "retention_table": []}
+
+
+def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
+    _prepare_events(client)
+
+    cohort = client.post(
+        "/cohorts",
+        json={"name": "signup_once", "event_name": "signup", "min_event_count": 1},
+    )
+    assert cohort.status_code == 200, cohort.text
+
+    baseline = client.get("/retention?max_day=2")
+    assert baseline.status_code == 200, baseline.text
+    baseline_row = baseline.json()["retention_table"][0]
+    assert baseline_row["retention"] == {"0": 100.0, "1": 50.0, "2": 100.0}
+
+    replacement_csv = (
+        "user_id,event_name,event_time\n"
+        "z1,signup,2024-02-01 09:00:00\n"
+        "z1,open,2024-02-02 09:00:00\n"
+    )
+    upload = csv_upload(client, csv_text=replacement_csv)
+    assert upload.status_code == 200, upload.text
+
+    remap = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert remap.status_code == 200, remap.text
+
+    response = client.get("/retention?max_day=2")
+    assert response.status_code == 200, response.text
+    row = response.json()["retention_table"][0]
+    assert row["retention"] == {"0": 100.0, "1": 50.0, "2": 100.0}
