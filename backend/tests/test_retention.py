@@ -138,7 +138,11 @@ def test_retention_returns_empty_when_no_cohorts_exist(client: TestClient) -> No
     response = client.get("/retention")
 
     assert response.status_code == 200, response.text
-    assert response.json() == {"max_day": 7, "retention_table": []}
+    assert response.json() == {
+        "max_day": 7,
+        "retention_event": "any",
+        "retention_table": [],
+        }
 
 
 def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
