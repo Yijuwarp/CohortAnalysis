@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { createCohort } from '../api'
+import { useEffect, useState } from 'react'
+import { createCohort, deleteCohort, getRetention } from '../api'
 
-export default function CohortForm() {
+export default function CohortForm({ onCohortsChanged }) {
   const [payload, setPayload] = useState({
     name: '',
     event_name: '',
@@ -10,6 +10,21 @@ export default function CohortForm() {
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
+  const [cohorts, setCohorts] = useState([])
+  const [deletingId, setDeletingId] = useState(null)
+
+  const loadCohorts = async () => {
+    try {
+      const response = await getRetention(0)
+      setCohorts(response.retention_table.map((row) => ({ cohort_id: row.cohort_id, cohort_name: row.cohort_name })))
+    } catch {
+      setCohorts([])
+    }
+  }
+
+  useEffect(() => {
+    loadCohorts()
+  }, [])
 
   const handleSubmit = async () => {
     setLoading(true)
@@ -22,10 +37,28 @@ export default function CohortForm() {
         min_event_count: Number(payload.min_event_count),
       })
       setResult(data)
+      await loadCohorts()
+      onCohortsChanged()
     } catch (err) {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDelete = async (cohortId) => {
+    setDeletingId(cohortId)
+    setError('')
+    setResult(null)
+
+    try {
+      await deleteCohort(cohortId)
+      setCohorts((prev) => prev.filter((cohort) => cohort.cohort_id !== cohortId))
+      onCohortsChanged()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -57,6 +90,27 @@ export default function CohortForm() {
         <p className="success">
           Created cohort #{result.cohort_id} with {result.users_joined} users joined.
         </p>
+      )}
+
+      <h3>Existing Cohorts</h3>
+      {cohorts.length === 0 ? (
+        <p>No cohorts created yet.</p>
+      ) : (
+        <ul>
+          {cohorts.map((cohort) => (
+            <li key={cohort.cohort_id}>
+              {cohort.cohort_name}
+              <button
+                type="button"
+                onClick={() => handleDelete(cohort.cohort_id)}
+                disabled={deletingId === cohort.cohort_id}
+                style={{ marginLeft: '0.5rem' }}
+              >
+                {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
+              </button>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )

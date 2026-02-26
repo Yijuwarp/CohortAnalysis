@@ -255,6 +255,37 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
     return {"cohort_id": int(cohort_id), "users_joined": int(users_joined)}
 
 
+@app.delete("/cohorts/{cohort_id}")
+def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+
+        cohort_exists = connection.execute(
+            "SELECT 1 FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()
+        if cohort_exists is None:
+            raise HTTPException(status_code=404, detail="Cohort not found")
+
+        connection.execute(
+            "DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?",
+            [cohort_id],
+        )
+        connection.execute(
+            "DELETE FROM cohort_membership WHERE cohort_id = ?",
+            [cohort_id],
+        )
+        connection.execute(
+            "DELETE FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        )
+    finally:
+        connection.close()
+
+    return {"deleted": True, "cohort_id": int(cohort_id)}
+
+
 @app.get("/retention")
 def get_retention(max_day: int = Query(7, ge=0)) -> dict[str, int | list[dict[str, object]]]:
     connection = get_connection()

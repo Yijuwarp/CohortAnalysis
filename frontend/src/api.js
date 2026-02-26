@@ -38,6 +38,12 @@ export async function createCohort(payload) {
   })
 }
 
+export async function deleteCohort(cohortId) {
+  return request(`/cohorts/${cohortId}`, {
+    method: 'DELETE',
+  })
+}
+
 export async function getRetention(maxDay) {
   return request(`/retention?max_day=${maxDay}`, {
     method: 'GET',
