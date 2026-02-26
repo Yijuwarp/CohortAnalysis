@@ -159,7 +159,7 @@ def test_structural_integrity_tables_exist_and_row_counts_are_stable(
 
     assert events_count == 5, f"events row count changed unexpectedly: {events_count}"
     assert normalized_count == 5, f"events_normalized row count changed unexpectedly: {normalized_count}"
-    assert membership_count == 3, f"cohort_membership should have three rows for first-purchase cohort, got {membership_count}"
+    assert membership_count == 6, f"cohort_membership should include All Users and first-purchase rows, got {membership_count}"
 
 
 def test_delete_cohort_removes_related_rows_and_hides_it_from_retention(
@@ -187,7 +187,7 @@ def test_delete_cohort_removes_related_rows_and_hides_it_from_retention(
     assert delete_response.json() == {"deleted": True, "cohort_id": first_id}
 
     cohorts_remaining = db_connection.execute("SELECT cohort_id FROM cohorts ORDER BY cohort_id").fetchall()
-    assert cohorts_remaining == [(second_id,)]
+    assert cohorts_remaining == [(1,), (second_id,)]
 
     membership_count = db_connection.execute(
         "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
@@ -204,7 +204,7 @@ def test_delete_cohort_removes_related_rows_and_hides_it_from_retention(
     retention_response = client.get("/retention?max_day=3")
     assert retention_response.status_code == 200, retention_response.text
     cohort_ids_in_retention = [row["cohort_id"] for row in retention_response.json()["retention_table"]]
-    assert cohort_ids_in_retention == [second_id]
+    assert cohort_ids_in_retention == [1, second_id]
 
 
 def test_delete_cohort_returns_404_for_unknown_cohort(client: TestClient) -> None:
