@@ -44,8 +44,20 @@ export async function deleteCohort(cohortId) {
   })
 }
 
-export async function getRetention(maxDay) {
-  return request(`/retention?max_day=${maxDay}`, {
+export async function getRetention(maxDay, retentionEvent = 'any') {
+  let path = `/retention?max_day=${maxDay}`
+
+  if (retentionEvent !== 'any') {
+    path += `&retention_event=${encodeURIComponent(retentionEvent)}`
+  }
+
+  return request(path, {
+    method: 'GET',
+  })
+}
+
+export async function listEvents() {
+  return request('/events', {
     method: 'GET',
   })
 }
