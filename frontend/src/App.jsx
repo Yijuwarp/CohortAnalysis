@@ -3,6 +3,7 @@ import Upload from './components/Upload'
 import Mapping from './components/Mapping'
 import CohortForm from './components/CohortForm'
 import RetentionTable from './components/RetentionTable'
+import UsageTable from './components/UsageTable'
 
 export default function App() {
   const [columns, setColumns] = useState([])
@@ -19,6 +20,7 @@ export default function App() {
       <Mapping columns={columns} />
       <CohortForm onCohortsChanged={refreshRetention} />
       <RetentionTable refreshToken={retentionRefreshToken} />
+      <UsageTable refreshToken={retentionRefreshToken} />
     </main>
   )
 }

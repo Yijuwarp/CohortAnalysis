@@ -468,3 +468,117 @@ def list_events() -> dict[str, list[str]]:
         return {"events": [str(row[0]) for row in rows]}
     finally:
         connection.close()
+
+
+@app.get("/usage")
+def get_usage(
+    event: str = Query(...),
+    max_day: int = Query(7, ge=0),
+) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()
+        ensure_cohort_tables(connection)
+
+        empty_response = {
+            "max_day": int(max_day),
+            "event": event,
+            "usage_volume_table": [],
+            "usage_users_table": [],
+        }
+
+        if not normalized_exists or normalized_exists[0] == 0:
+            return empty_response
+
+        cohorts = connection.execute(
+            """
+            SELECT cohort_id, name
+            FROM cohorts
+            ORDER BY cohort_id
+            """
+        ).fetchall()
+        if not cohorts:
+            return empty_response
+
+        event_exists = connection.execute(
+            "SELECT 1 FROM events_normalized WHERE event_name = ? LIMIT 1",
+            [event],
+        ).fetchone()
+        if event_exists is None:
+            return empty_response
+
+        cohort_sizes = {
+            int(row[0]): int(row[1])
+            for row in connection.execute(
+                """
+                SELECT c.cohort_id, COUNT(cm.user_id) AS cohort_size
+                FROM cohorts c
+                LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
+                GROUP BY c.cohort_id
+                """
+            ).fetchall()
+        }
+
+        usage_rows = connection.execute(
+            """
+            WITH usage_deltas AS (
+                SELECT
+                    cm.cohort_id,
+                    cm.user_id,
+                    DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE) AS day_number
+                FROM cohort_membership cm
+                JOIN events_normalized e
+                  ON e.user_id = cm.user_id
+                WHERE e.event_name = ?
+                  AND DATE_DIFF('day', cm.join_time::DATE, e.event_time::DATE)
+                      BETWEEN 0 AND ?
+            )
+            SELECT
+                cohort_id,
+                day_number,
+                COUNT(*) AS total_events,
+                COUNT(DISTINCT user_id) AS distinct_users
+            FROM usage_deltas
+            GROUP BY cohort_id, day_number
+            """,
+            [event, max_day],
+        ).fetchall()
+
+        usage_by_day = {
+            (int(cohort_id), int(day_number)): {
+                "total_events": int(total_events),
+                "distinct_users": int(distinct_users),
+            }
+            for cohort_id, day_number, total_events, distinct_users in usage_rows
+        }
+
+        usage_volume_table = []
+        usage_users_table = []
+        for cohort_id, cohort_name in cohorts:
+            cohort_id = int(cohort_id)
+            cohort_size = cohort_sizes.get(cohort_id, 0)
+            volume_values = {}
+            user_values = {}
+            for day_number in range(max_day + 1):
+                bucket = usage_by_day.get((cohort_id, day_number), {})
+                volume_values[str(day_number)] = int(bucket.get("total_events", 0))
+                user_values[str(day_number)] = int(bucket.get("distinct_users", 0))
+
+            common_metadata = {
+                "cohort_id": cohort_id,
+                "cohort_name": str(cohort_name),
+                "size": int(cohort_size),
+            }
+            usage_volume_table.append({**common_metadata, "values": volume_values})
+            usage_users_table.append({**common_metadata, "values": user_values})
+
+        return {
+            "max_day": int(max_day),
+            "event": event,
+            "usage_volume_table": usage_volume_table,
+            "usage_users_table": usage_users_table,
+        }
+    finally:
+        connection.close()

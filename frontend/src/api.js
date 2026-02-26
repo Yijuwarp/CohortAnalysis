@@ -61,3 +61,10 @@ export async function listEvents() {
     method: 'GET',
   })
 }
+
+export async function getUsage(event, maxDay) {
+  return request(
+    `/usage?event=${encodeURIComponent(event)}&max_day=${maxDay}`,
+    { method: 'GET' }
+  )
+}
