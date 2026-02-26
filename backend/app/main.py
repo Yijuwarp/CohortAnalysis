@@ -71,6 +71,50 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
+    ensure_cohort_tables(connection)
+
+    existing = connection.execute("SELECT cohort_id FROM cohorts WHERE name = 'All Users'").fetchone()
+    if existing:
+        return
+
+    cohort_id = connection.execute(
+        """
+        INSERT INTO cohorts (cohort_id, name, event_name, min_event_count)
+        VALUES (nextval('cohorts_id_sequence'), 'All Users', '__all__', 1)
+        RETURNING cohort_id
+        """
+    ).fetchone()[0]
+
+    connection.execute(
+        """
+        INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+        SELECT
+            user_id,
+            ?,
+            MIN(event_time)
+        FROM events_normalized
+        GROUP BY user_id
+        """,
+        [cohort_id],
+    )
+
+    connection.execute(
+        """
+        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time)
+        SELECT
+            ?,
+            e.user_id,
+            e.event_time
+        FROM events_normalized e
+        JOIN cohort_membership cm
+          ON cm.user_id = e.user_id
+         AND cm.cohort_id = ?
+        """,
+        [cohort_id, cohort_id],
+    )
+
+
 def quote_identifier(identifier: str) -> str:
     escaped = identifier.replace('"', '""')
     return f'"{escaped}"'
@@ -172,6 +216,9 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             FROM events
             """
         )
+
+        ensure_cohort_tables(connection)
+        create_all_users_cohort(connection)
 
         row_count = connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0]
     except duckdb.ConversionException as exc:

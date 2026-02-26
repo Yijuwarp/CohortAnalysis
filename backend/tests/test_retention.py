@@ -46,9 +46,14 @@ def test_retention_basic_case_has_day_zero_and_expected_drop(client: TestClient)
 
     payload = response.json()
     assert payload["max_day"] == 7
-    assert len(payload["retention_table"]) == 1
 
-    row = payload["retention_table"][0]
+    by_name = {entry["cohort_name"]: entry for entry in payload["retention_table"]}
+    assert "All Users" in by_name
+    all_users = by_name["All Users"]
+    assert all_users["size"] == 3
+    assert all_users["retention"]["0"] == 100.0
+
+    row = by_name["signup_once"]
     assert row["cohort_name"] == "signup_once"
     assert row["size"] == 2
     assert row["retention"]["0"] == 100.0
@@ -76,7 +81,6 @@ def test_retention_handles_multiple_cohorts(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
     table = response.json()["retention_table"]
-    assert len(table) == 2
 
     by_name = {row["cohort_name"]: row for row in table}
 
@@ -100,9 +104,34 @@ def test_retention_respects_max_day_parameter(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
     payload = response.json()
-    row = payload["retention_table"][0]
+    by_name = {row["cohort_name"]: row for row in payload["retention_table"]}
+    row = by_name["signup_once"]
     assert payload["max_day"] == 1
     assert row["retention"] == {"0": 100.0, "1": 50.0}
+
+
+def test_map_columns_creates_all_users_only_once(client: TestClient) -> None:
+    _prepare_events(client)
+
+    remap = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert remap.status_code == 200, remap.text
+
+    response = client.get("/retention?max_day=1")
+    assert response.status_code == 200, response.text
+
+    all_users_rows = [
+        row for row in response.json()["retention_table"] if row["cohort_name"] == "All Users"
+    ]
+    assert len(all_users_rows) == 1
+    assert all_users_rows[0]["size"] == 3
+    assert all_users_rows[0]["retention"]["0"] == 100.0
 
 
 def test_retention_returns_empty_when_no_cohorts_exist(client: TestClient) -> None:
@@ -123,7 +152,9 @@ def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
 
     baseline = client.get("/retention?max_day=2")
     assert baseline.status_code == 200, baseline.text
-    baseline_row = baseline.json()["retention_table"][0]
+    baseline_row = {
+        row["cohort_name"]: row for row in baseline.json()["retention_table"]
+    }["signup_once"]
     assert baseline_row["retention"] == {"0": 100.0, "1": 50.0, "2": 100.0}
 
     replacement_csv = (
@@ -146,5 +177,5 @@ def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
 
     response = client.get("/retention?max_day=2")
     assert response.status_code == 200, response.text
-    row = response.json()["retention_table"][0]
+    row = {row["cohort_name"]: row for row in response.json()["retention_table"]}["signup_once"]
     assert row["retention"] == {"0": 100.0, "1": 50.0, "2": 100.0}
