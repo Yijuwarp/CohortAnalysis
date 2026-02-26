@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { getRetention } from '../api'
 
-export default function RetentionTable() {
+export default function RetentionTable({ refreshToken }) {
   const [maxDay, setMaxDay] = useState(7)
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
@@ -21,6 +21,10 @@ export default function RetentionTable() {
       setLoading(false)
     }
   }
+
+  useEffect(() => {
+    loadRetention()
+  }, [refreshToken])
 
   const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
 
