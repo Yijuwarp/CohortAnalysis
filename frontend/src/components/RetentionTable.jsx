@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
-import { getRetention } from '../api'
+import { getRetention, listEvents } from '../api'
 
 export default function RetentionTable({ refreshToken }) {
   const [maxDay, setMaxDay] = useState(7)
+  const [retentionEvent, setRetentionEvent] = useState('any')
+  const [events, setEvents] = useState([])
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -12,7 +14,7 @@ export default function RetentionTable({ refreshToken }) {
     setError('')
 
     try {
-      const response = await getRetention(Number(maxDay))
+      const response = await getRetention(Number(maxDay), retentionEvent)
       setData(response.retention_table)
     } catch (err) {
       setError(err.message)
@@ -22,9 +24,23 @@ export default function RetentionTable({ refreshToken }) {
     }
   }
 
+  const loadEvents = async () => {
+    try {
+      const response = await listEvents()
+      setEvents(response.events || [])
+    } catch {
+      setEvents([])
+    }
+  }
+
   useEffect(() => {
+    loadEvents()
     loadRetention()
   }, [refreshToken])
+
+  useEffect(() => {
+    loadRetention()
+  }, [retentionEvent])
 
   const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
 
@@ -35,6 +51,17 @@ export default function RetentionTable({ refreshToken }) {
         <label>
           Max Day
           <input type="number" min="0" value={maxDay} onChange={(e) => setMaxDay(e.target.value)} />
+        </label>
+        <label>
+          Retention Event
+          <select value={retentionEvent} onChange={(e) => setRetentionEvent(e.target.value)}>
+            <option value="any">Any Event</option>
+            {events.map((eventName) => (
+              <option key={eventName} value={eventName}>
+                {eventName}
+              </option>
+            ))}
+          </select>
         </label>
         <button onClick={loadRetention} disabled={loading}>{loading ? 'Loading...' : 'Load Retention'}</button>
       </div>
