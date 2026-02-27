@@ -4,7 +4,7 @@ import duckdb
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, field_validator
 
 app = FastAPI(title="Behavioral Cohort Analysis API")
 
@@ -25,10 +25,23 @@ class ColumnMappingRequest(BaseModel):
     event_time_column: str
 
 
-class CreateCohortRequest(BaseModel):
-    name: str
+class CohortCondition(BaseModel):
     event_name: str
-    min_event_count: int
+    min_event_count: int = Field(ge=1)
+
+
+class CreateCohortRequest(BaseModel):
+    name: str = Field(min_length=1)
+    logic_operator: str  # "AND" or "OR"
+    conditions: list[CohortCondition] = Field(min_length=1, max_length=5)
+
+    @field_validator("logic_operator")
+    @classmethod
+    def validate_logic_operator(cls, value: str) -> str:
+        normalized = value.upper()
+        if normalized not in {"AND", "OR"}:
+            raise ValueError("logic_operator must be either AND or OR")
+        return normalized
 
 
 def get_connection() -> duckdb.DuckDBPyConnection:
@@ -41,8 +54,7 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS cohorts (
             cohort_id INTEGER PRIMARY KEY,
             name TEXT,
-            event_name TEXT,
-            min_event_count INTEGER
+            logic_operator TEXT
         )
         """
     )
@@ -69,6 +81,34 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cohort_conditions (
+            condition_id INTEGER PRIMARY KEY,
+            cohort_id INTEGER,
+            event_name TEXT,
+            min_event_count INTEGER
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE SEQUENCE IF NOT EXISTS cohort_condition_id_sequence START 1
+        """
+    )
+
+    existing_columns = {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'cohorts'
+            """
+        ).fetchall()
+    }
+    if "logic_operator" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN logic_operator TEXT")
 
 
 def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
@@ -80,8 +120,8 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
 
     cohort_id = connection.execute(
         """
-        INSERT INTO cohorts (cohort_id, name, event_name, min_event_count)
-        VALUES (nextval('cohorts_id_sequence'), 'All Users', '__all__', 1)
+        INSERT INTO cohorts (cohort_id, name, logic_operator)
+        VALUES (nextval('cohorts_id_sequence'), 'All Users', 'OR')
         RETURNING cohort_id
         """
     ).fetchone()[0]
@@ -231,9 +271,6 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
 
 @app.post("/cohorts")
 def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
-    if payload.min_event_count < 1:
-        raise HTTPException(status_code=400, detail="min_event_count must be at least 1")
-
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
@@ -249,32 +286,101 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
 
         cohort_id = connection.execute(
             """
-            INSERT INTO cohorts (cohort_id, name, event_name, min_event_count)
-            VALUES (nextval('cohorts_id_sequence'), ?, ?, ?)
+            INSERT INTO cohorts (cohort_id, name, logic_operator)
+            VALUES (nextval('cohorts_id_sequence'), ?, ?)
             RETURNING cohort_id
             """,
-            [payload.name, payload.event_name, payload.min_event_count],
+            [payload.name, payload.logic_operator],
         ).fetchone()[0]
 
-        connection.execute(
-            """
-            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
-            WITH ranked_events AS (
-                SELECT
-                    user_id,
-                    event_time,
-                    ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS event_rank
-                FROM events_normalized
-                WHERE event_name = ?
+        for condition in payload.conditions:
+            connection.execute(
+                """
+                INSERT INTO cohort_conditions (condition_id, cohort_id, event_name, min_event_count)
+                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?)
+                """,
+                [cohort_id, condition.event_name, condition.min_event_count],
             )
+
+        cte_parts: list[str] = []
+        query_params: list[object] = []
+
+        for index, condition in enumerate(payload.conditions):
+            cte_parts.append(
+                f"""
+                c{index} AS (
+                    SELECT
+                        user_id,
+                        event_time
+                    FROM (
+                        SELECT
+                            user_id,
+                            event_time,
+                            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
+                        FROM events_normalized
+                        WHERE event_name = ?
+                    ) t
+                    WHERE rn = ?
+                )
+                """
+            )
+            query_params.extend([condition.event_name, condition.min_event_count])
+
+        if payload.logic_operator == "AND":
+            if len(payload.conditions) == 1:
+                cte_parts.append(
+                    """
+                    combined_conditions AS (
+                        SELECT user_id, event_time FROM c0
+                    )
+                    """
+                )
+            else:
+                least_time_expression = ", ".join(
+                    [f"c{index}.event_time" for index in range(len(payload.conditions))]
+                )
+                join_clauses = "\n".join(
+                    [
+                        f"INNER JOIN c{index} ON c0.user_id = c{index}.user_id"
+                        for index in range(1, len(payload.conditions))
+                    ]
+                )
+                cte_parts.append(
+                    f"""
+                    combined_conditions AS (
+                        SELECT
+                            c0.user_id,
+                            LEAST({least_time_expression}) AS event_time
+                        FROM c0
+                        {join_clauses}
+                    )
+                    """
+                )
+        else:
+            union_query = "\nUNION ALL\n".join(
+                [f"SELECT user_id, event_time FROM c{index}" for index in range(len(payload.conditions))]
+            )
+            cte_parts.append(
+                f"""
+                combined_conditions AS (
+                    {union_query}
+                )
+                """
+            )
+
+        connection.execute(
+            f"""
+            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+            WITH
+            {', '.join(cte_parts)}
             SELECT
                 user_id,
                 ?,
-                event_time
-            FROM ranked_events
-            WHERE event_rank = ?
+                MIN(event_time)
+            FROM combined_conditions
+            GROUP BY user_id
             """,
-            [payload.event_name, cohort_id, payload.min_event_count],
+            [*query_params, cohort_id],
         )
 
         connection.execute(
@@ -329,6 +435,10 @@ def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
         )
         connection.execute(
             "DELETE FROM cohort_membership WHERE cohort_id = ?",
+            [cohort_id],
+        )
+        connection.execute(
+            "DELETE FROM cohort_conditions WHERE cohort_id = ?",
             [cohort_id],
         )
         connection.execute(
