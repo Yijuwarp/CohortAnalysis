@@ -315,6 +315,14 @@ def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
         if cohort_exists is None:
             raise HTTPException(status_code=404, detail="Cohort not found")
 
+        cohort_row = connection.execute(
+            "SELECT name FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()
+
+        if cohort_row and cohort_row[0] == "All Users":
+            raise HTTPException(status_code=400, detail="All Users cohort cannot be deleted")
+
         connection.execute(
             "DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?",
             [cohort_id],

@@ -64,7 +64,7 @@ export default function UsageTable({ refreshToken }) {
       setVolumeRows([])
       setUserRows([])
     }
-  }, [event])
+  }, [event, maxDay])
 
   const dayColumns = useMemo(() => Array.from({ length: Number(maxDay) + 1 }, (_, index) => index), [maxDay])
 

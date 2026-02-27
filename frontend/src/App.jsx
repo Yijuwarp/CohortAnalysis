@@ -17,7 +17,7 @@ export default function App() {
     <main className="container">
       <h1>Cohort Analysis Dashboard</h1>
       <Upload onUploaded={setColumns} />
-      <Mapping columns={columns} />
+      <Mapping columns={columns} onMappingComplete={refreshRetention} />
       <CohortForm onCohortsChanged={refreshRetention} />
       <RetentionTable refreshToken={retentionRefreshToken} />
       <UsageTable refreshToken={retentionRefreshToken} />
