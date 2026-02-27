@@ -37,7 +37,7 @@ def test_retention_basic_case_has_day_zero_and_expected_drop(client: TestClient)
 
     cohort = client.post(
         "/cohorts",
-        json={"name": "signup_once", "event_name": "signup", "min_event_count": 1},
+        json={"name": "signup_once", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
     )
     assert cohort.status_code == 200, cohort.text
 
@@ -67,13 +67,13 @@ def test_retention_handles_multiple_cohorts(client: TestClient) -> None:
 
     signup = client.post(
         "/cohorts",
-        json={"name": "signup_once", "event_name": "signup", "min_event_count": 1},
+        json={"name": "signup_once", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
     )
     assert signup.status_code == 200, signup.text
 
     purchase = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
     assert purchase.status_code == 200, purchase.text
 
@@ -96,7 +96,7 @@ def test_retention_respects_max_day_parameter(client: TestClient) -> None:
 
     cohort = client.post(
         "/cohorts",
-        json={"name": "signup_once", "event_name": "signup", "min_event_count": 1},
+        json={"name": "signup_once", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
     )
     assert cohort.status_code == 200, cohort.text
 
@@ -150,7 +150,7 @@ def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
 
     cohort = client.post(
         "/cohorts",
-        json={"name": "signup_once", "event_name": "signup", "min_event_count": 1},
+        json={"name": "signup_once", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
     )
     assert cohort.status_code == 200, cohort.text
 
