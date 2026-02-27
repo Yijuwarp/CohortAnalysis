@@ -38,7 +38,7 @@ def test_basic_cohort_creation_inserts_expected_users_and_join_times(
 
     response = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
 
     assert response.status_code == 200, response.text
@@ -70,7 +70,7 @@ def test_nth_event_logic_uses_min_event_count_as_join_time(
 
     response = client.post(
         "/cohorts",
-        json={"name": "purchase_twice", "event_name": "purchase", "min_event_count": 2},
+        json={"name": "purchase_twice", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 2}]},
     )
 
     assert response.status_code == 200, response.text
@@ -91,7 +91,7 @@ def test_cohort_creation_with_no_matching_users_inserts_zero(client: TestClient,
 
     response = client.post(
         "/cohorts",
-        json={"name": "no_users", "event_name": "refund", "min_event_count": 1},
+        json={"name": "no_users", "logic_operator": "AND", "conditions": [{"event_name": "refund", "min_event_count": 1}]},
     )
 
     assert response.status_code == 200, response.text
@@ -110,7 +110,7 @@ def test_cohort_creation_with_same_payload_creates_new_membership_rows(client: T
 
     first = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
     assert first.status_code == 200, first.text
 
@@ -118,7 +118,7 @@ def test_cohort_creation_with_same_payload_creates_new_membership_rows(client: T
 
     second = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
     assert second.status_code == 200, second.text
 
@@ -136,7 +136,7 @@ def test_structural_integrity_tables_exist_and_row_counts_are_stable(
 
     cohort = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
     assert cohort.status_code == 200, cohort.text
 
@@ -170,14 +170,14 @@ def test_delete_cohort_removes_related_rows_and_hides_it_from_retention(
 
     first = client.post(
         "/cohorts",
-        json={"name": "purchase_once", "event_name": "purchase", "min_event_count": 1},
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
     )
     assert first.status_code == 200, first.text
     first_id = first.json()["cohort_id"]
 
     second = client.post(
         "/cohorts",
-        json={"name": "purchase_twice", "event_name": "purchase", "min_event_count": 2},
+        json={"name": "purchase_twice", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 2}]},
     )
     assert second.status_code == 200, second.text
     second_id = second.json()["cohort_id"]
@@ -219,7 +219,7 @@ def test_delete_cohort_succeeds_when_cohort_has_no_members(client: TestClient, d
 
     cohort = client.post(
         "/cohorts",
-        json={"name": "no_users", "event_name": "refund", "min_event_count": 1},
+        json={"name": "no_users", "logic_operator": "AND", "conditions": [{"event_name": "refund", "min_event_count": 1}]},
     )
     assert cohort.status_code == 200, cohort.text
     cohort_id = cohort.json()["cohort_id"]
