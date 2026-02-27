@@ -40,7 +40,7 @@ export default function RetentionTable({ refreshToken }) {
 
   useEffect(() => {
     loadRetention()
-  }, [retentionEvent])
+  }, [retentionEvent, maxDay])
 
   const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
 

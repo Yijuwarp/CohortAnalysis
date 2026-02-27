@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { mapColumns } from '../api'
 
-export default function Mapping({ columns }) {
+export default function Mapping({ columns, onMappingComplete }) {
   const [form, setForm] = useState({
     user_id_column: '',
     event_name_column: '',
@@ -22,6 +22,9 @@ export default function Mapping({ columns }) {
     try {
       const data = await mapColumns(form)
       setMessage(`Success! Normalized ${data.row_count} rows.`)
+      if (onMappingComplete) {
+        onMappingComplete()
+      }
     } catch (err) {
       setError(err.message)
     } finally {

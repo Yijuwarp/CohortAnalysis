@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createCohort, deleteCohort, getRetention } from '../api'
+import { createCohort, deleteCohort, getRetention, listEvents } from '../api'
 
 export default function CohortForm({ onCohortsChanged }) {
   const [payload, setPayload] = useState({
@@ -12,6 +12,8 @@ export default function CohortForm({ onCohortsChanged }) {
   const [loading, setLoading] = useState(false)
   const [cohorts, setCohorts] = useState([])
   const [deletingId, setDeletingId] = useState(null)
+  const [events, setEvents] = useState([])
+  const [selectedEvent, setSelectedEvent] = useState('')
 
   const loadCohorts = async () => {
     try {
@@ -24,6 +26,23 @@ export default function CohortForm({ onCohortsChanged }) {
 
   useEffect(() => {
     loadCohorts()
+  }, [])
+
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const response = await listEvents()
+        const eventList = response.events || []
+        setEvents(eventList)
+        if (eventList.length > 0) {
+          setSelectedEvent(eventList[0])
+          setPayload((prev) => ({ ...prev, event_name: eventList[0] }))
+        }
+      } catch {
+        setEvents([])
+      }
+    }
+    load()
   }, [])
 
   const handleSubmit = async () => {
@@ -71,8 +90,20 @@ export default function CohortForm({ onCohortsChanged }) {
           <input value={payload.name} onChange={(e) => setPayload((prev) => ({ ...prev, name: e.target.value }))} />
         </label>
         <label>
-          Event Name
-          <input value={payload.event_name} onChange={(e) => setPayload((prev) => ({ ...prev, event_name: e.target.value }))} />
+          Select Event
+          <select
+            value={selectedEvent}
+            onChange={(e) => {
+              setSelectedEvent(e.target.value)
+              setPayload((prev) => ({ ...prev, event_name: e.target.value }))
+            }}
+          >
+            {events.map((eventName) => (
+              <option key={eventName} value={eventName}>
+                {eventName}
+              </option>
+            ))}
+          </select>
         </label>
         <label>
           Min Event Count
