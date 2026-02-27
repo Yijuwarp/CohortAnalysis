@@ -2,18 +2,15 @@ import { useEffect, useState } from 'react'
 import { createCohort, deleteCohort, getRetention, listEvents } from '../api'
 
 export default function CohortForm({ onCohortsChanged }) {
-  const [payload, setPayload] = useState({
-    name: '',
-    event_name: '',
-    min_event_count: 1,
-  })
+  const [name, setName] = useState('')
+  const [conditions, setConditions] = useState([{ event_name: '', min_event_count: 1 }])
+  const [logicOperator, setLogicOperator] = useState('AND')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [cohorts, setCohorts] = useState([])
   const [deletingId, setDeletingId] = useState(null)
   const [events, setEvents] = useState([])
-  const [selectedEvent, setSelectedEvent] = useState('')
 
   const loadCohorts = async () => {
     try {
@@ -35,8 +32,7 @@ export default function CohortForm({ onCohortsChanged }) {
         const eventList = response.events || []
         setEvents(eventList)
         if (eventList.length > 0) {
-          setSelectedEvent(eventList[0])
-          setPayload((prev) => ({ ...prev, event_name: eventList[0] }))
+          setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: condition.event_name || eventList[0] })))
         }
       } catch {
         setEvents([])
@@ -46,16 +42,26 @@ export default function CohortForm({ onCohortsChanged }) {
   }, [])
 
   const handleSubmit = async () => {
-    setLoading(true)
     setError('')
     setResult(null)
 
+    if (!name.trim()) {
+      setError('Cohort name is required')
+      return
+    }
+
+    setLoading(true)
+
     try {
       const data = await createCohort({
-        ...payload,
-        min_event_count: Number(payload.min_event_count),
+        name,
+        logic_operator: logicOperator,
+        conditions,
       })
       setResult(data)
+      setName('')
+      setConditions([{ event_name: events[0] || '', min_event_count: 1 }])
+      setLogicOperator('AND')
       await loadCohorts()
       onCohortsChanged()
     } catch (err) {
@@ -87,35 +93,82 @@ export default function CohortForm({ onCohortsChanged }) {
       <div className="grid">
         <label>
           Cohort Name
-          <input value={payload.name} onChange={(e) => setPayload((prev) => ({ ...prev, name: e.target.value }))} />
-        </label>
-        <label>
-          Select Event
-          <select
-            value={selectedEvent}
-            onChange={(e) => {
-              setSelectedEvent(e.target.value)
-              setPayload((prev) => ({ ...prev, event_name: e.target.value }))
-            }}
-          >
-            {events.map((eventName) => (
-              <option key={eventName} value={eventName}>
-                {eventName}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Min Event Count
-          <input
-            type="number"
-            min="1"
-            value={payload.min_event_count}
-            onChange={(e) => setPayload((prev) => ({ ...prev, min_event_count: e.target.value }))}
-          />
+          <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
       </div>
-      <button onClick={handleSubmit} disabled={loading}>{loading ? 'Creating...' : 'Create Cohort'}</button>
+
+      <h4 style={{ marginTop: '1rem' }}>Conditions</h4>
+      {conditions.map((condition, index) => (
+        <div key={index} className="condition-row" style={{ marginBottom: '0.75rem' }}>
+          {index > 0 && (
+            <div style={{ marginBottom: '0.5rem' }}>
+              <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
+                <option value="AND">AND</option>
+                <option value="OR">OR</option>
+              </select>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem' }}>Event Name</label>
+              <select
+                value={condition.event_name}
+                onChange={(e) => {
+                  const updated = [...conditions]
+                  updated[index].event_name = e.target.value
+                  setConditions(updated)
+                }}
+              >
+                {events.map((event) => (
+                  <option key={event} value={event}>
+                    {event}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div>
+              <label style={{ display: 'block', fontSize: '0.85rem' }}>Min Event Count</label>
+              <input
+                type="number"
+                min="1"
+                value={condition.min_event_count}
+                onChange={(e) => {
+                  const updated = [...conditions]
+                  updated[index].min_event_count = Number(e.target.value)
+                  setConditions(updated)
+                }}
+              />
+            </div>
+
+            {conditions.length > 1 && (
+              <button
+                type="button"
+                onClick={() => {
+                  const updated = conditions.filter((_, i) => i !== index)
+                  setConditions(updated)
+                }}
+                style={{ marginLeft: '0.5rem' }}
+              >
+                Remove
+              </button>
+            )}
+          </div>
+        </div>
+      ))}
+
+      <button
+        type="button"
+        disabled={conditions.length >= 5}
+        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
+      >
+        + Add Condition
+      </button>
+
+      <button onClick={handleSubmit} disabled={loading}>
+        {loading ? 'Creating...' : 'Create Cohort'}
+      </button>
       {error && <p className="error">{error}</p>}
       {result && (
         <p className="success">
