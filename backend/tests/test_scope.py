@@ -282,6 +282,23 @@ def test_column_values_respects_100_limit(client: TestClient, db_connection) -> 
     assert payload['total_distinct'] == 152
 
 
+def test_column_values_not_affected_by_scope(client: TestClient) -> None:
+    _prepare_scoped_fixture(client)
+
+    filtered = client.post(
+        '/apply-filters',
+        json={'date_range': None, 'filters': [{'column': 'country', 'operator': '=', 'value': 'US'}]},
+    )
+    assert filtered.status_code == 200, filtered.text
+
+    response = client.get('/column-values?column=country')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert set(payload['values']) == {'CA', 'US'}
+    assert payload['total_distinct'] == 2
+
+
 def test_date_range_returns_min_max(client: TestClient) -> None:
     _prepare_scoped_fixture(client)
 
