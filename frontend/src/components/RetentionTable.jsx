@@ -46,7 +46,7 @@ export default function RetentionTable({ refreshToken }) {
 
   return (
     <section className="card">
-      <h2>4. Retention</h2>
+      <h2>5. Retention</h2>
       <div className="inline-controls">
         <label>
           Max Day

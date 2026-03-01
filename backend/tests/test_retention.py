@@ -145,7 +145,7 @@ def test_retention_returns_empty_when_no_cohorts_exist(client: TestClient) -> No
         }
 
 
-def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
+def test_retention_rebuilds_from_new_mapping_after_remap(client: TestClient) -> None:
     _prepare_events(client)
 
     cohort = client.post(
@@ -181,5 +181,6 @@ def test_retention_uses_cohort_snapshot_after_remap(client: TestClient) -> None:
 
     response = client.get("/retention?max_day=2")
     assert response.status_code == 200, response.text
-    row = {row["cohort_name"]: row for row in response.json()["retention_table"]}["signup_once"]
-    assert row["retention"] == {"0": 100.0, "1": 50.0, "2": 100.0}
+    by_name = {row["cohort_name"]: row for row in response.json()["retention_table"]}
+    assert list(by_name.keys()) == ["All Users"]
+    assert by_name["All Users"]["size"] == 1
