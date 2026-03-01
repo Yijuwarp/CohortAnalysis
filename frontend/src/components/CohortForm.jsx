@@ -31,15 +31,26 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         const response = await listEvents()
         const eventList = response.events || []
         setEvents(eventList)
-        if (eventList.length > 0) {
-          setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: condition.event_name || eventList[0] })))
-        }
+        setConditions((prev) =>
+          prev.map((condition) => {
+            if (eventList.length === 0) {
+              return { ...condition, event_name: '' }
+            }
+
+            if (condition.event_name && eventList.includes(condition.event_name)) {
+              return condition
+            }
+
+            return { ...condition, event_name: eventList[0] }
+          })
+        )
       } catch {
         setEvents([])
+        setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: '' })))
       }
     }
     load()
-  }, [])
+  }, [refreshToken])
 
   const handleSubmit = async () => {
     setError('')
@@ -47,6 +58,16 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
     if (!name.trim()) {
       setError('Cohort name is required')
+      return
+    }
+
+    if (events.length === 0) {
+      setError('No events available under current filters')
+      return
+    }
+
+    if (conditions.some((condition) => !condition.event_name)) {
+      setError('Event name is required')
       return
     }
 
@@ -166,9 +187,10 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         + Add Condition
       </button>
 
-      <button onClick={handleSubmit} disabled={loading}>
+      <button onClick={handleSubmit} disabled={loading || events.length === 0}>
         {loading ? 'Creating...' : 'Create Cohort'}
       </button>
+      {events.length === 0 && <p className="error">No events available under current filters</p>}
       {error && <p className="error">{error}</p>}
       {result && (
         <p className="success">
