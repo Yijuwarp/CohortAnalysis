@@ -260,7 +260,7 @@ def test_list_cohorts_returns_logic_and_conditions(client: TestClient) -> None:
     cohorts = response.json()["cohorts"]
     created_cohort = next(row for row in cohorts if row["cohort_id"] == created.json()["cohort_id"])
     assert created_cohort["logic_operator"] == "AND"
-    assert created_cohort["conditions"] == [{"event_name": "purchase", "min_event_count": 1}]
+    assert created_cohort["conditions"] == [{"event_name": "purchase", "min_event_count": 1, "property_filter": None}]
 
 
 def test_update_cohort_replaces_conditions_and_rebuilds_membership(client: TestClient, db_connection) -> None:
@@ -363,3 +363,189 @@ def test_update_all_users_is_forbidden(client: TestClient) -> None:
 
     assert response.status_code == 400
     assert response.json() == {"detail": "All Users cohort cannot be updated"}
+
+
+
+def _prepare_property_filter_events(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time,version,amount\n"
+        "u1,search,2024-01-01 09:00:00,3.9.1,10\n"
+        "u1,search,2024-01-02 09:00:00,3.9.1,11\n"
+        "u1,search,2024-01-03 09:00:00,4.0.0,12\n"
+        "u2,search,2024-01-01 10:00:00,3.9.1,20\n"
+        "u2,search,2024-01-04 10:00:00,3.8.0,21\n"
+        "u3,search,2024-01-02 11:00:00,3.9.1,30\n"
+        "u3,search,2024-01-03 11:00:00,3.9.1,31\n"
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, f"Precondition failed: upload returned {upload.text}"
+
+    mapping = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert mapping.status_code == 200, f"Precondition failed: map-columns returned {mapping.text}"
+
+
+def test_create_cohort_without_property_filter_membership_correct_phase1(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_twice",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "search", "min_event_count": 2}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 3
+
+
+def test_create_cohort_with_property_filter_membership_correct_phase1(client: TestClient, db_connection) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_391_twice",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "search",
+                    "min_event_count": 2,
+                    "property_filter": {"column": "version", "operator": "=", "value": "3.9.1"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 2
+
+    members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert members == [("u1",), ("u3",)]
+
+
+def test_update_cohort_remove_property_filter_recalculates_membership(client: TestClient, db_connection) -> None:
+    _prepare_property_filter_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "search_391_twice",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "search",
+                    "min_event_count": 2,
+                    "property_filter": {"column": "version", "operator": "=", "value": "3.9.1"},
+                }
+            ],
+        },
+    )
+    assert created.status_code == 200, created.text
+    cohort_id = created.json()["cohort_id"]
+
+    updated = client.put(
+        f"/cohorts/{cohort_id}",
+        json={
+            "name": "search_twice",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "search", "min_event_count": 2, "property_filter": None}],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["users_joined"] == 3
+
+    members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert members == [("u1",), ("u2",), ("u3",)]
+
+
+def test_create_cohort_rejects_invalid_property_filter_operator(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_operator",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "search",
+                    "min_event_count": 1,
+                    "property_filter": {"column": "version", "operator": ">", "value": "3.9.1"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Operator '>' not allowed for column type TEXT"}
+
+
+def test_create_cohort_rejects_unknown_property_filter_column(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_column",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "search",
+                    "min_event_count": 1,
+                    "property_filter": {"column": "missing_col", "operator": "=", "value": "3.9.1"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Unknown filter column: missing_col"}
+
+
+def test_property_filter_applies_before_aggregation(client: TestClient, db_connection) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_400_twice",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "search",
+                    "min_event_count": 2,
+                    "property_filter": {"column": "version", "operator": "=", "value": "4.0.0"},
+                }
+            ],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 0
+
+    condition_row = db_connection.execute(
+        """
+        SELECT property_column, property_operator, property_value
+        FROM cohort_conditions
+        WHERE cohort_id = ?
+        """,
+        [cohort_id],
+    ).fetchone()
+    assert condition_row == ("version", "=", "4.0.0")

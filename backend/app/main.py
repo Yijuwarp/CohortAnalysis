@@ -27,9 +27,27 @@ class ColumnMappingRequest(BaseModel):
     event_time_column: str
 
 
+class ScopeFilter(BaseModel):
+    column: str
+    operator: str
+    value: str | float | int | list[str] | list[float] | list[int]
+
+
 class CohortCondition(BaseModel):
     event_name: str
     min_event_count: int = Field(ge=1)
+    property_filter: ScopeFilter | None = None
+
+    @field_validator("property_filter")
+    @classmethod
+    def validate_property_filter(cls, value: ScopeFilter | None) -> ScopeFilter | None:
+        if value is None:
+            return value
+        if value.value is None or (isinstance(value.value, str) and value.value == ""):
+            raise ValueError("property_filter.value is required")
+        if isinstance(value.value, list):
+            raise ValueError("property_filter.value must be a scalar")
+        return value
 
 
 class CreateCohortRequest(BaseModel):
@@ -44,12 +62,6 @@ class CreateCohortRequest(BaseModel):
         if normalized not in {"AND", "OR"}:
             raise ValueError("logic_operator must be either AND or OR")
         return normalized
-
-
-class ScopeFilter(BaseModel):
-    column: str
-    operator: str
-    value: str | float | int | list[str] | list[float] | list[int]
 
 
 class DateRange(BaseModel):
@@ -69,6 +81,83 @@ def get_connection() -> duckdb.DuckDBPyConnection:
 def quote_identifier(identifier: str) -> str:
     escaped = identifier.replace('"', '""')
     return f'"{escaped}"'
+
+
+NUMERIC_TYPES = {
+    "TINYINT",
+    "SMALLINT",
+    "INTEGER",
+    "BIGINT",
+    "HUGEINT",
+    "UTINYINT",
+    "USMALLINT",
+    "UINTEGER",
+    "UBIGINT",
+    "FLOAT",
+    "REAL",
+    "DOUBLE",
+    "DECIMAL",
+}
+TEXT_ALLOWED_OPERATORS = {"=", "!="}
+NUMERIC_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<="}
+TIMESTAMP_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<="}
+
+
+def get_column_type_map(connection: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, str]:
+    return {
+        row[0]: str(row[1]).upper()
+        for row in connection.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = ?
+            """,
+            [table_name],
+        ).fetchall()
+    }
+
+
+def get_column_kind(data_type: str) -> str:
+    if "TIMESTAMP" in data_type or data_type == "DATE":
+        return "TIMESTAMP"
+    if data_type in NUMERIC_TYPES or data_type.startswith("DECIMAL"):
+        return "NUMERIC"
+    return "TEXT"
+
+
+def get_allowed_operators(column_kind: str) -> set[str]:
+    if column_kind == "TIMESTAMP":
+        return TIMESTAMP_ALLOWED_OPERATORS
+    if column_kind == "NUMERIC":
+        return NUMERIC_ALLOWED_OPERATORS
+    return TEXT_ALLOWED_OPERATORS
+
+
+def validate_cohort_conditions(
+    connection: duckdb.DuckDBPyConnection,
+    source_table: str,
+    conditions: list[CohortCondition],
+) -> None:
+    column_types = get_column_type_map(connection, source_table)
+    if not column_types:
+        raise HTTPException(status_code=400, detail="No normalized events found. Upload a CSV and map columns first.")
+
+    for condition in conditions:
+        property_filter = condition.property_filter
+        if property_filter is None:
+            continue
+
+        if property_filter.column not in column_types:
+            raise HTTPException(status_code=400, detail=f"Unknown filter column: {property_filter.column}")
+
+        operator = property_filter.operator.upper()
+        column_kind = get_column_kind(column_types[property_filter.column])
+        allowed_ops = get_allowed_operators(column_kind)
+        if operator not in allowed_ops:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Operator '{operator}' not allowed for column type {column_kind}",
+            )
 
 
 def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
@@ -102,13 +191,39 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
+    existing_condition_columns = {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'cohort_conditions'
+            """
+        ).fetchall()
+    }
+    expected_condition_columns = {
+        "condition_id",
+        "cohort_id",
+        "event_name",
+        "min_event_count",
+        "property_column",
+        "property_operator",
+        "property_value",
+    }
+    if existing_condition_columns and existing_condition_columns != expected_condition_columns:
+        connection.execute("DROP TABLE cohort_conditions")
+        connection.execute("DROP SEQUENCE IF EXISTS cohort_condition_id_sequence")
+
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS cohort_conditions (
-            condition_id INTEGER PRIMARY KEY,
-            cohort_id INTEGER,
-            event_name TEXT,
-            min_event_count INTEGER
+            condition_id BIGINT PRIMARY KEY,
+            cohort_id BIGINT NOT NULL,
+            event_name VARCHAR NOT NULL,
+            min_event_count INTEGER NOT NULL,
+            property_column VARCHAR,
+            property_operator VARCHAR,
+            property_value VARCHAR
         )
         """
     )
@@ -257,7 +372,7 @@ def build_cohort_membership(
     logic_operator = str(cohort_row[0] or "OR").upper()
     conditions = connection.execute(
         """
-        SELECT event_name, min_event_count
+        SELECT event_name, min_event_count, property_column, property_operator, property_value
         FROM cohort_conditions
         WHERE cohort_id = ?
         ORDER BY condition_id
@@ -278,7 +393,15 @@ def build_cohort_membership(
     else:
         cte_parts: list[str] = []
         query_params: list[object] = []
-        for index, (event_name, min_event_count) in enumerate(conditions):
+        for index, (event_name, min_event_count, property_column, property_operator, property_value) in enumerate(conditions):
+            event_conditions = ["event_name = ?"]
+            event_params: list[object] = [event_name]
+
+            if property_column and property_operator and property_value is not None:
+                event_conditions.append(f"{quote_identifier(str(property_column))} {str(property_operator).upper()} ?")
+                event_params.append(property_value)
+
+            where_clause = " AND ".join(event_conditions)
             cte_parts.append(
                 f"""
                 c{index} AS (
@@ -289,13 +412,13 @@ def build_cohort_membership(
                             event_time,
                             ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
                         FROM {source_table}
-                        WHERE event_name = ?
+                        WHERE {where_clause}
                     ) t
                     WHERE rn = ?
                 )
                 """
             )
-            query_params.extend([event_name, min_event_count])
+            query_params.extend([*event_params, min_event_count])
 
         if logic_operator == "AND":
             if len(conditions) == 1:
@@ -822,6 +945,8 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
         if not payload.conditions:
             raise HTTPException(status_code=400, detail="At least one condition is required")
 
+        validate_cohort_conditions(connection, "events_normalized", payload.conditions)
+
         cohort_id = connection.execute(
             """
             INSERT INTO cohorts (cohort_id, name, logic_operator, is_active)
@@ -832,12 +957,35 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
         ).fetchone()[0]
 
         for condition in payload.conditions:
+            property_column = None
+            property_operator = None
+            property_value = None
+            if condition.property_filter:
+                property_column = condition.property_filter.column
+                property_operator = condition.property_filter.operator.upper()
+                property_value = str(condition.property_filter.value)
+
             connection.execute(
                 """
-                INSERT INTO cohort_conditions (condition_id, cohort_id, event_name, min_event_count)
-                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?)
+                INSERT INTO cohort_conditions (
+                    condition_id,
+                    cohort_id,
+                    event_name,
+                    min_event_count,
+                    property_column,
+                    property_operator,
+                    property_value
+                )
+                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
                 """,
-                [cohort_id, condition.event_name, condition.min_event_count],
+                [
+                    cohort_id,
+                    condition.event_name,
+                    condition.min_event_count,
+                    property_column,
+                    property_operator,
+                    property_value,
+                ],
             )
 
         build_cohort_membership(connection, cohort_id, "events_normalized")
@@ -868,7 +1016,10 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 c.is_active,
                 c.logic_operator,
                 cc.event_name,
-                cc.min_event_count
+                cc.min_event_count,
+                cc.property_column,
+                cc.property_operator,
+                cc.property_value
             FROM cohorts c
             LEFT JOIN cohort_conditions cc ON c.cohort_id = cc.cohort_id
             ORDER BY c.cohort_id, cc.condition_id
@@ -876,7 +1027,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ).fetchall()
 
         cohorts: dict[int, dict[str, object]] = {}
-        for cohort_id, name, is_active, logic_operator, event_name, min_event_count in rows:
+        for cohort_id, name, is_active, logic_operator, event_name, min_event_count, property_column, property_operator, property_value in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
                 cohorts[cohort_id] = {
@@ -888,10 +1039,18 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 }
 
             if event_name is not None and min_event_count is not None:
+                property_filter = None
+                if property_column and property_operator and property_value is not None:
+                    property_filter = {
+                        "column": str(property_column),
+                        "operator": str(property_operator),
+                        "value": str(property_value),
+                    }
                 cohorts[cohort_id]["conditions"].append(
                     {
                         "event_name": str(event_name),
                         "min_event_count": int(min_event_count),
+                        "property_filter": property_filter,
                     }
                 )
 
@@ -924,6 +1083,8 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
         if not payload.conditions:
             raise HTTPException(status_code=400, detail="At least one condition is required")
 
+        validate_cohort_conditions(connection, source_table, payload.conditions)
+
         connection.execute(
             "UPDATE cohorts SET name = ?, logic_operator = ? WHERE cohort_id = ?",
             [payload.name, payload.logic_operator, cohort_id],
@@ -931,12 +1092,35 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
         connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
 
         for condition in payload.conditions:
+            property_column = None
+            property_operator = None
+            property_value = None
+            if condition.property_filter:
+                property_column = condition.property_filter.column
+                property_operator = condition.property_filter.operator.upper()
+                property_value = str(condition.property_filter.value)
+
             connection.execute(
                 """
-                INSERT INTO cohort_conditions (condition_id, cohort_id, event_name, min_event_count)
-                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?)
+                INSERT INTO cohort_conditions (
+                    condition_id,
+                    cohort_id,
+                    event_name,
+                    min_event_count,
+                    property_column,
+                    property_operator,
+                    property_value
+                )
+                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
                 """,
-                [cohort_id, condition.event_name, condition.min_event_count],
+                [
+                    cohort_id,
+                    condition.event_name,
+                    condition.min_event_count,
+                    property_column,
+                    property_operator,
+                    property_value,
+                ],
             )
 
         connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])

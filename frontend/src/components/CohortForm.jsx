@@ -1,9 +1,45 @@
-import { useEffect, useState } from 'react'
-import { createCohort, deleteCohort, listCohorts, listEvents, updateCohort } from '../api'
+import { useEffect, useMemo, useState } from 'react'
+import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, updateCohort } from '../api'
+
+const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=']
+
+const TYPE_OPERATOR_MAP = {
+  TEXT: ['=', '!='],
+  NUMERIC: ['=', '!=', '>', '>=', '<', '<='],
+  TIMESTAMP: ['=', '!=', '>', '>=', '<', '<='],
+}
+
+const normalizeColumnType = (dataType = '') => {
+  const upper = String(dataType).toUpperCase()
+  if (upper.includes('TIMESTAMP') || upper === 'DATE') {
+    return 'TIMESTAMP'
+  }
+  if (
+    [
+      'TINYINT',
+      'SMALLINT',
+      'INTEGER',
+      'BIGINT',
+      'HUGEINT',
+      'UTINYINT',
+      'USMALLINT',
+      'UINTEGER',
+      'UBIGINT',
+      'FLOAT',
+      'REAL',
+      'DOUBLE',
+      'DECIMAL',
+    ].includes(upper) ||
+    upper.startsWith('DECIMAL')
+  ) {
+    return 'NUMERIC'
+  }
+  return 'TEXT'
+}
 
 export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [name, setName] = useState('')
-  const [conditions, setConditions] = useState([{ event_name: '', min_event_count: 1 }])
+  const [conditions, setConditions] = useState([{ event_name: '', min_event_count: 1, property_filter: null }])
   const [logicOperator, setLogicOperator] = useState('AND')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -11,13 +47,51 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [cohorts, setCohorts] = useState([])
   const [deletingId, setDeletingId] = useState(null)
   const [events, setEvents] = useState([])
+  const [columns, setColumns] = useState([])
+  const [valueCache, setValueCache] = useState({})
   const [infoCohortId, setInfoCohortId] = useState(null)
   const [editingCohortId, setEditingCohortId] = useState(null)
+
+  const columnByName = useMemo(
+    () => Object.fromEntries(columns.map((column) => [column.name, column])),
+    [columns]
+  )
+
+  const getAllowedOperators = (columnName, map = columnByName) => {
+    if (!columnName || !map[columnName]) {
+      return OPERATOR_ORDER
+    }
+    const type = normalizeColumnType(map[columnName]?.data_type)
+    return TYPE_OPERATOR_MAP[type] || OPERATOR_ORDER
+  }
+
+  const ensureColumnValuesLoaded = async (columnName) => {
+    if (!columnName || valueCache[columnName]) {
+      return
+    }
+
+    try {
+      const response = await getColumnValues(columnName)
+      setValueCache((prev) => ({
+        ...prev,
+        [columnName]: {
+          values: (response.values || []).map((value) => String(value)),
+        },
+      }))
+    } catch {
+      setValueCache((prev) => ({
+        ...prev,
+        [columnName]: {
+          values: [],
+        },
+      }))
+    }
+  }
 
   const resetForm = () => {
     setEditingCohortId(null)
     setName('')
-    setConditions([{ event_name: events[0] || '', min_event_count: 1 }])
+    setConditions([{ event_name: events[0] || '', min_event_count: 1, property_filter: null }])
     setLogicOperator('AND')
   }
 
@@ -37,25 +111,27 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   useEffect(() => {
     const load = async () => {
       try {
-        const response = await listEvents()
-        const eventList = response.events || []
+        const [eventsResponse, columnsResponse] = await Promise.all([listEvents(), getColumns()])
+        const eventList = eventsResponse.events || []
         setEvents(eventList)
+        setColumns(columnsResponse.columns || [])
         setConditions((prev) =>
           prev.map((condition) => {
             if (eventList.length === 0) {
-              return { ...condition, event_name: '' }
+              return { ...condition, event_name: '', property_filter: null }
             }
 
             if (condition.event_name && eventList.includes(condition.event_name)) {
               return condition
             }
 
-            return { ...condition, event_name: eventList[0] }
+            return { ...condition, event_name: eventList[0], property_filter: null }
           })
         )
       } catch {
         setEvents([])
-        setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: '' })))
+        setColumns([])
+        setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: '', property_filter: null })))
       }
     }
     load()
@@ -124,8 +200,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setLogicOperator(cohort.logic_operator || 'AND')
     setConditions(
       cohort.conditions?.length
-        ? cohort.conditions.map((condition) => ({ ...condition }))
-        : [{ event_name: events[0] || '', min_event_count: 1 }]
+        ? cohort.conditions.map((condition) => ({ ...condition, property_filter: condition.property_filter || null }))
+        : [{ event_name: events[0] || '', min_event_count: 1, property_filter: null }]
     )
   }
 
@@ -149,6 +225,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                 onChange={(e) => {
                   const updated = [...conditions]
                   updated[index].event_name = e.target.value
+                  updated[index].property_filter = null
                   setConditions(updated)
                 }}
               >
@@ -185,6 +262,106 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                 </button>
               )}
             </div>
+
+            {!condition.property_filter && (
+              <button
+                className="cohort-add-condition"
+                type="button"
+                onClick={() => {
+                  const updated = [...conditions]
+                  const defaultColumn = columns[0]?.name || ''
+                  updated[index].property_filter = {
+                    column: defaultColumn,
+                    operator: getAllowedOperators(defaultColumn)[0] || '=',
+                    value: '',
+                  }
+                  setConditions(updated)
+                  ensureColumnValuesLoaded(defaultColumn)
+                }}
+              >
+                + Add property filter
+              </button>
+            )}
+
+            {condition.property_filter && (
+              <div className="cohort-rule-filters">
+                <label>Where:</label>
+                <div className="cohort-condition-content">
+                  <select
+                    value={condition.property_filter.column}
+                    onChange={(e) => {
+                      const nextColumn = e.target.value
+                      const allowed = getAllowedOperators(nextColumn)
+                      const updated = [...conditions]
+                      updated[index].property_filter = {
+                        ...updated[index].property_filter,
+                        column: nextColumn,
+                        operator: allowed[0],
+                        value: '',
+                      }
+                      setConditions(updated)
+                      ensureColumnValuesLoaded(nextColumn)
+                    }}
+                  >
+                    <option value="">Select column</option>
+                    {columns.map((column) => (
+                      <option key={column.name} value={column.name}>
+                        {column.name}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={condition.property_filter.operator}
+                    onChange={(e) => {
+                      const updated = [...conditions]
+                      updated[index].property_filter = {
+                        ...updated[index].property_filter,
+                        operator: e.target.value,
+                      }
+                      setConditions(updated)
+                    }}
+                  >
+                    {getAllowedOperators(condition.property_filter.column).map((operator) => (
+                      <option key={operator} value={operator}>
+                        {operator}
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    value={condition.property_filter.value}
+                    onChange={(e) => {
+                      const updated = [...conditions]
+                      updated[index].property_filter = {
+                        ...updated[index].property_filter,
+                        value: e.target.value,
+                      }
+                      setConditions(updated)
+                    }}
+                    list={`cohort-filter-values-${index}`}
+                    onFocus={() => ensureColumnValuesLoaded(condition.property_filter.column)}
+                  />
+                  <datalist id={`cohort-filter-values-${index}`}>
+                    {(valueCache[condition.property_filter.column]?.values || []).map((value) => (
+                      <option key={value} value={value} />
+                    ))}
+                  </datalist>
+
+                  <button
+                    className="cohort-condition-remove"
+                    type="button"
+                    onClick={() => {
+                      const updated = [...conditions]
+                      updated[index].property_filter = null
+                      setConditions(updated)
+                    }}
+                  >
+                    Remove Filter
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
 
           {conditions.length > 1 && index < conditions.length - 1 && (
@@ -202,7 +379,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         className="cohort-add-condition"
         type="button"
         disabled={conditions.length >= 5}
-        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
+        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1, property_filter: null }])}
       >
         + Add Condition
       </button>
@@ -269,7 +446,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   </div>
                   {(cohort.conditions || []).map((c, index) => (
                     <div key={index}>
-                      {c.event_name} ≥ {c.min_event_count}
+                      {c.event_name}
+                      {c.property_filter
+                        ? ` WHERE ${c.property_filter.column} ${c.property_filter.operator} ${c.property_filter.value}`
+                        : ''}{' '}
+                      ≥ {c.min_event_count}
                     </div>
                   ))}
                 </div>
