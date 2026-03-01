@@ -111,6 +111,9 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
 
   const loadMetadata = async () => {
     try {
+      // Clear stale cached distinct values
+      setValueCache({})
+
       const [columnResponse, scopeResponse] = await Promise.all([getColumns(), getScope()])
       const loadedColumns = columnResponse.columns || []
       const loadedColumnMap = Object.fromEntries(loadedColumns.map((column) => [column.name, column]))
