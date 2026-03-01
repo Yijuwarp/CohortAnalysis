@@ -63,7 +63,7 @@ export default function RetentionTable({ refreshToken }) {
             ))}
           </select>
         </label>
-        <button onClick={loadRetention} disabled={loading}>{loading ? 'Loading...' : 'Load Retention'}</button>
+        <button className="button button-primary" onClick={loadRetention} disabled={loading}>{loading ? 'Loading...' : 'Load Retention'}</button>
       </div>
 
       {error && <p className="error">{error}</p>}

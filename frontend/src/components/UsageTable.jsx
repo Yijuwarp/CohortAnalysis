@@ -140,7 +140,7 @@ export default function UsageTable({ refreshToken }) {
             <option value="per_user">Per Active User</option>
           </select>
         </label>
-        <button onClick={() => loadUsage()} disabled={loading || !event}>
+        <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event}>
           {loading ? 'Loading...' : 'Load Usage'}
         </button>
       </div>

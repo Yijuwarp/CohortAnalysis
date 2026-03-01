@@ -244,10 +244,10 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   return (
     <section className="card">
       <h2>3. Filter Data</h2>
-      <p>
+      <p className="secondary-text">
         Filtered to {summary.filtered_rows} rows out of {summary.total_rows} rows ({summary.percentage.toFixed(2)}%)
       </p>
-      <p>Active Filters: {activeFilterCount}</p>
+      <p className="secondary-text">Active Filters: {activeFilterCount}</p>
 
       <div className="grid">
         <label>
@@ -268,8 +268,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
         const truncated = currentDistinctCount > currentValues.length && currentValues.length === 100
 
         return (
-          <div key={index} className="condition-row" style={{ marginBottom: '0.5rem', opacity: row.enabled ? 1 : 0.5 }}>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+          <div key={index} className="condition-row" style={{ opacity: row.enabled ? 1 : 0.5 }}>
+            <label className="inline-checkbox">
               <input
                 type="checkbox"
                 checked={row.enabled}
@@ -334,19 +334,19 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
               ))}
             </select>
             {filters.length > 1 && (
-              <button type="button" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== index))}>
+              <button className="button button-danger" type="button" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== index))}>
                 Remove
               </button>
             )}
-            {truncated && <small>Showing first 100 of {currentDistinctCount} values</small>}
+            {truncated && <small className="secondary-text">Showing first 100 of {currentDistinctCount} values</small>}
           </div>
         )
       })}
 
       <div className="inline-controls">
-        <button type="button" onClick={() => setFilters((prev) => [...prev, defaultFilter])}>+ Add Filter</button>
-        <button type="button" onClick={handleApply} disabled={loading}>{loading ? 'Applying...' : 'Apply Filters'}</button>
-        <button type="button" onClick={handleReset} disabled={loading}>Reset Filters</button>
+        <button className="button button-secondary" type="button" onClick={() => setFilters((prev) => [...prev, defaultFilter])}>+ Add Filter</button>
+        <button className="button button-primary" type="button" onClick={handleApply} disabled={loading}>{loading ? 'Applying...' : 'Apply Filters'}</button>
+        <button className="button button-secondary" type="button" onClick={handleReset} disabled={loading}>Reset Filters</button>
       </div>
       {error && <p className="error">{error}</p>}
     </section>
