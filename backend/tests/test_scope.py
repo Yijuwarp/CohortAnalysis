@@ -134,6 +134,152 @@ def test_all_users_effective_size_changes_under_scope(client: TestClient) -> Non
     assert scoped_size == 2
 
 
+def test_cohort_membership_recomputed_under_scope(client: TestClient, db_connection) -> None:
+    csv_text = (
+        'user_id,event_name,event_time,country\n'
+        'u1,search,2026-01-01 09:00:00,US\n'
+        'u1,open,2026-01-01 10:00:00,US\n'
+        'u2,search,2026-01-02 09:00:00,CA\n'
+        'u2,open,2026-01-02 10:00:00,CA\n'
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    cohort = client.post(
+        '/cohorts',
+        json={
+            'name': 'searchers',
+            'logic_operator': 'AND',
+            'conditions': [{'event_name': 'search', 'min_event_count': 1}],
+        },
+    )
+    assert cohort.status_code == 200, cohort.text
+
+    filtered = client.post(
+        '/apply-filters',
+        json={
+            'date_range': None,
+            'filters': [{'column': 'event_name', 'operator': '!=', 'value': 'search'}],
+        },
+    )
+    assert filtered.status_code == 200, filtered.text
+
+    scoped_members = db_connection.execute(
+        '''
+        SELECT COUNT(*)
+        FROM cohort_membership cm
+        JOIN cohorts c ON c.cohort_id = cm.cohort_id
+        WHERE c.name = 'searchers'
+        '''
+    ).fetchone()[0]
+    assert scoped_members == 0
+
+    cohort_state = db_connection.execute(
+        "SELECT is_active FROM cohorts WHERE name = 'searchers'"
+    ).fetchone()[0]
+    assert cohort_state is False
+
+    retention = client.get('/retention?max_day=0')
+    assert retention.status_code == 200, retention.text
+    assert 'searchers' not in {row['cohort_name'] for row in retention.json()['retention_table']}
+
+
+def test_all_users_membership_rebuilt_from_scoped_with_join_time_refresh(client: TestClient, db_connection) -> None:
+    csv_text = (
+        'user_id,event_name,event_time,country\n'
+        'u1,open,2026-01-01 09:00:00,US\n'
+        'u1,open,2026-01-05 09:00:00,US\n'
+        'u2,open,2026-01-02 09:00:00,CA\n'
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    filtered = client.post(
+        '/apply-filters',
+        json={
+            'date_range': {'start': '2026-01-03', 'end': '2026-01-31'},
+            'filters': [],
+        },
+    )
+    assert filtered.status_code == 200, filtered.text
+
+    all_users_membership = db_connection.execute(
+        """
+        SELECT cm.user_id, cm.join_time
+        FROM cohort_membership cm
+        JOIN cohorts c ON c.cohort_id = cm.cohort_id
+        WHERE c.name = 'All Users'
+        ORDER BY cm.user_id
+        """
+    ).fetchall()
+    assert len(all_users_membership) == 1
+    assert all_users_membership[0][0] == 'u1'
+    assert all_users_membership[0][1].isoformat(sep=' ') == '2026-01-05 09:00:00'
+
+    scoped_users = db_connection.execute('SELECT COUNT(DISTINCT user_id) FROM events_scoped').fetchone()[0]
+    assert scoped_users == 1
+
+    retention = client.get('/retention?max_day=0')
+    assert retention.status_code == 200, retention.text
+    all_users_row = next(row for row in retention.json()['retention_table'] if row['cohort_name'] == 'All Users')
+    assert all_users_row['size'] == scoped_users
+
+
+def test_all_users_empty_scope_becomes_inactive_and_hidden_in_retention(client: TestClient, db_connection) -> None:
+    _prepare_scoped_fixture(client)
+
+    filtered = client.post(
+        '/apply-filters',
+        json={
+            'date_range': None,
+            'filters': [{'column': 'event_name', 'operator': '=', 'value': '__no_such_event__'}],
+        },
+    )
+    assert filtered.status_code == 200, filtered.text
+
+    scoped_rows = db_connection.execute('SELECT COUNT(*) FROM events_scoped').fetchone()[0]
+    assert scoped_rows == 0
+
+    all_users_state = db_connection.execute(
+        "SELECT is_active FROM cohorts WHERE name = 'All Users'"
+    ).fetchone()[0]
+    assert all_users_state is False
+
+    all_users_members = db_connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM cohort_membership cm
+        JOIN cohorts c ON c.cohort_id = cm.cohort_id
+        WHERE c.name = 'All Users'
+        """
+    ).fetchone()[0]
+    assert all_users_members == 0
+
+    retention = client.get('/retention?max_day=0')
+    assert retention.status_code == 200, retention.text
+    assert 'All Users' not in {row['cohort_name'] for row in retention.json()['retention_table']}
+
+
 def test_date_range_includes_end_of_day_events(client: TestClient, db_connection) -> None:
     _prepare_scoped_fixture(client)
 
