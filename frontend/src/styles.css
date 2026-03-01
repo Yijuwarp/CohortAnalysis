@@ -126,32 +126,104 @@ select:focus {
   align-items: flex-end;
   gap: var(--space-3);
   flex-wrap: wrap;
+  margin-top: var(--space-4);
   margin-bottom: var(--space-4);
 }
 
-.condition-row {
+.cohort-condition-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  background: #ffffff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
   margin-bottom: var(--space-3);
+  transition: box-shadow 0.15s ease, border-color 0.15s ease;
 }
 
-.condition-layout {
-  display: flex;
-  gap: var(--space-3);
-  align-items: center;
-  flex-wrap: wrap;
+.cohort-condition-block:hover {
+  border-color: #d1d5db;
 }
 
-.logic-operator-small {
-  width: auto;
-  padding: 4px 8px;
-  font-size: 12px;
-  height: 30px;
-  min-width: 70px;
-}
-
-.condition-actions {
-  display: flex;
+.cohort-condition-content {
+  display: grid;
+  grid-template-columns: minmax(200px, 1fr) auto minmax(80px, 120px) auto;
   gap: var(--space-2);
   align-items: center;
+}
+
+.cohort-condition-content select,
+.cohort-condition-content input {
+  height: 36px;
+}
+
+.cohort-operator-symbol {
+  font-weight: 600;
+  text-align: center;
+}
+
+.cohort-condition-remove {
+  justify-self: end;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+.cohort-condition-remove:hover {
+  background: #f3f4f6;
+}
+
+.cohort-logic-connector {
+  text-align: center;
+  margin: var(--space-3) 0;
+  position: relative;
+}
+
+.cohort-logic-connector::before,
+.cohort-logic-connector::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 40%;
+  height: 1px;
+  background: var(--color-border);
+}
+
+.cohort-logic-connector::before {
+  left: 0;
+}
+
+.cohort-logic-connector::after {
+  right: 0;
+}
+
+.cohort-logic-connector select {
+  max-width: 90px;
+  margin: 0 auto;
+}
+
+.cohort-add-condition {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-2);
+  background: #f3f4f6;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+.cohort-add-condition:hover {
+  background: #e5e7eb;
+}
+
+.cohort-add-condition:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .inline-checkbox {

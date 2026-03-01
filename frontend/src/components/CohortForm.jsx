@@ -139,12 +139,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </label>
       </div>
 
-      <h4>Conditions</h4>
+      <h4>Rules</h4>
       {conditions.map((condition, index) => (
-        <div key={index} className="condition-row">
-          <div className="condition-layout">
-            <div>
-              <label className="tertiary-label">Event Name</label>
+        <div key={index}>
+          <div className="cohort-condition-block">
+            <div className="cohort-condition-content">
               <select
                 value={condition.event_name}
                 onChange={(e) => {
@@ -159,10 +158,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   </option>
                 ))}
               </select>
-            </div>
 
-            <div>
-              <label className="tertiary-label">Min Event Count</label>
+              <span className="cohort-operator-symbol">≥</span>
+
               <input
                 type="number"
                 min="1"
@@ -173,49 +171,41 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   setConditions(updated)
                 }}
               />
-            </div>
-
-            <div className="condition-actions">
-              {conditions.length > 1 && index !== conditions.length - 1 && (
-                <select
-                  className="logic-operator-small"
-                  value={logicOperator}
-                  onChange={(e) => setLogicOperator(e.target.value)}
-                >
-                  <option value="AND">AND</option>
-                  <option value="OR">OR</option>
-                </select>
-              )}
-
-              {index === conditions.length - 1 && (
-                <button
-                  className="button button-secondary button-small"
-                  type="button"
-                  disabled={conditions.length >= 5}
-                  onClick={() =>
-                    setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])
-                  }
-                >
-                  +
-                </button>
-              )}
 
               {conditions.length > 1 && (
                 <button
-                  className="button button-danger button-small"
+                  className="cohort-condition-remove"
                   type="button"
                   onClick={() => {
                     const updated = conditions.filter((_, i) => i !== index)
                     setConditions(updated)
                   }}
                 >
-                  Remove
+                  X
                 </button>
               )}
             </div>
           </div>
+
+          {conditions.length > 1 && index < conditions.length - 1 && (
+            <div className="cohort-logic-connector">
+              <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
+                <option value="AND">AND</option>
+                <option value="OR">OR</option>
+              </select>
+            </div>
+          )}
         </div>
       ))}
+
+      <button
+        className="cohort-add-condition"
+        type="button"
+        disabled={conditions.length >= 5}
+        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
+      >
+        + Add Condition
+      </button>
 
       <div className="inline-controls">
         <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
