@@ -43,6 +43,14 @@ export async function listCohorts() {
   return request('/cohorts', { method: 'GET' })
 }
 
+export async function updateCohort(cohortId, payload) {
+  return request(`/cohorts/${cohortId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function applyFilters(payload) {
   return request('/apply-filters', {
     method: 'POST',

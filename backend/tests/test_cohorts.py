@@ -239,3 +239,127 @@ def test_delete_cohort_succeeds_when_cohort_has_no_members(client: TestClient, d
         [cohort_id],
     ).fetchone()[0]
     assert exists_after == 0
+
+
+def test_list_cohorts_returns_logic_and_conditions(client: TestClient) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "searchers",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    response = client.get("/cohorts")
+    assert response.status_code == 200, response.text
+
+    cohorts = response.json()["cohorts"]
+    created_cohort = next(row for row in cohorts if row["cohort_id"] == created.json()["cohort_id"])
+    assert created_cohort["logic_operator"] == "AND"
+    assert created_cohort["conditions"] == [{"event_name": "purchase", "min_event_count": 1}]
+
+
+def test_update_cohort_replaces_conditions_and_rebuilds_membership(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_once",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    cohort_id = created.json()["cohort_id"]
+
+    before_update_members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert before_update_members == [("u1",), ("u2",), ("u3",)]
+
+    updated = client.put(
+        f"/cohorts/{cohort_id}",
+        json={
+            "name": "signup_once",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json() == {"cohort_id": cohort_id, "users_joined": 1}
+
+    condition_rows = db_connection.execute(
+        "SELECT event_name, min_event_count FROM cohort_conditions WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchall()
+    assert condition_rows == [("signup", 1)]
+
+    membership_rows = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert membership_rows == [("u2",)]
+
+    activity_rows = db_connection.execute(
+        "SELECT COUNT(*) FROM cohort_activity_snapshot WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchone()[0]
+    assert activity_rows == 2
+
+
+def test_update_cohort_returns_404_for_unknown_cohort(client: TestClient) -> None:
+    response = client.put(
+        "/cohorts/99999",
+        json={
+            "name": "missing",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+
+    assert response.status_code == 404
+    assert response.json() == {"detail": "Cohort not found"}
+
+
+def test_update_cohort_rejects_empty_conditions(client: TestClient) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_once",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    response = client.put(
+        f"/cohorts/{created.json()['cohort_id']}",
+        json={"name": "empty", "logic_operator": "AND", "conditions": []},
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "At least one condition is required"}
+
+
+def test_update_all_users_is_forbidden(client: TestClient) -> None:
+    _prepare_normalized_events(client)
+
+    response = client.put(
+        "/cohorts/1",
+        json={
+            "name": "All Users Updated",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "All Users cohort cannot be updated"}
