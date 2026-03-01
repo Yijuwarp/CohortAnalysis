@@ -207,3 +207,27 @@ tbody tr:hover {
 li .button {
   margin-left: var(--space-2);
 }
+
+.cohort-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-2) 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.cohort-left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.badge-inactive {
+  background-color: #fef2f2;
+  color: #991b1b;
+  font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
