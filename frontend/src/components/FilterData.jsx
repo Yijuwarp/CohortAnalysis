@@ -73,7 +73,9 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [valueCache, setValueCache] = useState({})
+  const [openValuePickerIndex, setOpenValuePickerIndex] = useState(null)
   const previousColumnsSignatureRef = useRef('')
+  const filterSectionRef = useRef(null)
 
   const columnByName = useMemo(
     () => Object.fromEntries(columns.map((column) => [column.name, column])),
@@ -187,6 +189,26 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
     loadMetadata()
   }, [refreshToken])
 
+  useEffect(() => {
+    if (openValuePickerIndex === null) {
+      return
+    }
+
+    const handleDocumentClick = (event) => {
+      const target = event.target
+      const clickedInsideFilterSection = filterSectionRef.current?.contains(target)
+      const clickedValuePicker = target?.closest?.('.filter-value-picker')
+      const clickedAddButton = target?.closest?.('.chip-add')
+
+      if (!clickedInsideFilterSection || (!clickedValuePicker && !clickedAddButton)) {
+        setOpenValuePickerIndex(null)
+      }
+    }
+
+    document.addEventListener('click', handleDocumentClick)
+    return () => document.removeEventListener('click', handleDocumentClick)
+  }, [openValuePickerIndex])
+
   const updateFilter = (index, key, value) => {
     setFilters((prev) => {
       const next = [...prev]
@@ -204,6 +226,55 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       }
 
       next[index] = updated
+      return next
+    })
+  }
+
+  const addFilterValue = (index, valueToAdd) => {
+    const normalizedValue = String(valueToAdd)
+    setFilters((prev) => {
+      const next = [...prev]
+      const current = next[index]
+      if (!current) {
+        return prev
+      }
+      const isMulti = current.operator === 'IN' || current.operator === 'NOT IN'
+      const selectedValues = Array.isArray(current.value)
+        ? current.value.map((value) => String(value))
+        : current.value
+          ? [String(current.value)]
+          : []
+      if (selectedValues.includes(normalizedValue)) {
+        return prev
+      }
+
+      next[index] = {
+        ...current,
+        value: isMulti ? [...selectedValues, normalizedValue] : normalizedValue,
+      }
+      return next
+    })
+  }
+
+  const removeFilterValue = (index, valueToRemove) => {
+    const normalizedValue = String(valueToRemove)
+    setFilters((prev) => {
+      const next = [...prev]
+      const current = next[index]
+      if (!current) {
+        return prev
+      }
+      const selectedValues = Array.isArray(current.value)
+        ? current.value.map((value) => String(value))
+        : current.value
+          ? [String(current.value)]
+          : []
+      const remainingValues = selectedValues.filter((value) => value !== normalizedValue)
+      const isMulti = current.operator === 'IN' || current.operator === 'NOT IN'
+      next[index] = {
+        ...current,
+        value: isMulti ? remainingValues : (remainingValues[0] || ''),
+      }
       return next
     })
   }
@@ -268,7 +339,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   ).length
 
   return (
-    <section className="card">
+    <section className="card" ref={filterSectionRef}>
       <h2>3. Filter Data</h2>
       <p className="secondary-text">
         Filtered to {summary.filtered_rows} rows out of {summary.total_rows} rows ({summary.percentage.toFixed(2)}%)
@@ -287,7 +358,6 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       </div>
 
       {filters.map((row, index) => {
-        const allowedOperators = getAllowedOperators(row.column)
         const fetchedValues = (valueCache[row.column]?.values || []).map((value) => String(value))
         const selectedValues = Array.isArray(row.value)
           ? row.value.map((value) => String(value))
@@ -295,84 +365,116 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
             ? [String(row.value)]
             : []
         const mergedValues = Array.from(new Set([...fetchedValues, ...selectedValues]))
+        const availableValues = mergedValues.filter((value) => !selectedValues.includes(value))
         const currentDistinctCount = Number(valueCache[row.column]?.total_distinct || 0)
-        const isMulti = row.operator === 'IN' || row.operator === 'NOT IN'
         const truncated = currentDistinctCount > fetchedValues.length && fetchedValues.length === 100
 
         return (
-          <div key={index} className="condition-row" style={{ opacity: row.enabled ? 1 : 0.5 }}>
-            <label className="inline-checkbox">
-              <input
-                type="checkbox"
-                checked={row.enabled}
-                onChange={() => updateFilter(index, 'enabled', !row.enabled)}
-              />
-              Enabled
-            </label>
-            <select
-              value={row.column}
-              onChange={(e) => {
-                const nextColumn = e.target.value
-                updateFilter(index, 'column', nextColumn)
-                ensureColumnValuesLoaded(nextColumn)
-              }}
-            >
-              <option value="">Select column</option>
-              {columns.map((column) => {
-                const totalDistinct = Number(valueCache[column.name]?.total_distinct || 0)
-                const labelSuffix = totalDistinct > 0 ? ` (${totalDistinct} values)` : ''
-                const roleLabel = column.role ? ` (${column.role})` : ''
-                return (
-                  <option key={column.name} value={column.name}>
-                    {column.name}
-                    {roleLabel}
-                    {labelSuffix}
-                  </option>
-                )
-              })}
-            </select>
-            <select
-              value={row.operator}
-              onChange={(e) => updateFilter(index, 'operator', e.target.value)}
-              disabled={!row.column}
-            >
-              {OPERATOR_ORDER.map((operator) => (
-                <option key={operator} value={operator} disabled={!allowedOperators.includes(operator)}>
-                  {operator}
-                </option>
-              ))}
-            </select>
-            <select
-              value={
-                isMulti
-                  ? (Array.isArray(row.value) ? row.value.map((value) => String(value)) : [])
-                  : (row.value ? String(row.value) : '')
-              }
-              multiple={isMulti}
-              disabled={!row.column}
-              onChange={(e) => {
-                if (isMulti) {
-                  updateFilter(
-                    index,
-                    'value',
-                    Array.from(e.target.selectedOptions).map((option) => String(option.value))
+          <div key={index} className={`filter-block ${row.enabled ? '' : 'filter-disabled'}`}>
+            <div className="filter-header-row">
+              <label className="inline-checkbox filter-enabled-toggle">
+                <input
+                  type="checkbox"
+                  checked={row.enabled}
+                  onChange={() => updateFilter(index, 'enabled', !row.enabled)}
+                />
+              </label>
+              <select
+                value={row.column}
+                onChange={(e) => {
+                  const nextColumn = e.target.value
+                  updateFilter(index, 'column', nextColumn)
+                  ensureColumnValuesLoaded(nextColumn)
+                  setOpenValuePickerIndex(null)
+                }}
+              >
+                <option value="">Select column</option>
+                {columns.map((column) => {
+                  const totalDistinct = Number(valueCache[column.name]?.total_distinct || 0)
+                  const labelSuffix = totalDistinct > 0 ? ` (${totalDistinct} values)` : ''
+                  const roleLabel = column.role ? ` (${column.role})` : ''
+                  return (
+                    <option key={column.name} value={column.name}>
+                      {column.name}
+                      {roleLabel}
+                      {labelSuffix}
+                    </option>
                   )
-                  return
-                }
-                updateFilter(index, 'value', String(e.target.value))
-              }}
-            >
-              {!isMulti && <option value="">Select value</option>}
-              {mergedValues.map((option) => (
-                <option key={`${row.column}-${option}`} value={option}>
-                  {option}
-                </option>
+                })}
+              </select>
+              <select
+                value={row.operator}
+                onChange={(e) => {
+                  updateFilter(index, 'operator', e.target.value)
+                  setOpenValuePickerIndex(null)
+                }}
+                disabled={!row.column}
+              >
+                {getAllowedOperators(row.column).map((operator) => (
+                  <option key={operator} value={operator}>
+                    {operator}
+                  </option>
+                ))}
+              </select>
+              {filters.length > 1 && (
+                <button
+                  className="filter-remove"
+                  type="button"
+                  onClick={() => {
+                    setFilters((prev) => prev.filter((_, i) => i !== index))
+                    setOpenValuePickerIndex(null)
+                  }}
+                >
+                  X
+                </button>
+              )}
+            </div>
+
+            <p className="tertiary-label">Values:</p>
+            <div className="filter-values">
+              {selectedValues.map((value) => (
+                <span className="filter-chip" key={`${row.column}-${value}`}>
+                  {value}
+                  <button className="chip-remove" type="button" onClick={() => removeFilterValue(index, value)}>
+                    ×
+                  </button>
+                </span>
               ))}
-            </select>
-            {filters.length > 1 && (
-              <button className="button button-danger" type="button" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== index))}>
-                Remove
+              <button
+                className="chip-add"
+                type="button"
+                disabled={!row.column}
+                onClick={async () => {
+                  if (!row.column) {
+                    return
+                  }
+                  await ensureColumnValuesLoaded(row.column)
+                  setOpenValuePickerIndex((current) => (current === index ? null : index))
+                }}
+              >
+                +
               </button>
+            </div>
+            {openValuePickerIndex === index && row.column && (
+              <div className="filter-value-picker">
+                {availableValues.length > 0 ? (
+                  availableValues.map((value) => (
+                    <button
+                      className="filter-value-option"
+                      key={`${row.column}-option-${value}`}
+                      type="button"
+                      onClick={() => {
+                        addFilterValue(index, value)
+                        setOpenValuePickerIndex(null)
+                      }}
+                    >
+                      {value}
+                    </button>
+                  ))
+                ) : (
+                  <small className="secondary-text">No more values to add</small>
+                )}
+              </div>
             )}
             {truncated && <small className="secondary-text">Showing first 100 of {currentDistinctCount} values</small>}
           </div>
