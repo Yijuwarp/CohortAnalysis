@@ -118,11 +118,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </label>
       </div>
 
-      <h4 style={{ marginTop: '1rem' }}>Conditions</h4>
+      <h4>Conditions</h4>
       {conditions.map((condition, index) => (
-        <div key={index} className="condition-row" style={{ marginBottom: '0.75rem' }}>
+        <div key={index} className="condition-row">
           {index > 0 && (
-            <div style={{ marginBottom: '0.5rem' }}>
+            <div className="operator-row">
               <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
                 <option value="AND">AND</option>
                 <option value="OR">OR</option>
@@ -130,9 +130,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
             </div>
           )}
 
-          <div style={{ display: 'flex', gap: '1rem', alignItems: 'flex-end' }}>
+          <div className="condition-layout">
             <div>
-              <label style={{ display: 'block', fontSize: '0.85rem' }}>Event Name</label>
+              <label className="tertiary-label">Event Name</label>
               <select
                 value={condition.event_name}
                 onChange={(e) => {
@@ -150,7 +150,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
             </div>
 
             <div>
-              <label style={{ display: 'block', fontSize: '0.85rem' }}>Min Event Count</label>
+              <label className="tertiary-label">Min Event Count</label>
               <input
                 type="number"
                 min="1"
@@ -165,12 +165,12 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
             {conditions.length > 1 && (
               <button
+                className="button button-danger"
                 type="button"
                 onClick={() => {
                   const updated = conditions.filter((_, i) => i !== index)
                   setConditions(updated)
                 }}
-                style={{ marginLeft: '0.5rem' }}
               >
                 Remove
               </button>
@@ -179,17 +179,20 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </div>
       ))}
 
-      <button
-        type="button"
-        disabled={conditions.length >= 5}
-        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
-      >
-        + Add Condition
-      </button>
+      <div className="inline-controls">
+        <button
+          className="button button-secondary"
+          type="button"
+          disabled={conditions.length >= 5}
+          onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
+        >
+          + Add Condition
+        </button>
 
-      <button onClick={handleSubmit} disabled={loading || events.length === 0}>
-        {loading ? 'Creating...' : 'Create Cohort'}
-      </button>
+        <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
+          {loading ? 'Creating...' : 'Create Cohort'}
+        </button>
+      </div>
       {events.length === 0 && <p className="error">No events available under current filters</p>}
       {error && <p className="error">{error}</p>}
       {result && (
@@ -200,21 +203,21 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
       <h3>Existing Cohorts</h3>
       {cohorts.length === 0 ? (
-        <p>No cohorts created yet.</p>
+        <p className="secondary-text">No cohorts created yet.</p>
       ) : (
         <ul>
           {cohorts.map((cohort) => (
             <li
               key={cohort.cohort_id}
               title={cohort.is_active ? '' : 'No matching members under current filters'}
-              style={{ opacity: cohort.is_active ? 1 : 0.5 }}
+              className="secondary-text" style={{ opacity: cohort.is_active ? 1 : 0.5 }}
             >
               {cohort.cohort_name}
               <button
+                className="button button-danger"
                 type="button"
                 onClick={() => handleDelete(cohort.cohort_id)}
                 disabled={deletingId === cohort.cohort_id}
-                style={{ marginLeft: '0.5rem' }}
               >
                 {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
               </button>

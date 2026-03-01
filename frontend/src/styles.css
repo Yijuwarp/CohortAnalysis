@@ -1,57 +1,164 @@
-:root {
-  font-family: Inter, system-ui, sans-serif;
-  color: #111827;
-  background: #f3f4f6;
+@import './styles/tokens.css';
+
+* {
+  box-sizing: border-box;
 }
 
 body {
   margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: var(--color-bg);
+  color: var(--color-text-primary);
 }
 
-.container {
-  max-width: 900px;
+.app-container {
+  max-width: var(--max-width);
   margin: 0 auto;
-  padding: 24px;
+  padding: var(--space-6) var(--space-4);
+}
+
+h1 {
+  font-size: 28px;
+  font-weight: 600;
+  margin: 0 0 var(--space-5);
+}
+
+h2 {
+  font-size: var(--font-size-lg);
+  font-weight: 600;
+  margin: 0 0 var(--space-3);
+}
+
+h3 {
+  font-size: var(--font-size-md);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+h4 {
+  font-size: var(--font-size-md);
+  margin: var(--space-4) 0 var(--space-2);
+}
+
+p {
+  margin: 0 0 var(--space-3);
 }
 
 .card {
-  background: #fff;
-  border: 1px solid #e5e7eb;
-  border-radius: 8px;
-  padding: 16px;
-  margin-bottom: 16px;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-5);
+  margin-bottom: var(--space-6);
+  box-shadow: var(--shadow-sm);
+}
+
+
+.card:hover {
+  box-shadow: 0 3px 8px rgba(17, 24, 39, 0.07);
 }
 
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 12px;
-  margin-bottom: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
 }
 
 label {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: 14px;
+  gap: var(--space-1);
+  font-size: var(--font-size-sm);
 }
 
 input,
-select,
-button {
-  padding: 8px;
-  font-size: 14px;
+select {
+  width: 100%;
+  padding: var(--space-2);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+  background-color: var(--color-surface);
 }
 
-button {
+input:focus,
+select:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.button {
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  font-size: var(--font-size-sm);
   cursor: pointer;
+}
+
+.button-primary {
+  background-color: var(--color-primary);
+  color: #fff;
+}
+
+.button-primary:hover {
+  background-color: var(--color-primary-hover);
+}
+
+.button-secondary {
+  background-color: #f3f4f6;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-primary);
+}
+
+.button-danger {
+  background-color: #dc2626;
+  color: #fff;
 }
 
 .inline-controls {
   display: flex;
-  align-items: end;
-  gap: 12px;
-  margin-bottom: 12px;
+  align-items: flex-end;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+}
+
+.condition-row {
+  margin-bottom: var(--space-3);
+}
+
+.condition-layout {
+  display: flex;
+  gap: var(--space-4);
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.inline-checkbox {
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.inline-checkbox input {
+  width: auto;
+}
+
+.operator-row {
+  margin-bottom: var(--space-2);
+}
+
+.tertiary-label {
+  display: block;
+  font-size: var(--font-size-sm);
+  margin-bottom: var(--space-1);
+}
+
+.secondary-text {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
 }
 
 .error {
@@ -62,14 +169,41 @@ button {
   color: #047857;
 }
 
+ul {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+li {
+  margin-bottom: var(--space-2);
+}
+
 table {
   width: 100%;
   border-collapse: collapse;
+  margin-bottom: var(--space-4);
+  font-size: var(--font-size-sm);
 }
 
 th,
 td {
-  border: 1px solid #e5e7eb;
-  padding: 8px;
+  border-top: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border);
+  border-left: none;
+  border-right: none;
+  padding: var(--space-2);
   text-align: left;
+}
+
+th {
+  background-color: #ecfdf3;
+  font-weight: 600;
+}
+
+tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+li .button {
+  margin-left: var(--space-2);
 }

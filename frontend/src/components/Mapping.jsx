@@ -64,7 +64,7 @@ export default function Mapping({ columns, onMappingComplete }) {
           </select>
         </label>
       </div>
-      <button onClick={handleSubmit} disabled={loading || columns.length === 0}>
+      <button className="button button-primary" onClick={handleSubmit} disabled={loading || columns.length === 0}>
         {loading ? 'Saving...' : 'Map Columns'}
       </button>
       {message && <p className="success">{message}</p>}

@@ -31,13 +31,15 @@ export default function Upload({ onUploaded }) {
   return (
     <section className="card">
       <h2>1. Upload CSV</h2>
-      <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
-      <button onClick={handleUpload} disabled={loading}>{loading ? 'Uploading...' : 'Upload'}</button>
+      <div className="inline-controls">
+        <input type="file" accept=".csv" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+        <button className="button button-primary" onClick={handleUpload} disabled={loading}>{loading ? 'Uploading...' : 'Upload'}</button>
+      </div>
       {error && <p className="error">{error}</p>}
       {result && (
         <div>
-          <p>Rows imported: {result.rows_imported}</p>
-          <p>Columns: {result.columns.join(', ')}</p>
+          <p className="secondary-text">Rows imported: {result.rows_imported}</p>
+          <p className="secondary-text">Columns: {result.columns.join(', ')}</p>
         </div>
       )}
     </section>
