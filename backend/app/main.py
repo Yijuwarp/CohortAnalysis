@@ -35,7 +35,7 @@ class CohortCondition(BaseModel):
 class CreateCohortRequest(BaseModel):
     name: str = Field(min_length=1)
     logic_operator: str
-    conditions: list[CohortCondition] = Field(min_length=1, max_length=5)
+    conditions: list[CohortCondition] = Field(max_length=5)
 
     @field_validator("logic_operator")
     @classmethod
@@ -819,6 +819,9 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
 
         ensure_cohort_tables(connection)
 
+        if not payload.conditions:
+            raise HTTPException(status_code=400, detail="At least one condition is required")
+
         cohort_id = connection.execute(
             """
             INSERT INTO cohorts (cohort_id, name, logic_operator, is_active)
@@ -859,23 +862,99 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ensure_cohort_tables(connection)
         rows = connection.execute(
             """
-            SELECT cohort_id, name, is_active
-            FROM cohorts
-            ORDER BY cohort_id
+            SELECT
+                c.cohort_id,
+                c.name,
+                c.is_active,
+                c.logic_operator,
+                cc.event_name,
+                cc.min_event_count
+            FROM cohorts c
+            LEFT JOIN cohort_conditions cc ON c.cohort_id = cc.cohort_id
+            ORDER BY c.cohort_id, cc.condition_id
             """
         ).fetchall()
-        return {
-            "cohorts": [
-                {
-                    "cohort_id": int(cohort_id),
+
+        cohorts: dict[int, dict[str, object]] = {}
+        for cohort_id, name, is_active, logic_operator, event_name, min_event_count in rows:
+            cohort_id = int(cohort_id)
+            if cohort_id not in cohorts:
+                cohorts[cohort_id] = {
+                    "cohort_id": cohort_id,
                     "cohort_name": str(name),
                     "is_active": bool(is_active),
+                    "logic_operator": str(logic_operator or "AND"),
+                    "conditions": [],
                 }
-                for cohort_id, name, is_active in rows
-            ]
+
+            if event_name is not None and min_event_count is not None:
+                cohorts[cohort_id]["conditions"].append(
+                    {
+                        "event_name": str(event_name),
+                        "min_event_count": int(min_event_count),
+                    }
+                )
+
+        return {
+            "cohorts": sorted(cohorts.values(), key=lambda cohort: cohort["cohort_id"])
         }
     finally:
         connection.close()
+
+
+@app.put("/cohorts/{cohort_id}")
+def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        ).fetchone()[0]
+        source_table = "events_scoped" if scoped_exists else "events_normalized"
+
+        cohort_row = connection.execute(
+            "SELECT name FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()
+        if cohort_row is None:
+            raise HTTPException(status_code=404, detail="Cohort not found")
+        if cohort_row[0] == "All Users":
+            raise HTTPException(status_code=400, detail="All Users cohort cannot be updated")
+
+        if not payload.conditions:
+            raise HTTPException(status_code=400, detail="At least one condition is required")
+
+        connection.execute(
+            "UPDATE cohorts SET name = ?, logic_operator = ? WHERE cohort_id = ?",
+            [payload.name, payload.logic_operator, cohort_id],
+        )
+        connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
+
+        for condition in payload.conditions:
+            connection.execute(
+                """
+                INSERT INTO cohort_conditions (condition_id, cohort_id, event_name, min_event_count)
+                VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?)
+                """,
+                [cohort_id, condition.event_name, condition.min_event_count],
+            )
+
+        connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
+        connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
+
+        build_cohort_membership(connection, cohort_id, source_table)
+        refresh_cohort_activity(connection)
+
+        users_joined = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
+                [cohort_id],
+            ).fetchone()[0]
+        )
+    finally:
+        connection.close()
+
+    return {"cohort_id": int(cohort_id), "users_joined": users_joined}
 
 
 @app.delete("/cohorts/{cohort_id}")

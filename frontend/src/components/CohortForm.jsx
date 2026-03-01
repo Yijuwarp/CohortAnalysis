@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { createCohort, deleteCohort, listCohorts, listEvents } from '../api'
+import { createCohort, deleteCohort, listCohorts, listEvents, updateCohort } from '../api'
 
 export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [name, setName] = useState('')
@@ -11,6 +11,15 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [cohorts, setCohorts] = useState([])
   const [deletingId, setDeletingId] = useState(null)
   const [events, setEvents] = useState([])
+  const [infoCohortId, setInfoCohortId] = useState(null)
+  const [editingCohortId, setEditingCohortId] = useState(null)
+
+  const resetForm = () => {
+    setEditingCohortId(null)
+    setName('')
+    setConditions([{ event_name: events[0] || '', min_event_count: 1 }])
+    setLogicOperator('AND')
+  }
 
   const loadCohorts = async () => {
     try {
@@ -74,15 +83,16 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setLoading(true)
 
     try {
-      const data = await createCohort({
+      const payload = {
         name,
         logic_operator: logicOperator,
         conditions,
-      })
-      setResult(data)
-      setName('')
-      setConditions([{ event_name: events[0] || '', min_event_count: 1 }])
-      setLogicOperator('AND')
+      }
+
+      const isEditing = Boolean(editingCohortId)
+      const data = isEditing ? await updateCohort(editingCohortId, payload) : await createCohort(payload)
+      setResult({ ...data, mode: isEditing ? 'updated' : 'created' })
+      resetForm()
       await loadCohorts()
       onCohortsChanged()
     } catch (err) {
@@ -108,9 +118,20 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     }
   }
 
+  const handleEdit = (cohort) => {
+    setEditingCohortId(cohort.cohort_id)
+    setName(cohort.cohort_name)
+    setLogicOperator(cohort.logic_operator || 'AND')
+    setConditions(
+      cohort.conditions?.length
+        ? cohort.conditions.map((condition) => ({ ...condition }))
+        : [{ event_name: events[0] || '', min_event_count: 1 }]
+    )
+  }
+
   return (
     <section className="card">
-      <h2>4. Create Cohort</h2>
+      <h2>4. {editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h2>
       <div className="grid">
         <label>
           Cohort Name
@@ -163,6 +184,19 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
               />
             </div>
 
+            {index === conditions.length - 1 && (
+              <button
+                className="button button-secondary"
+                type="button"
+                disabled={conditions.length >= 5}
+                onClick={() =>
+                  setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])
+                }
+              >
+                +
+              </button>
+            )}
+
             {conditions.length > 1 && (
               <button
                 className="button button-danger"
@@ -180,24 +214,21 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       ))}
 
       <div className="inline-controls">
-        <button
-          className="button button-secondary"
-          type="button"
-          disabled={conditions.length >= 5}
-          onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1 }])}
-        >
-          + Add Condition
+        <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
+          {loading ? (editingCohortId ? 'Updating...' : 'Creating...') : editingCohortId ? 'Update Cohort' : 'Create Cohort'}
         </button>
 
-        <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
-          {loading ? 'Creating...' : 'Create Cohort'}
-        </button>
+        {editingCohortId && (
+          <button className="button button-secondary" type="button" onClick={resetForm} disabled={loading}>
+            Cancel
+          </button>
+        )}
       </div>
       {events.length === 0 && <p className="error">No events available under current filters</p>}
       {error && <p className="error">{error}</p>}
       {result && (
         <p className="success">
-          Created cohort #{result.cohort_id} with {result.users_joined} users joined.
+          {result.mode === 'updated' ? 'Updated' : 'Created'} cohort #{result.cohort_id} with {result.users_joined} users joined.
         </p>
       )}
 
@@ -207,24 +238,48 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       ) : (
         <ul>
           {cohorts.map((cohort) => (
-            <li
-              key={cohort.cohort_id}
-              title={cohort.is_active ? '' : 'No matching members under current filters'}
-              className="cohort-row"
-            >
-              <div className="cohort-left">
-                <span>{cohort.cohort_name}</span>
-                {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
-              </div>
+            <li key={cohort.cohort_id} title={cohort.is_active ? '' : 'No matching members under current filters'}>
+              <div className="cohort-row">
+                <div className="cohort-left">
+                  <span>{cohort.cohort_name}</span>
+                  {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
+                </div>
 
-              <button
-                className="button button-danger"
-                type="button"
-                onClick={() => handleDelete(cohort.cohort_id)}
-                disabled={deletingId === cohort.cohort_id}
-              >
-                {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
-              </button>
+                <div className="cohort-actions">
+                  <button
+                    className="button button-secondary button-icon"
+                    type="button"
+                    onClick={() => setInfoCohortId(infoCohortId === cohort.cohort_id ? null : cohort.cohort_id)}
+                  >
+                    i
+                  </button>
+
+                  <button className="button button-secondary" type="button" onClick={() => handleEdit(cohort)}>
+                    Edit
+                  </button>
+
+                  <button
+                    className="button button-danger"
+                    type="button"
+                    onClick={() => handleDelete(cohort.cohort_id)}
+                    disabled={deletingId === cohort.cohort_id}
+                  >
+                    {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+              {infoCohortId === cohort.cohort_id && (
+                <div className="cohort-info">
+                  <div>
+                    <strong>Logic:</strong> {cohort.logic_operator}
+                  </div>
+                  {(cohort.conditions || []).map((c, index) => (
+                    <div key={index}>
+                      {c.event_name} ≥ {c.min_event_count}
+                    </div>
+                  ))}
+                </div>
+              )}
             </li>
           ))}
         </ul>

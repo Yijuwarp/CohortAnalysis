@@ -157,7 +157,6 @@ select:focus {
 }
 
 .secondary-text {
-  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -213,7 +212,6 @@ li .button {
   justify-content: space-between;
   align-items: center;
   padding: var(--space-2) 0;
-  color: var(--color-text-secondary);
   font-size: var(--font-size-sm);
 }
 
@@ -230,4 +228,25 @@ li .button {
   padding: 2px 8px;
   border-radius: 999px;
   font-weight: 500;
+}
+
+
+.button-icon {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.cohort-info {
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  background: #f9fafb;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-sm);
+}
+
+
+.cohort-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
