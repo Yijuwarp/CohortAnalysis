@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
 import { getRetention, listEvents } from '../api'
 
-export default function RetentionTable({ refreshToken }) {
+export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange }) {
   const [maxDay, setMaxDay] = useState(7)
-  const [retentionEvent, setRetentionEvent] = useState('any')
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
@@ -54,7 +53,7 @@ export default function RetentionTable({ refreshToken }) {
         </label>
         <label>
           Retention Event
-          <select value={retentionEvent} onChange={(e) => setRetentionEvent(e.target.value)}>
+          <select value={retentionEvent} onChange={(e) => onRetentionEventChange(e.target.value)}>
             <option value="any">Any Event</option>
             {events.map((eventName) => (
               <option key={eventName} value={eventName}>

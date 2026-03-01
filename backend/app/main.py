@@ -1191,6 +1191,62 @@ def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[lis
     return cohorts, cohort_sizes
 
 
+def fetch_retention_active_rows(
+    connection: duckdb.DuckDBPyConnection,
+    max_day: int,
+    retention_event: str | None,
+) -> list[tuple[int, int, int]]:
+    if retention_event and retention_event != "any":
+        return connection.execute(
+            """
+            WITH activity_deltas AS (
+                SELECT
+                    cm.cohort_id,
+                    cm.user_id,
+                    DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
+                FROM cohort_membership cm
+                JOIN cohort_activity_snapshot cas
+                  ON cm.cohort_id = cas.cohort_id
+                 AND cm.user_id = cas.user_id
+                JOIN events_scoped es
+                  ON es.user_id = cas.user_id
+                 AND es.event_time = cas.event_time
+                 AND es.event_name = cas.event_name
+                WHERE es.event_name = ?
+                  AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
+            )
+            SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
+            FROM activity_deltas
+            GROUP BY cohort_id, day_number
+            """,
+            [retention_event, max_day],
+        ).fetchall()
+
+    return connection.execute(
+        """
+        WITH activity_deltas AS (
+            SELECT
+                cm.cohort_id,
+                cm.user_id,
+                DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
+            FROM cohort_membership cm
+            JOIN cohort_activity_snapshot cas
+              ON cm.cohort_id = cas.cohort_id
+             AND cm.user_id = cas.user_id
+            JOIN events_scoped es
+              ON es.user_id = cas.user_id
+             AND es.event_time = cas.event_time
+             AND es.event_name = cas.event_name
+            WHERE DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
+        )
+        SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
+        FROM activity_deltas
+        GROUP BY cohort_id, day_number
+        """,
+        [max_day],
+    ).fetchall()
+
+
 @app.get("/retention")
 def get_retention(
     max_day: int = Query(7, ge=0),
@@ -1209,55 +1265,7 @@ def get_retention(
         if not cohorts:
             return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
 
-        if retention_event:
-            active_rows = connection.execute(
-                """
-                WITH activity_deltas AS (
-                    SELECT
-                        cm.cohort_id,
-                        cm.user_id,
-                        DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
-                    FROM cohort_membership cm
-                    JOIN cohort_activity_snapshot cas
-                      ON cm.cohort_id = cas.cohort_id
-                     AND cm.user_id = cas.user_id
-                    JOIN events_scoped es
-                      ON es.user_id = cas.user_id
-                     AND es.event_time = cas.event_time
-                     AND es.event_name = cas.event_name
-                    WHERE es.event_name = ?
-                      AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
-                )
-                SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
-                FROM activity_deltas
-                GROUP BY cohort_id, day_number
-                """,
-                [retention_event, max_day],
-            ).fetchall()
-        else:
-            active_rows = connection.execute(
-                """
-                WITH activity_deltas AS (
-                    SELECT
-                        cm.cohort_id,
-                        cm.user_id,
-                        DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
-                    FROM cohort_membership cm
-                    JOIN cohort_activity_snapshot cas
-                      ON cm.cohort_id = cas.cohort_id
-                     AND cm.user_id = cas.user_id
-                    JOIN events_scoped es
-                      ON es.user_id = cas.user_id
-                     AND es.event_time = cas.event_time
-                     AND es.event_name = cas.event_name
-                    WHERE DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
-                )
-                SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
-                FROM activity_deltas
-                GROUP BY cohort_id, day_number
-                """,
-                [max_day],
-            ).fetchall()
+        active_rows = fetch_retention_active_rows(connection, max_day, retention_event)
 
         active_by_day = {(int(c), int(d)): int(a) for c, d, a in active_rows}
 
@@ -1302,7 +1310,11 @@ def list_events() -> dict[str, list[str]]:
 
 
 @app.get("/usage")
-def get_usage(event: str = Query(...), max_day: int = Query(7, ge=0)) -> dict[str, object]:
+def get_usage(
+    event: str = Query(...),
+    max_day: int = Query(7, ge=0),
+    retention_event: str | None = Query(None),
+) -> dict[str, object]:
     connection = get_connection()
     try:
         scoped_exists = connection.execute(
@@ -1313,8 +1325,10 @@ def get_usage(event: str = Query(...), max_day: int = Query(7, ge=0)) -> dict[st
         empty_response = {
             "max_day": int(max_day),
             "event": event,
+            "retention_event": retention_event or "any",
             "usage_volume_table": [],
             "usage_users_table": [],
+            "retained_users_table": [],
         }
         if not scoped_exists:
             return empty_response
@@ -1351,27 +1365,36 @@ def get_usage(event: str = Query(...), max_day: int = Query(7, ge=0)) -> dict[st
             for cohort_id, day_number, total_events, distinct_users in usage_rows
         }
 
+        retention_rows = fetch_retention_active_rows(connection, max_day, retention_event)
+        retained_by_day = {(int(c), int(d)): int(a) for c, d, a in retention_rows}
+
         usage_volume_table = []
         usage_users_table = []
+        retained_users_table = []
         for cohort_id, cohort_name in cohorts:
             cohort_id = int(cohort_id)
             cohort_size = cohort_sizes.get(cohort_id, 0)
             volume_values = {}
             user_values = {}
+            retained_values = {}
             for day_number in range(max_day + 1):
                 bucket = usage_by_day.get((cohort_id, day_number), {})
                 volume_values[str(day_number)] = int(bucket.get("total_events", 0))
                 user_values[str(day_number)] = int(bucket.get("distinct_users", 0))
+                retained_values[str(day_number)] = int(retained_by_day.get((cohort_id, day_number), 0))
 
             common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size)}
             usage_volume_table.append({**common_metadata, "values": volume_values})
             usage_users_table.append({**common_metadata, "values": user_values})
+            retained_users_table.append({**common_metadata, "values": retained_values})
 
         return {
             "max_day": int(max_day),
             "event": event,
+            "retention_event": retention_event or "any",
             "usage_volume_table": usage_volume_table,
             "usage_users_table": usage_users_table,
+            "retained_users_table": retained_users_table,
         }
     finally:
         connection.close()
