@@ -231,3 +231,65 @@ def test_retention_overlay_handles_same_timestamp_different_events_without_doubl
 
     # If overlay join duplicated same-timestamp records ambiguously, this day can inflate under bad joins.
     assert all(value <= 100.0 for value in row['retention'].values())
+
+
+def test_columns_includes_data_type(client: TestClient) -> None:
+    _prepare_scoped_fixture(client)
+
+    response = client.get('/columns')
+    assert response.status_code == 200, response.text
+
+    columns = response.json()['columns']
+    event_time = next((column for column in columns if column['name'] == 'event_time'), None)
+    assert event_time is not None
+    assert event_time['data_type'] == 'TIMESTAMP'
+
+
+def test_column_values_returns_distinct_values(client: TestClient) -> None:
+    _prepare_scoped_fixture(client)
+
+    response = client.get('/column-values?column=country')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload['values'] == ['CA', 'US']
+    assert payload['total_distinct'] == 2
+
+
+def test_column_values_respects_100_limit(client: TestClient, db_connection) -> None:
+    _prepare_scoped_fixture(client)
+
+    rows = [
+        (f'u_extra_{index}', 'open', f'2026-02-10 12:{index % 60:02d}:00', f'code_{index}', 'Web', f'cx_{index}')
+        for index in range(150)
+    ]
+    db_connection.executemany(
+        """
+        INSERT INTO events_normalized (user_id, event_name, event_time, country, device, campaign_id)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        rows,
+    )
+
+    reset_scope = client.post('/apply-filters', json={'date_range': None, 'filters': []})
+    assert reset_scope.status_code == 200, reset_scope.text
+
+    response = client.get('/column-values?column=country')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert len(payload['values']) == 100
+    assert payload['total_distinct'] == 152
+
+
+def test_date_range_returns_min_max(client: TestClient) -> None:
+    _prepare_scoped_fixture(client)
+
+    response = client.get('/date-range')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload == {
+        'min_date': '2026-01-01',
+        'max_date': '2026-02-02',
+    }

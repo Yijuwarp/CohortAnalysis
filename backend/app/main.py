@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime, UTC
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import duckdb
@@ -204,7 +204,7 @@ def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[st
             json.dumps(payload),
             total_rows,
             filtered_rows,
-            datetime.now(UTC),
+            datetime.now(timezone.utc),
         ],
     )
     return {"total_rows": total_rows, "filtered_rows": filtered_rows}
@@ -590,7 +590,7 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
 
         rows = connection.execute(
             """
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
             WHERE table_name = 'events_normalized'
             ORDER BY ordinal_position
@@ -602,10 +602,82 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
             "event_time": "event time",
         }
         payload = [
-            {"name": str(name), "role": role_map.get(str(name))}
-            for (name,) in rows
+            {
+                "name": str(name),
+                "role": role_map.get(str(name)),
+                "data_type": str(data_type).upper(),
+            }
+            for name, data_type in rows
         ]
         return {"columns": payload}
+    finally:
+        connection.close()
+
+
+@app.get("/column-values")
+def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[str] | int]:
+    connection = get_connection()
+    try:
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        ).fetchone()[0]
+        if not scoped_exists:
+            return {"values": [], "total_distinct": 0}
+
+        known_columns = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events_scoped'
+                """
+            ).fetchall()
+        }
+        if column not in known_columns:
+            raise HTTPException(status_code=400, detail=f"Unknown column: {column}")
+
+        column_ref = quote_identifier(column)
+        rows = connection.execute(
+            f"""
+            SELECT DISTINCT {column_ref}
+            FROM events_scoped
+            WHERE {column_ref} IS NOT NULL
+            ORDER BY 1
+            LIMIT 100
+            """
+        ).fetchall()
+        total_distinct = int(
+            connection.execute(
+                f"SELECT COUNT(DISTINCT {column_ref}) FROM events_scoped WHERE {column_ref} IS NOT NULL"
+            ).fetchone()[0]
+        )
+        return {
+            "values": [str(value) for (value,) in rows],
+            "total_distinct": total_distinct,
+        }
+    finally:
+        connection.close()
+
+
+@app.get("/date-range")
+def get_date_range() -> dict[str, str | None]:
+    connection = get_connection()
+    try:
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()[0]
+        if not normalized_exists:
+            return {"min_date": None, "max_date": None}
+
+        min_event_time, max_event_time = connection.execute(
+            "SELECT MIN(event_time), MAX(event_time) FROM events_normalized"
+        ).fetchone()
+
+        return {
+            "min_date": min_event_time.date().isoformat() if min_event_time else None,
+            "max_date": max_event_time.date().isoformat() if max_event_time else None,
+        }
     finally:
         connection.close()
 
