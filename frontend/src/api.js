@@ -59,6 +59,14 @@ export async function getColumns() {
   return request('/columns', { method: 'GET' })
 }
 
+export async function getColumnValues(column) {
+  return request(`/column-values?column=${encodeURIComponent(column)}`, { method: 'GET' })
+}
+
+export async function getDateRange() {
+  return request('/date-range', { method: 'GET' })
+}
+
 export async function deleteCohort(cohortId) {
   return request(`/cohorts/${cohortId}`, {
     method: 'DELETE',

@@ -1,7 +1,66 @@
-import { useEffect, useState } from 'react'
-import { applyFilters, getColumns, getScope } from '../api'
+import { useEffect, useMemo, useState } from 'react'
+import { applyFilters, getColumns, getColumnValues, getDateRange, getScope } from '../api'
 
-const defaultFilter = { column: '', operator: '=', value: '' }
+const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
+
+const TYPE_OPERATOR_MAP = {
+  TEXT: ['IN', 'NOT IN', '=', '!='],
+  NUMERIC: ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<='],
+  TIMESTAMP: ['=', '!=', '>', '>=', '<', '<='],
+}
+
+const defaultFilter = {
+  column: '',
+  operator: 'IN',
+  value: [],
+  enabled: true,
+}
+
+const normalizeColumnType = (dataType = '') => {
+  const upper = String(dataType).toUpperCase()
+  if (upper.includes('TIMESTAMP') || upper === 'DATE') {
+    return 'TIMESTAMP'
+  }
+  if (
+    [
+      'TINYINT',
+      'SMALLINT',
+      'INTEGER',
+      'BIGINT',
+      'HUGEINT',
+      'UTINYINT',
+      'USMALLINT',
+      'UINTEGER',
+      'UBIGINT',
+      'FLOAT',
+      'REAL',
+      'DOUBLE',
+      'DECIMAL',
+    ].includes(upper) ||
+    upper.startsWith('DECIMAL')
+  ) {
+    return 'NUMERIC'
+  }
+  return 'TEXT'
+}
+
+const normalizeRowValue = (operator, value) => {
+  const requiresMulti = operator === 'IN' || operator === 'NOT IN'
+  if (requiresMulti) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item))
+    }
+    if (value === '' || value === null || value === undefined) {
+      return []
+    }
+    return [String(value)]
+  }
+
+  if (Array.isArray(value)) {
+    return value.length > 0 ? String(value[0]) : ''
+  }
+  return value ?? ''
+}
 
 export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [columns, setColumns] = useState([])
@@ -10,17 +69,91 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [summary, setSummary] = useState({ total_rows: 0, filtered_rows: 0, percentage: 0 })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [valueCache, setValueCache] = useState({})
+
+  const columnByName = useMemo(
+    () => Object.fromEntries(columns.map((column) => [column.name, column])),
+    [columns]
+  )
+
+  const getAllowedOperators = (columnName, map = columnByName) => {
+    if (!columnName || !map[columnName]) {
+      return OPERATOR_ORDER
+    }
+    const type = normalizeColumnType(map[columnName]?.data_type)
+    return TYPE_OPERATOR_MAP[type] || OPERATOR_ORDER
+  }
+
+  const ensureColumnValuesLoaded = async (columnName) => {
+    if (!columnName || valueCache[columnName]) {
+      return
+    }
+
+    try {
+      const response = await getColumnValues(columnName)
+      setValueCache((prev) => ({
+        ...prev,
+        [columnName]: {
+          values: response.values || [],
+          total_distinct: Number(response.total_distinct || 0),
+        },
+      }))
+    } catch {
+      setValueCache((prev) => ({
+        ...prev,
+        [columnName]: {
+          values: [],
+          total_distinct: 0,
+        },
+      }))
+    }
+  }
 
   const loadMetadata = async () => {
     try {
       const [columnResponse, scopeResponse] = await Promise.all([getColumns(), getScope()])
-      setColumns(columnResponse.columns || [])
+      const loadedColumns = columnResponse.columns || []
+      const loadedColumnMap = Object.fromEntries(loadedColumns.map((column) => [column.name, column]))
+      setColumns(loadedColumns)
+
       const payload = scopeResponse.filters_json || { date_range: null, filters: [] }
-      setDateRange({
-        start: payload.date_range?.start || '',
-        end: payload.date_range?.end || '',
-      })
-      setFilters(payload.filters?.length ? payload.filters.map((row) => ({ ...row, value: Array.isArray(row.value) ? row.value.join(',') : row.value })) : [defaultFilter])
+      const hasDateRange = Boolean(payload.date_range?.start && payload.date_range?.end)
+
+      if (hasDateRange) {
+        setDateRange({
+          start: payload.date_range.start,
+          end: payload.date_range.end,
+        })
+      } else {
+        try {
+          const range = await getDateRange()
+          setDateRange({
+            start: range.min_date || '',
+            end: range.max_date || '',
+          })
+        } catch {
+          setDateRange({ start: '', end: '' })
+        }
+      }
+
+      const mappedFilters = payload.filters?.length
+        ? payload.filters.map((row) => {
+            const allowed = getAllowedOperators(row.column, loadedColumnMap)
+            const nextOperator = allowed.includes(row.operator) ? row.operator : allowed[0]
+            return {
+              ...row,
+              operator: nextOperator,
+              enabled: row.enabled ?? true,
+              value: normalizeRowValue(nextOperator, row.value),
+            }
+          })
+        : [defaultFilter]
+
+      setFilters(mappedFilters)
+
+      const columnsToLoad = [...new Set(mappedFilters.map((row) => row.column).filter(Boolean))]
+      await Promise.all(columnsToLoad.map((columnName) => ensureColumnValuesLoaded(columnName)))
+
       const totalRows = Number(scopeResponse.total_rows || 0)
       const filteredRows = Number(scopeResponse.filtered_rows || 0)
       setSummary({
@@ -40,7 +173,20 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const updateFilter = (index, key, value) => {
     setFilters((prev) => {
       const next = [...prev]
-      next[index] = { ...next[index], [key]: value }
+      const current = next[index]
+      const updated = { ...current, [key]: value }
+
+      if (key === 'column') {
+        const allowed = getAllowedOperators(value)
+        updated.operator = allowed.includes(updated.operator) ? updated.operator : allowed[0]
+        updated.value = normalizeRowValue(updated.operator, updated.value)
+      }
+
+      if (key === 'operator') {
+        updated.value = normalizeRowValue(value, updated.value)
+      }
+
+      next[index] = updated
       return next
     })
   }
@@ -48,13 +194,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const toPayload = () => ({
     date_range: dateRange.start && dateRange.end ? dateRange : null,
     filters: filters
-      .filter((row) => row.column && row.value !== '')
-      .map((row) => {
-        if (row.operator === 'IN' || row.operator === 'NOT IN') {
-          return { ...row, value: String(row.value).split(',').map((part) => part.trim()).filter(Boolean) }
-        }
-        return row
-      }),
+      .filter((row) => row.enabled)
+      .filter((row) => row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== '')),
   })
 
   const handleApply = async () => {
@@ -72,13 +213,19 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   }
 
   const handleReset = async () => {
-    setDateRange({ start: '', end: '' })
     setFilters([defaultFilter])
     setLoading(true)
     setError('')
     try {
-      const response = await applyFilters({ date_range: null, filters: [] })
+      const [response, range] = await Promise.all([
+        applyFilters({ date_range: null, filters: [] }),
+        getDateRange(),
+      ])
       setSummary(response)
+      setDateRange({
+        start: range.min_date || '',
+        end: range.max_date || '',
+      })
       onFiltersApplied?.()
     } catch (err) {
       setError(err.message)
@@ -87,12 +234,17 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
     }
   }
 
+  const activeFilterCount = filters.filter(
+    (row) => row.enabled && row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== '')
+  ).length
+
   return (
     <section className="card">
       <h2>3. Filter Data</h2>
       <p>
         Filtered to {summary.filtered_rows} rows out of {summary.total_rows} rows ({summary.percentage.toFixed(2)}%)
       </p>
+      <p>Active Filters: {activeFilterCount}</p>
 
       <div className="grid">
         <label>
@@ -105,38 +257,88 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
         </label>
       </div>
 
-      {filters.map((row, index) => (
-        <div key={index} className="condition-row" style={{ marginBottom: '0.5rem' }}>
-          <select value={row.column} onChange={(e) => updateFilter(index, 'column', e.target.value)}>
-            <option value="">Select column</option>
-            {columns.map((column) => (
-              <option key={column.name} value={column.name}>
-                {column.role ? `${column.name} (${column.role})` : column.name}
-              </option>
-            ))}
-          </select>
-          <select value={row.operator} onChange={(e) => updateFilter(index, 'operator', e.target.value)}>
-            <option value="=">=</option>
-            <option value="!=">!=</option>
-            <option value=">">&gt;</option>
-            <option value=">=">&gt;=</option>
-            <option value="<">&lt;</option>
-            <option value="<=">&lt;=</option>
-            <option value="IN">IN</option>
-            <option value="NOT IN">NOT IN</option>
-          </select>
-          <input
-            value={row.value}
-            placeholder={row.operator.includes('IN') ? 'comma,separated,values' : 'value'}
-            onChange={(e) => updateFilter(index, 'value', e.target.value)}
-          />
-          {filters.length > 1 && (
-            <button type="button" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== index))}>
-              Remove
-            </button>
-          )}
-        </div>
-      ))}
+      {filters.map((row, index) => {
+        const allowedOperators = getAllowedOperators(row.column)
+        const currentValues = valueCache[row.column]?.values || []
+        const currentDistinctCount = Number(valueCache[row.column]?.total_distinct || 0)
+        const isMulti = row.operator === 'IN' || row.operator === 'NOT IN'
+        const truncated = currentDistinctCount > currentValues.length && currentValues.length === 100
+
+        return (
+          <div key={index} className="condition-row" style={{ marginBottom: '0.5rem', opacity: row.enabled ? 1 : 0.5 }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={row.enabled}
+                onChange={() => updateFilter(index, 'enabled', !row.enabled)}
+              />
+              Enabled
+            </label>
+            <select
+              value={row.column}
+              onChange={(e) => {
+                const nextColumn = e.target.value
+                updateFilter(index, 'column', nextColumn)
+                ensureColumnValuesLoaded(nextColumn)
+              }}
+            >
+              <option value="">Select column</option>
+              {columns.map((column) => {
+                const totalDistinct = Number(valueCache[column.name]?.total_distinct || 0)
+                const labelSuffix = totalDistinct > 0 ? ` (${totalDistinct} values)` : ''
+                const roleLabel = column.role ? ` (${column.role})` : ''
+                return (
+                  <option key={column.name} value={column.name}>
+                    {column.name}
+                    {roleLabel}
+                    {labelSuffix}
+                  </option>
+                )
+              })}
+            </select>
+            <select
+              value={row.operator}
+              onChange={(e) => updateFilter(index, 'operator', e.target.value)}
+              disabled={!row.column}
+            >
+              {OPERATOR_ORDER.map((operator) => (
+                <option key={operator} value={operator} disabled={!allowedOperators.includes(operator)}>
+                  {operator}
+                </option>
+              ))}
+            </select>
+            <select
+              value={isMulti ? (Array.isArray(row.value) ? row.value : []) : (row.value || '')}
+              multiple={isMulti}
+              disabled={!row.column}
+              onChange={(e) => {
+                if (isMulti) {
+                  updateFilter(
+                    index,
+                    'value',
+                    Array.from(e.target.selectedOptions).map((option) => option.value)
+                  )
+                  return
+                }
+                updateFilter(index, 'value', e.target.value)
+              }}
+            >
+              {!isMulti && <option value="">Select value</option>}
+              {currentValues.map((option) => (
+                <option key={`${row.column}-${option}`} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+            {filters.length > 1 && (
+              <button type="button" onClick={() => setFilters((prev) => prev.filter((_, i) => i !== index))}>
+                Remove
+              </button>
+            )}
+            {truncated && <small>Showing first 100 of {currentDistinctCount} values</small>}
+          </div>
+        )
+      })}
 
       <div className="inline-controls">
         <button type="button" onClick={() => setFilters((prev) => [...prev, defaultFilter])}>+ Add Filter</button>
