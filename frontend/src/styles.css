@@ -266,3 +266,96 @@ li .button {
   gap: var(--space-2);
   align-items: center;
 }
+
+
+.filter-block {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  margin-bottom: var(--space-4);
+  background: var(--color-surface);
+}
+
+.filter-disabled {
+  background: #f9fafb;
+}
+
+.filter-header-row {
+  display: grid;
+  grid-template-columns: auto minmax(180px, 1fr) 140px auto;
+  gap: var(--space-2);
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.filter-enabled-toggle {
+  margin-bottom: 0;
+  align-self: center;
+}
+
+.filter-values {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #ecfdf3;
+  font-size: var(--font-size-sm);
+  cursor: pointer;
+}
+
+.filter-chip:hover {
+  background: #dcfce7;
+}
+
+.chip-remove {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  line-height: 1;
+}
+
+.chip-add {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #f3f4f6;
+  border: 1px solid var(--color-border);
+  cursor: pointer;
+}
+
+.filter-remove {
+  justify-self: end;
+  margin-left: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  color: var(--color-text-secondary);
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.filter-value-picker {
+  margin-top: var(--space-2);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+
+.filter-value-option {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: #fff;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
