@@ -115,6 +115,12 @@ select:focus {
   color: #fff;
 }
 
+.button-small {
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 30px;
+}
+
 .inline-controls {
   display: flex;
   align-items: flex-end;
@@ -129,9 +135,23 @@ select:focus {
 
 .condition-layout {
   display: flex;
-  gap: var(--space-4);
-  align-items: flex-end;
+  gap: var(--space-3);
+  align-items: center;
   flex-wrap: wrap;
+}
+
+.logic-operator-small {
+  width: auto;
+  padding: 4px 8px;
+  font-size: 12px;
+  height: 30px;
+  min-width: 70px;
+}
+
+.condition-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
 }
 
 .inline-checkbox {
@@ -144,10 +164,6 @@ select:focus {
 
 .inline-checkbox input {
   width: auto;
-}
-
-.operator-row {
-  margin-bottom: var(--space-2);
 }
 
 .tertiary-label {
