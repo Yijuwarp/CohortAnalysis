@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, updateCohort } from '../api'
+import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=']
 
@@ -220,21 +221,17 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         <div key={index}>
           <div className="cohort-condition-block">
             <div className="cohort-condition-content">
-              <select
+              <SearchableSelect
+                options={events}
                 value={condition.event_name}
-                onChange={(e) => {
+                onChange={(nextEventName) => {
                   const updated = [...conditions]
-                  updated[index].event_name = e.target.value
+                  updated[index].event_name = nextEventName
                   updated[index].property_filter = null
                   setConditions(updated)
                 }}
-              >
-                {events.map((event) => (
-                  <option key={event} value={event}>
-                    {event}
-                  </option>
-                ))}
-              </select>
+                placeholder="Select event"
+              />
 
               <span className="cohort-operator-symbol">≥</span>
 
@@ -287,10 +284,10 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
               <div className="cohort-rule-filters">
                 <label>Where:</label>
                 <div className="cohort-condition-content">
-                  <select
+                  <SearchableSelect
+                    options={columns.map((column) => ({ label: column.name, value: column.name }))}
                     value={condition.property_filter.column}
-                    onChange={(e) => {
-                      const nextColumn = e.target.value
+                    onChange={(nextColumn) => {
                       const allowed = getAllowedOperators(nextColumn)
                       const updated = [...conditions]
                       updated[index].property_filter = {
@@ -302,14 +299,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                       setConditions(updated)
                       ensureColumnValuesLoaded(nextColumn)
                     }}
-                  >
-                    <option value="">Select column</option>
-                    {columns.map((column) => (
-                      <option key={column.name} value={column.name}>
-                        {column.name}
-                      </option>
-                    ))}
-                  </select>
+                    placeholder="Select column"
+                  />
 
                   <select
                     value={condition.property_filter.operator}

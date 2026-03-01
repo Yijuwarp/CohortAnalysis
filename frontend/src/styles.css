@@ -438,3 +438,67 @@ li .button {
   cursor: pointer;
   font-size: var(--font-size-sm);
 }
+
+.searchable-select {
+  position: relative;
+  width: 100%;
+}
+
+.searchable-select-input {
+  height: 36px;
+}
+
+.searchable-select-menu {
+  position: absolute;
+  z-index: 20;
+  width: 100%;
+  margin-top: 4px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-2);
+}
+
+.searchable-select-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.searchable-select-option {
+  border: none;
+  background: transparent;
+  text-align: left;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.searchable-select-option:hover,
+.searchable-select-option-active {
+  background: #f3f4f6;
+}
+
+.searchable-select-option-selected {
+  background: #ecfdf3;
+}
+
+.searchable-select-empty {
+  padding: var(--space-2);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.searchable-select-count {
+  display: block;
+  margin-top: var(--space-2);
+  color: var(--color-text-secondary);
+}
+
+.searchable-select-disabled {
+  opacity: 0.7;
+}
