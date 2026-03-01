@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from fastapi.testclient import TestClient
 
 from tests.utils import csv_upload
@@ -71,7 +69,7 @@ def test_mapping_rejects_unknown_column_names(client: TestClient) -> None:
     assert "Mapped columns not found" in response.json()["detail"]
 
 
-def test_mapping_stores_extra_columns_in_raw_data_json(
+def test_mapping_promotes_mapped_columns_as_first_class_columns(
     client: TestClient,
     db_connection,
 ) -> None:
@@ -87,15 +85,21 @@ def test_mapping_stores_extra_columns_in_raw_data_json(
     )
     assert response.status_code == 200, response.text
 
-    raw_data = db_connection.execute(
-        "SELECT raw_data::VARCHAR FROM events_normalized WHERE user_id = 'u1'"
-    ).fetchone()[0]
-    parsed = json.loads(raw_data)
+    columns = {
+        row[0]: row[1]
+        for row in db_connection.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'events_normalized'
+            """
+        ).fetchall()
+    }
 
-    assert parsed == {
-        "plan": "free",
-        "region": "NA",
-    }, f"raw_data should contain only unmapped columns; got {parsed}"
+    assert "plan" in columns
+    assert "region" in columns
+    assert columns["user_id"] == "VARCHAR"
+    assert columns["event_name"] == "VARCHAR"
 
 
 def test_mapping_allows_empty_timestamp_cells_as_null(

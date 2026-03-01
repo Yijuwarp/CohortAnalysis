@@ -109,7 +109,7 @@ export default function UsageTable({ refreshToken }) {
 
   return (
     <section className="card">
-      <h2>5. Usage Analytics</h2>
+      <h2>6. Usage Analytics</h2>
       <div className="inline-controls">
         <label>
           Usage Event

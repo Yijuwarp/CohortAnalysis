@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { createCohort, deleteCohort, getRetention, listEvents } from '../api'
+import { createCohort, deleteCohort, listCohorts, listEvents } from '../api'
 
-export default function CohortForm({ onCohortsChanged }) {
+export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [name, setName] = useState('')
   const [conditions, setConditions] = useState([{ event_name: '', min_event_count: 1 }])
   const [logicOperator, setLogicOperator] = useState('AND')
@@ -14,8 +14,8 @@ export default function CohortForm({ onCohortsChanged }) {
 
   const loadCohorts = async () => {
     try {
-      const response = await getRetention(0)
-      setCohorts(response.retention_table.map((row) => ({ cohort_id: row.cohort_id, cohort_name: row.cohort_name })))
+      const response = await listCohorts()
+      setCohorts(response.cohorts || [])
     } catch {
       setCohorts([])
     }
@@ -23,7 +23,7 @@ export default function CohortForm({ onCohortsChanged }) {
 
   useEffect(() => {
     loadCohorts()
-  }, [])
+  }, [refreshToken])
 
   useEffect(() => {
     const load = async () => {
@@ -89,7 +89,7 @@ export default function CohortForm({ onCohortsChanged }) {
 
   return (
     <section className="card">
-      <h2>3. Create Cohort</h2>
+      <h2>4. Create Cohort</h2>
       <div className="grid">
         <label>
           Cohort Name
@@ -182,7 +182,11 @@ export default function CohortForm({ onCohortsChanged }) {
       ) : (
         <ul>
           {cohorts.map((cohort) => (
-            <li key={cohort.cohort_id}>
+            <li
+              key={cohort.cohort_id}
+              title={cohort.is_active ? '' : 'No matching members under current filters'}
+              style={{ opacity: cohort.is_active ? 1 : 0.5 }}
+            >
               {cohort.cohort_name}
               <button
                 type="button"
