@@ -618,10 +618,10 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
 def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[str] | int]:
     connection = get_connection()
     try:
-        scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
         ).fetchone()[0]
-        if not scoped_exists:
+        if not normalized_exists:
             return {"values": [], "total_distinct": 0}
 
         known_columns = {
@@ -630,7 +630,7 @@ def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'events_scoped'
+                WHERE table_name = 'events_normalized'
                 """
             ).fetchall()
         }
@@ -641,7 +641,7 @@ def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[
         rows = connection.execute(
             f"""
             SELECT DISTINCT {column_ref}
-            FROM events_scoped
+            FROM events_normalized
             WHERE {column_ref} IS NOT NULL
             ORDER BY 1
             LIMIT 100
@@ -649,7 +649,7 @@ def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[
         ).fetchall()
         total_distinct = int(
             connection.execute(
-                f"SELECT COUNT(DISTINCT {column_ref}) FROM events_scoped WHERE {column_ref} IS NOT NULL"
+                f"SELECT COUNT(DISTINCT {column_ref}) FROM events_normalized WHERE {column_ref} IS NOT NULL"
             ).fetchone()[0]
         )
         return {
