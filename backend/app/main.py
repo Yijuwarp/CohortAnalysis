@@ -1,5 +1,5 @@
 import json
-from datetime import date, datetime
+from datetime import date, datetime, UTC
 from pathlib import Path
 
 import duckdb
@@ -204,7 +204,7 @@ def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[st
             json.dumps(payload),
             total_rows,
             filtered_rows,
-            datetime.utcnow(),
+            datetime.now(UTC),
         ],
     )
     return {"total_rows": total_rows, "filtered_rows": filtered_rows}
