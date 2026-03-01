@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyFilters, getColumns, getColumnValues, getDateRange, getScope } from '../api'
+import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
 
@@ -73,9 +74,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [valueCache, setValueCache] = useState({})
-  const [openValuePickerIndex, setOpenValuePickerIndex] = useState(null)
   const previousColumnsSignatureRef = useRef('')
-  const filterSectionRef = useRef(null)
 
   const columnByName = useMemo(
     () => Object.fromEntries(columns.map((column) => [column.name, column])),
@@ -188,26 +187,6 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   useEffect(() => {
     loadMetadata()
   }, [refreshToken])
-
-  useEffect(() => {
-    if (openValuePickerIndex === null) {
-      return
-    }
-
-    const handleDocumentClick = (event) => {
-      const target = event.target
-      const clickedInsideFilterSection = filterSectionRef.current?.contains(target)
-      const clickedValuePicker = target?.closest?.('.filter-value-picker')
-      const clickedAddButton = target?.closest?.('.chip-add')
-
-      if (!clickedInsideFilterSection || (!clickedValuePicker && !clickedAddButton)) {
-        setOpenValuePickerIndex(null)
-      }
-    }
-
-    document.addEventListener('click', handleDocumentClick)
-    return () => document.removeEventListener('click', handleDocumentClick)
-  }, [openValuePickerIndex])
 
   const updateFilter = (index, key, value) => {
     setFilters((prev) => {
@@ -339,7 +318,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   ).length
 
   return (
-    <section className="card" ref={filterSectionRef}>
+    <section className="card">
       <h2>3. Filter Data</h2>
       <p className="secondary-text">
         Filtered to {summary.filtered_rows} rows out of {summary.total_rows} rows ({summary.percentage.toFixed(2)}%)
@@ -366,8 +345,6 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
             : []
         const mergedValues = Array.from(new Set([...fetchedValues, ...selectedValues]))
         const availableValues = mergedValues.filter((value) => !selectedValues.includes(value))
-        const currentDistinctCount = Number(valueCache[row.column]?.total_distinct || 0)
-        const truncated = currentDistinctCount > fetchedValues.length && fetchedValues.length === 100
 
         return (
           <div key={index} className={`filter-block ${row.enabled ? '' : 'filter-disabled'}`}>
@@ -379,34 +356,27 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                   onChange={() => updateFilter(index, 'enabled', !row.enabled)}
                 />
               </label>
-              <select
-                value={row.column}
-                onChange={(e) => {
-                  const nextColumn = e.target.value
-                  updateFilter(index, 'column', nextColumn)
-                  ensureColumnValuesLoaded(nextColumn)
-                  setOpenValuePickerIndex(null)
-                }}
-              >
-                <option value="">Select column</option>
-                {columns.map((column) => {
+              <SearchableSelect
+                options={columns.map((column) => {
                   const totalDistinct = Number(valueCache[column.name]?.total_distinct || 0)
                   const labelSuffix = totalDistinct > 0 ? ` (${totalDistinct} values)` : ''
                   const roleLabel = column.role ? ` (${column.role})` : ''
-                  return (
-                    <option key={column.name} value={column.name}>
-                      {column.name}
-                      {roleLabel}
-                      {labelSuffix}
-                    </option>
-                  )
+                  return {
+                    label: `${column.name}${roleLabel}${labelSuffix}`,
+                    value: column.name,
+                  }
                 })}
-              </select>
+                value={row.column}
+                onChange={(nextColumn) => {
+                  updateFilter(index, 'column', nextColumn)
+                  ensureColumnValuesLoaded(nextColumn)
+                }}
+                placeholder="Select column"
+              />
               <select
                 value={row.operator}
                 onChange={(e) => {
                   updateFilter(index, 'operator', e.target.value)
-                  setOpenValuePickerIndex(null)
                 }}
                 disabled={!row.column}
               >
@@ -422,7 +392,6 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                   type="button"
                   onClick={() => {
                     setFilters((prev) => prev.filter((_, i) => i !== index))
-                    setOpenValuePickerIndex(null)
                   }}
                 >
                   X
@@ -440,43 +409,15 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                   </button>
                 </span>
               ))}
-              <button
-                className="chip-add"
-                type="button"
-                disabled={!row.column}
-                onClick={async () => {
-                  if (!row.column) {
-                    return
-                  }
-                  await ensureColumnValuesLoaded(row.column)
-                  setOpenValuePickerIndex((current) => (current === index ? null : index))
-                }}
-              >
-                +
-              </button>
             </div>
-            {openValuePickerIndex === index && row.column && (
-              <div className="filter-value-picker">
-                {availableValues.length > 0 ? (
-                  availableValues.map((value) => (
-                    <button
-                      className="filter-value-option"
-                      key={`${row.column}-option-${value}`}
-                      type="button"
-                      onClick={() => {
-                        addFilterValue(index, value)
-                        setOpenValuePickerIndex(null)
-                      }}
-                    >
-                      {value}
-                    </button>
-                  ))
-                ) : (
-                  <small className="secondary-text">No more values to add</small>
-                )}
-              </div>
-            )}
-            {truncated && <small className="secondary-text">Showing first 100 of {currentDistinctCount} values</small>}
+
+            <SearchableSelect
+              options={availableValues}
+              value=""
+              onChange={(selectedValue) => addFilterValue(index, selectedValue)}
+              placeholder={row.column ? 'Search values to add' : 'Select a column first'}
+              disabled={!row.column}
+            />
           </div>
         )
       })}

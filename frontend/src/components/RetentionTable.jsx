@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getRetention, listEvents } from '../api'
+import SearchableSelect from './SearchableSelect'
 
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange }) {
   const [maxDay, setMaxDay] = useState(7)
@@ -53,14 +54,12 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         </label>
         <label>
           Retention Event
-          <select value={retentionEvent} onChange={(e) => onRetentionEventChange(e.target.value)}>
-            <option value="any">Any Event</option>
-            {events.map((eventName) => (
-              <option key={eventName} value={eventName}>
-                {eventName}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            options={[{ label: 'Any Event', value: 'any' }, ...events]}
+            value={retentionEvent}
+            onChange={onRetentionEventChange}
+            placeholder="Select retention event"
+          />
         </label>
         <button className="button button-primary" onClick={loadRetention} disabled={loading}>{loading ? 'Loading...' : 'Load Retention'}</button>
       </div>

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getUsage, listEvents } from '../api'
+import SearchableSelect from './SearchableSelect'
 
 function formatRatioValue(value) {
   return Number(value).toFixed(2)
@@ -142,14 +143,12 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
       <div className="inline-controls">
         <label>
           Usage Event
-          <select value={event} onChange={(e) => setEvent(e.target.value)}>
-            <option value="">Select an event</option>
-            {events.map((eventName) => (
-              <option key={eventName} value={eventName}>
-                {eventName}
-              </option>
-            ))}
-          </select>
+          <SearchableSelect
+            options={events}
+            value={event}
+            onChange={setEvent}
+            placeholder="Select an event"
+          />
         </label>
         <label>
           Max Day
