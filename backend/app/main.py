@@ -230,10 +230,145 @@ def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection) -> None:
         """
     ).fetchall()
 
+    if not activity_rows:
+        return
+
     connection.executemany(
         "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
         [(bool(active_members > 0), int(cohort_id)) for cohort_id, active_members in activity_rows],
     )
+
+
+def build_cohort_membership(
+    connection: duckdb.DuckDBPyConnection,
+    cohort_id: int,
+    source_table: str,
+) -> None:
+    if source_table not in {"events_normalized", "events_scoped"}:
+        raise ValueError("Unsupported source table")
+
+    cohort_row = connection.execute(
+        "SELECT logic_operator FROM cohorts WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchone()
+    if cohort_row is None:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+
+    logic_operator = str(cohort_row[0] or "OR").upper()
+    conditions = connection.execute(
+        """
+        SELECT event_name, min_event_count
+        FROM cohort_conditions
+        WHERE cohort_id = ?
+        ORDER BY condition_id
+        """,
+        [cohort_id],
+    ).fetchall()
+
+    if not conditions:
+        connection.execute(
+            f"""
+            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+            SELECT user_id, ?, MIN(event_time)
+            FROM {source_table}
+            GROUP BY user_id
+            """,
+            [cohort_id],
+        )
+    else:
+        cte_parts: list[str] = []
+        query_params: list[object] = []
+        for index, (event_name, min_event_count) in enumerate(conditions):
+            cte_parts.append(
+                f"""
+                c{index} AS (
+                    SELECT user_id, event_time
+                    FROM (
+                        SELECT
+                            user_id,
+                            event_time,
+                            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
+                        FROM {source_table}
+                        WHERE event_name = ?
+                    ) t
+                    WHERE rn = ?
+                )
+                """
+            )
+            query_params.extend([event_name, min_event_count])
+
+        if logic_operator == "AND":
+            if len(conditions) == 1:
+                cte_parts.append("combined_conditions AS (SELECT user_id, event_time FROM c0)")
+            else:
+                least_time_expression = ", ".join([f"c{index}.event_time" for index in range(len(conditions))])
+                join_clauses = "\n".join(
+                    [f"INNER JOIN c{index} ON c0.user_id = c{index}.user_id" for index in range(1, len(conditions))]
+                )
+                cte_parts.append(
+                    f"""
+                    combined_conditions AS (
+                        SELECT c0.user_id, LEAST({least_time_expression}) AS event_time
+                        FROM c0
+                        {join_clauses}
+                    )
+                    """
+                )
+        else:
+            union_query = "\nUNION ALL\n".join(
+                [f"SELECT user_id, event_time FROM c{index}" for index in range(len(conditions))]
+            )
+            cte_parts.append(f"combined_conditions AS ({union_query})")
+
+        connection.execute(
+            f"""
+            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+            WITH {', '.join(cte_parts)}
+            SELECT user_id, ?, MIN(event_time)
+            FROM combined_conditions
+            GROUP BY user_id
+            """,
+            [*query_params, cohort_id],
+        )
+
+    connection.execute(
+        f"""
+        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
+        SELECT ?, e.user_id, e.event_time, e.event_name
+        FROM {source_table} e
+        JOIN cohort_membership cm
+            ON cm.user_id = e.user_id
+           AND cm.cohort_id = ?
+        """,
+        [cohort_id, cohort_id],
+    )
+
+
+def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> None:
+    ensure_cohort_tables(connection)
+
+    scoped_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+    ).fetchone()[0]
+    if not scoped_exists:
+        return
+
+    cohort_ids = [int(row[0]) for row in connection.execute("SELECT cohort_id FROM cohorts ORDER BY cohort_id").fetchall()]
+    for cohort_id in cohort_ids:
+        connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
+        connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
+        build_cohort_membership(connection, cohort_id, "events_scoped")
+
+        cohort_size = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
+                [cohort_id],
+            ).fetchone()[0]
+        )
+        connection.execute(
+            "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
+            [bool(cohort_size > 0), cohort_id],
+        )
 
 
 def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
@@ -243,6 +378,11 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
     if existing:
         return
 
+    scoped_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+    ).fetchone()[0]
+    source_table = "events_scoped" if scoped_exists else "events_normalized"
+
     cohort_id = connection.execute(
         """
         INSERT INTO cohorts (cohort_id, name, logic_operator, is_active)
@@ -251,27 +391,7 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
         """
     ).fetchone()[0]
 
-    connection.execute(
-        """
-        INSERT INTO cohort_membership (user_id, cohort_id, join_time)
-        SELECT user_id, ?, MIN(event_time)
-        FROM events_normalized
-        GROUP BY user_id
-        """,
-        [cohort_id],
-    )
-
-    connection.execute(
-        """
-        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-        SELECT ?, e.user_id, e.event_time, e.event_name
-        FROM events_normalized e
-        JOIN cohort_membership cm
-          ON cm.user_id = e.user_id
-         AND cm.cohort_id = ?
-        """,
-        [cohort_id, cohort_id],
-    )
+    build_cohort_membership(connection, int(cohort_id), source_table)
 
 
 def build_where_clause(payload: ApplyFiltersRequest) -> tuple[str, list[object]]:
@@ -425,8 +545,9 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         connection.execute("DELETE FROM cohort_activity_snapshot")
         connection.execute("DELETE FROM cohort_conditions")
         connection.execute("DELETE FROM cohorts")
-        create_all_users_cohort(connection)
         initialize_scoped_dataset(connection)
+        create_all_users_cohort(connection)
+        refresh_cohort_activity(connection)
 
         row_count = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
     except duckdb.ConversionException as exc:
@@ -539,6 +660,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
                 "filters": [filter_row.model_dump() for filter_row in payload.filters],
             },
         )
+        rebuild_all_cohort_memberships(connection)
         refresh_cohort_activity(connection)
 
         return {
@@ -715,72 +837,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
                 [cohort_id, condition.event_name, condition.min_event_count],
             )
 
-        cte_parts: list[str] = []
-        query_params: list[object] = []
-        for index, condition in enumerate(payload.conditions):
-            cte_parts.append(
-                f"""
-                c{index} AS (
-                    SELECT user_id, event_time
-                    FROM (
-                        SELECT
-                            user_id,
-                            event_time,
-                            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
-                        FROM events_normalized
-                        WHERE event_name = ?
-                    ) t
-                    WHERE rn = ?
-                )
-                """
-            )
-            query_params.extend([condition.event_name, condition.min_event_count])
-
-        if payload.logic_operator == "AND":
-            if len(payload.conditions) == 1:
-                cte_parts.append("combined_conditions AS (SELECT user_id, event_time FROM c0)")
-            else:
-                least_time_expression = ", ".join([f"c{index}.event_time" for index in range(len(payload.conditions))])
-                join_clauses = "\n".join(
-                    [f"INNER JOIN c{index} ON c0.user_id = c{index}.user_id" for index in range(1, len(payload.conditions))]
-                )
-                cte_parts.append(
-                    f"""
-                    combined_conditions AS (
-                        SELECT c0.user_id, LEAST({least_time_expression}) AS event_time
-                        FROM c0
-                        {join_clauses}
-                    )
-                    """
-                )
-        else:
-            union_query = "\nUNION ALL\n".join(
-                [f"SELECT user_id, event_time FROM c{index}" for index in range(len(payload.conditions))]
-            )
-            cte_parts.append(f"combined_conditions AS ({union_query})")
-
-        connection.execute(
-            f"""
-            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
-            WITH {', '.join(cte_parts)}
-            SELECT user_id, ?, MIN(event_time)
-            FROM combined_conditions
-            GROUP BY user_id
-            """,
-            [*query_params, cohort_id],
-        )
-
-        connection.execute(
-            """
-            INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-            SELECT ?, e.user_id, e.event_time, e.event_name
-            FROM events_normalized e
-            JOIN cohort_membership cm
-                ON cm.user_id = e.user_id
-               AND cm.cohort_id = ?
-            """,
-            [cohort_id, cohort_id],
-        )
+        build_cohort_membership(connection, cohort_id, "events_normalized")
 
         users_joined = int(
             connection.execute(
