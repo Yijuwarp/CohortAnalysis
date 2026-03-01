@@ -210,9 +210,13 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
             <li
               key={cohort.cohort_id}
               title={cohort.is_active ? '' : 'No matching members under current filters'}
-              className="secondary-text" style={{ opacity: cohort.is_active ? 1 : 0.5 }}
+              className="cohort-row"
             >
-              {cohort.cohort_name}
+              <div className="cohort-left">
+                <span>{cohort.cohort_name}</span>
+                {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
+              </div>
+
               <button
                 className="button button-danger"
                 type="button"
