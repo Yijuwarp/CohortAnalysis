@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyFilters, getColumns, getColumnValues, getDateRange, getScope } from '../api'
 
 const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
@@ -59,7 +59,10 @@ const normalizeRowValue = (operator, value) => {
   if (Array.isArray(value)) {
     return value.length > 0 ? String(value[0]) : ''
   }
-  return value ?? ''
+  if (value === '' || value === null || value === undefined) {
+    return ''
+  }
+  return String(value)
 }
 
 export default function FilterData({ refreshToken, onFiltersApplied }) {
@@ -70,6 +73,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [valueCache, setValueCache] = useState({})
+  const previousColumnsSignatureRef = useRef('')
 
   const columnByName = useMemo(
     () => Object.fromEntries(columns.map((column) => [column.name, column])),
@@ -94,7 +98,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       setValueCache((prev) => ({
         ...prev,
         [columnName]: {
-          values: response.values || [],
+          values: (response.values || []).map((value) => String(value)),
           total_distinct: Number(response.total_distinct || 0),
         },
       }))
@@ -111,11 +115,21 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
 
   const loadMetadata = async () => {
     try {
-      // Clear stale cached distinct values
-      setValueCache({})
-
       const [columnResponse, scopeResponse] = await Promise.all([getColumns(), getScope()])
       const loadedColumns = columnResponse.columns || []
+      const nextColumnsSignature = JSON.stringify(
+        loadedColumns.map((column) => ({
+          name: String(column.name || ''),
+          data_type: String(column.data_type || ''),
+          role: column.role ? String(column.role) : '',
+        }))
+      )
+      const hasColumnMetadataChanged = previousColumnsSignatureRef.current !== nextColumnsSignature
+      if (hasColumnMetadataChanged) {
+        setValueCache({})
+      }
+      previousColumnsSignatureRef.current = nextColumnsSignature
+
       const loadedColumnMap = Object.fromEntries(loadedColumns.map((column) => [column.name, column]))
       setColumns(loadedColumns)
 
@@ -198,7 +212,19 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
     date_range: dateRange.start && dateRange.end ? dateRange : null,
     filters: filters
       .filter((row) => row.enabled)
-      .filter((row) => row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== '')),
+      .filter((row) => row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== ''))
+      .map((row) => {
+        if (Array.isArray(row.value)) {
+          return {
+            ...row,
+            value: row.value.map((item) => String(item)),
+          }
+        }
+        return {
+          ...row,
+          value: row.value === '' ? '' : String(row.value),
+        }
+      }),
   })
 
   const handleApply = async () => {
@@ -262,10 +288,16 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
 
       {filters.map((row, index) => {
         const allowedOperators = getAllowedOperators(row.column)
-        const currentValues = valueCache[row.column]?.values || []
+        const fetchedValues = (valueCache[row.column]?.values || []).map((value) => String(value))
+        const selectedValues = Array.isArray(row.value)
+          ? row.value.map((value) => String(value))
+          : row.value
+            ? [String(row.value)]
+            : []
+        const mergedValues = Array.from(new Set([...fetchedValues, ...selectedValues]))
         const currentDistinctCount = Number(valueCache[row.column]?.total_distinct || 0)
         const isMulti = row.operator === 'IN' || row.operator === 'NOT IN'
-        const truncated = currentDistinctCount > currentValues.length && currentValues.length === 100
+        const truncated = currentDistinctCount > fetchedValues.length && fetchedValues.length === 100
 
         return (
           <div key={index} className="condition-row" style={{ opacity: row.enabled ? 1 : 0.5 }}>
@@ -311,7 +343,11 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
               ))}
             </select>
             <select
-              value={isMulti ? (Array.isArray(row.value) ? row.value : []) : (row.value || '')}
+              value={
+                isMulti
+                  ? (Array.isArray(row.value) ? row.value.map((value) => String(value)) : [])
+                  : (row.value ? String(row.value) : '')
+              }
               multiple={isMulti}
               disabled={!row.column}
               onChange={(e) => {
@@ -319,15 +355,15 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                   updateFilter(
                     index,
                     'value',
-                    Array.from(e.target.selectedOptions).map((option) => option.value)
+                    Array.from(e.target.selectedOptions).map((option) => String(option.value))
                   )
                   return
                 }
-                updateFilter(index, 'value', e.target.value)
+                updateFilter(index, 'value', String(e.target.value))
               }}
             >
               {!isMulti && <option value="">Select value</option>}
-              {currentValues.map((option) => (
+              {mergedValues.map((option) => (
                 <option key={`${row.column}-${option}`} value={option}>
                   {option}
                 </option>
