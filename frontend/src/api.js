@@ -99,9 +99,15 @@ export async function listEvents() {
   })
 }
 
-export async function getUsage(event, maxDay) {
-  return request(
-    `/usage?event=${encodeURIComponent(event)}&max_day=${maxDay}`,
-    { method: 'GET' }
-  )
+export async function getUsage(event, maxDay, retentionEvent) {
+  if (retentionEvent === undefined || retentionEvent === null || retentionEvent === '') {
+    throw new Error('Retention event must be selected before loading usage metrics')
+  }
+
+  let path = `/usage?event=${encodeURIComponent(event)}&max_day=${maxDay}`
+  if (retentionEvent !== 'any') {
+    path += `&retention_event=${encodeURIComponent(retentionEvent)}`
+  }
+
+  return request(path, { method: 'GET' })
 }

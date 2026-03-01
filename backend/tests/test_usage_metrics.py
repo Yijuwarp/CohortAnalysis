@@ -1,0 +1,72 @@
+from __future__ import annotations
+
+from fastapi.testclient import TestClient
+
+from tests.utils import csv_upload
+
+
+def _prepare_usage_fixture(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time\n"
+        "u1,signup,2026-01-01 09:00:00\n"
+        "u1,open,2026-01-01 10:00:00\n"
+        "u1,open,2026-01-01 11:00:00\n"
+        "u1,open,2026-01-02 10:00:00\n"
+        "u2,signup,2026-01-01 12:00:00\n"
+        "u2,open,2026-01-01 13:00:00\n"
+        "u2,purchase,2026-01-01 14:00:00\n"
+        "u3,signup,2026-01-01 15:00:00\n"
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+
+def _all_users_values(payload: dict[str, object], table_key: str) -> dict[str, int]:
+    row = next(entry for entry in payload[table_key] if entry["cohort_name"] == "All Users")
+    return row["values"]
+
+
+def test_usage_returns_raw_count_tables_and_retained_users(client: TestClient) -> None:
+    _prepare_usage_fixture(client)
+
+    response = client.get("/usage?event=open&max_day=1")
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["retention_event"] == "any"
+    assert _all_users_values(payload, "usage_volume_table") == {"0": 3, "1": 1}
+    assert _all_users_values(payload, "usage_users_table") == {"0": 2, "1": 1}
+    assert _all_users_values(payload, "retained_users_table") == {"0": 3, "1": 1}
+
+
+def test_usage_retained_users_table_honors_selected_retention_event(client: TestClient) -> None:
+    _prepare_usage_fixture(client)
+
+    response = client.get("/usage?event=open&max_day=1&retention_event=purchase")
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["retention_event"] == "purchase"
+    assert _all_users_values(payload, "retained_users_table") == {"0": 1, "1": 0}
+
+
+def test_usage_returns_empty_tables_when_event_absent(client: TestClient) -> None:
+    _prepare_usage_fixture(client)
+
+    response = client.get("/usage?event=nonexistent&max_day=1&retention_event=open")
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload["usage_volume_table"] == []
+    assert payload["usage_users_table"] == []
+    assert payload["retained_users_table"] == []

@@ -9,6 +9,7 @@ import UsageTable from './components/UsageTable'
 export default function App() {
   const [columns, setColumns] = useState([])
   const [retentionRefreshToken, setRetentionRefreshToken] = useState(0)
+  const [selectedRetentionEvent, setSelectedRetentionEvent] = useState('any')
 
   const refreshRetention = () => {
     setRetentionRefreshToken((current) => current + 1)
@@ -21,8 +22,12 @@ export default function App() {
       <Mapping columns={columns} onMappingComplete={refreshRetention} />
       <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
       <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
-      <RetentionTable refreshToken={retentionRefreshToken} />
-      <UsageTable refreshToken={retentionRefreshToken} />
+      <RetentionTable
+        refreshToken={retentionRefreshToken}
+        retentionEvent={selectedRetentionEvent}
+        onRetentionEventChange={setSelectedRetentionEvent}
+      />
+      <UsageTable refreshToken={retentionRefreshToken} retentionEvent={selectedRetentionEvent} />
     </main>
   )
 }
