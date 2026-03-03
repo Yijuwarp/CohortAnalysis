@@ -1,553 +1,183 @@
-# Cohort Analysis App Architecture
-
-## 1. High-Level Architecture Overview
-
-The application is a single-node analytics system composed of:
-
-- **Frontend client**: React + Vite SPA that handles CSV upload, schema mapping, cohort definition, and analytics visualization.
-- **Backend service**: FastAPI API layer that validates requests, executes cohort/retention/usage logic, and returns JSON results.
-- **Database layer**: DuckDB file-backed analytical database used for both raw event persistence and derived cohort snapshots.
-- **Deployment model**: Split frontend/backend deployment (typically Vercel for static frontend and Render for Python API), connected over HTTP with CORS enabled.
-
-```text
-[ React Frontend ]
-        ↓
-[ FastAPI Backend ]
-        ↓
-[ DuckDB Database ]
-```
-
-### Data Flow Summary
-
-1. Users upload CSV data from the React UI to `POST /upload`.
-2. Backend stores uploaded rows in `events` (raw staging table).
-3. Users map source columns to canonical fields via `POST /map-columns`.
-4. Backend builds `events_normalized` and initializes baseline cohort tables.
-5. Users define cohorts via `POST /cohorts`; backend computes cohort membership and `join_time`, then snapshots activity.
-6. Retention (`GET /retention`) and usage (`GET /usage`) are computed from snapshots and normalized events.
-
----
-
-## 2. Backend Architecture
-
-### 2.1 Tech Stack
-
-- **FastAPI**
-  - Chosen for typed request/response handling, concise endpoint definitions, and easy local iteration.
-  - Enables clean integration with Pydantic models for input validation.
-- **DuckDB**
-  - Chosen for embedded analytical SQL, low operational overhead, and strong performance for OLAP-style queries on medium datasets.
-  - File-backed DB simplifies local development and test isolation.
-- **Pydantic**
-  - Used to validate payload contracts such as cohort logic operator and condition bounds before query execution.
-  - Prevents malformed requests from propagating into SQL logic.
-- **Pytest**
-  - Used for endpoint and behavioral tests across upload, mapping, cohort creation/deletion, and retention logic.
-  - Supports regression testing around snapshot invariants.
-
-### 2.2 Core Modules
-
-The current backend is implemented in a single API module, but behavior is logically separated into service responsibilities:
-
-- **Upload handling (`/upload`)**
-  - Parses CSV with Pandas.
-  - Validates file type and minimum column count.
-  - Replaces `events` table with uploaded dataset.
-
-- **Column mapping (`/map-columns`)**
-  - Validates mapped columns exist in `events`.
-  - Builds `events_normalized` with canonical fields:
-    - `user_id`
-    - `event_name`
-    - `event_time`
-    - `raw_data` JSON for non-mapped columns.
-  - Initializes cohort tables and default `All Users` cohort snapshot.
-
-- **Cohort engine (`/cohorts`)**
-  - Persists cohort metadata and condition rules.
-  - Computes qualifying users and first qualifying timestamp (`join_time`) per cohort.
-  - Inserts frozen membership and event activity snapshots.
-
-- **Retention engine (`/retention`)**
-  - Computes day-indexed active-user percentages by cohort.
-  - Supports optional event filtering (`retention_event`) and variable horizon (`max_day`).
-
-- **Usage engine (`/usage`)**
-  - Computes day-indexed event volume and distinct active users for a selected event.
-  - Returns two tables for frontend rendering and optional derived metrics.
-
-- **Cohort deletion logic (`DELETE /cohorts/{id}`)**
-  - Protects `All Users` from deletion.
-  - Explicitly deletes from snapshot and condition tables before deleting cohort metadata.
-
-- **Validation layer**
-  - Pydantic models enforce:
-    - non-empty cohort name,
-    - `AND/OR` logic only,
-    - 1..5 conditions,
-    - `min_event_count >= 1`.
-  - FastAPI query constraints enforce `max_day >= 0`.
-
-### 2.3 Database Design
-
-> Note: the implementation currently uses table names `cohort_membership` (singular) and `cohort_activity_snapshot`. In this document, **`cohort_memberships`** refers to the implemented `cohort_membership` table.
-
-#### `events`
-
-- **Purpose**: Raw uploaded CSV storage.
-- **Key columns**: Source-dependent (schema follows uploaded file).
-- **Relationships**: Source table for mapping into `events_normalized`.
-- **Index assumptions**: No explicit indexes; full scans acceptable for current scale.
-- **Design rationale**: Keeps ingestion decoupled from canonical analytics schema.
-
-#### `events_normalized`
-
-- **Purpose**: Canonical event model for analytics queries.
-- **Key columns**:
-  - `user_id TEXT`
-  - `event_name TEXT`
-  - `event_time TIMESTAMP`
-  - `raw_data JSON`
-- **Relationships**:
-  - Joined to `cohort_membership` for usage queries.
-  - Used to build cohort snapshots.
-- **Index assumptions**: No explicit indexes; expected filters on `event_name`, `user_id`, and `event_time`.
-- **Design rationale**: Standardizes query surface while preserving unmapped source context in `raw_data`.
-
-#### `cohorts`
-
-- **Purpose**: Cohort definitions and metadata.
-- **Key columns**:
-  - `cohort_id` (sequence-backed PK)
-  - `name`
-  - `logic_operator` (`AND` or `OR`)
-- **Relationships**:
-  - One-to-many with `cohort_conditions`.
-  - One-to-many with `cohort_membership`.
-- **Index assumptions**: PK lookup by `cohort_id`; small table.
-- **Design rationale**: Keeps cohort identity/metadata separate from condition logic and membership data.
+# Architecture
+
+## Overview
+
+This repository is a single FastAPI service (`backend/app/main.py`) with a React + Vite frontend (`frontend/src`). The backend persists everything in one DuckDB file at `backend/cohort_analysis.duckdb`. CSV data is uploaded, normalized into a canonical event table, optionally scoped with dataset filters, then used to compute cohort membership, retention, and usage outputs. The frontend is a thin client that calls these HTTP endpoints and renders tables/forms.
+
+## Runtime Components
+
+- **Backend API:** FastAPI app with permissive CORS (`allow_origins=["*"]`).
+- **Database:** DuckDB file opened per request via `get_connection()`.
+- **Frontend SPA:** React components and a shared `request()` wrapper in `frontend/src/api.js`.
+
+## Persistent / Derived Tables
+
+### 1) `events`
+Raw uploaded CSV table (schema exactly matches uploaded columns). Recreated on each `/upload`.
+
+### 2) `events_normalized`
+Canonical analytics table created by `/map-columns`.
+
+- Required canonical columns:
+  - `user_id` (TEXT)
+  - `event_name` (TEXT)
+  - `event_time` (TIMESTAMP)
+  - `event_count` (INTEGER/BIGINT, NOT NULL)
+- Plus every non-mapped source column, with selected types (`TEXT`, `NUMERIC`, `TIMESTAMP`, `BOOLEAN`).
+- Deduplication step groups by all columns except `event_count`, summing `event_count`.
+
+### 3) `events_scoped`
+Current filtered projection of `events_normalized` (replaced by `/apply-filters`).
+
+### 4) `cohorts`
+Metadata:
+- `cohort_id` PK (sequence-backed)
+- `name`
+- `logic_operator`
+- `join_type` (`condition_met` or `first_event`)
+- `is_active`
 
-#### `cohort_conditions`
+### 5) `cohort_conditions`
+Condition rows per cohort:
+- `condition_id` PK (sequence-backed)
+- `cohort_id`
+- `event_name`
+- `min_event_count`
+- `property_column` / `property_operator` / `property_values` (JSON text)
 
-- **Purpose**: Persisted condition rows for each cohort.
-- **Key columns**:
-  - `condition_id` (sequence-backed PK)
-  - `cohort_id`
-  - `event_name`
-  - `min_event_count`
-- **Relationships**: Many-to-one into `cohorts`.
-- **Index assumptions**: logical lookup by `cohort_id`; no explicit index defined.
-- **Design rationale**: Condition normalization avoids denormalized JSON blobs, supports introspection and future editing APIs.
+### 6) `cohort_membership`
+Materialized membership:
+- `user_id`
+- `cohort_id`
+- `join_time`
 
-#### `cohort_memberships` (`cohort_membership` in code)
+### 7) `cohort_activity_snapshot`
+Snapshot of events belonging to users who joined each cohort:
+- `cohort_id`
+- `user_id`
+- `event_time`
+- `event_name`
 
-- **Purpose**: Snapshot membership table with immutable cohort join anchor.
-- **Key columns**:
-  - `user_id`
-  - `cohort_id`
-  - `join_time TIMESTAMP`
-- **Relationships**:
-  - Many-to-one to `cohorts`.
-  - Join target for both retention and usage calculations.
-- **Index assumptions**: frequent joins on `(cohort_id, user_id)`.
-- **Design rationale**: Freezes cohort entry population and join anchor for reproducible analytics.
+### 8) `dataset_scope`
+Singleton row (`id = 1`) storing active scope metadata:
+- `filters_json`
+- `total_rows`
+- `filtered_rows`
+- `updated_at`
 
-#### Additional implemented snapshot table: `cohort_activity_snapshot`
+## Data Flow
 
-- **Purpose**: Frozen activity events for each cohort/user at cohort-creation time.
-- **Key columns**:
-  - `cohort_id`
-  - `user_id`
-  - `event_time`
-- **Relationships**:
-  - Joined with `cohort_membership` for retention calculations.
-  - Optionally joined with `events_normalized` for event-name filtered retention.
-- **Design rationale**: Preserves retention stability even if `events_normalized` is replaced later.
+1. **Upload (`POST /upload`)**
+   - Validates `.csv` filename and at least 3 columns.
+   - Reads CSV into pandas, writes `events`, returns column names + detected types.
 
-### Why `events_normalized` exists
+2. **Map columns (`POST /map-columns`)**
+   - Validates mapped source columns exist.
+   - Validates required mapped semantic types:
+     - `user_id` -> TEXT
+     - `event_name` -> TEXT
+     - `event_time` -> TIMESTAMP
+     - optional `event_count` -> NUMERIC
+   - Parses each row by selected type.
+   - If event_count column is missing, defaults each row to `1`.
+   - Requires non-null integer `event_count >= 1` when supplied.
+   - Creates `events_normalized`, resets cohort/snapshot tables, initializes `events_scoped`, creates default **All Users** cohort, and refreshes active flags.
 
-- Raw CSV schemas vary; analytics logic should not.
-- Canonical field naming reduces query complexity and frontend coupling.
-- `raw_data` keeps auxiliary attributes without polluting cohort/retention SQL.
+3. **Scope filters (`POST /apply-filters`)**
+   - Builds a SQL `WHERE` clause from date range + filter rows.
+   - Recreates `events_scoped` from `events_normalized`.
+   - Persists scope metadata to `dataset_scope`.
+   - Rebuilds all cohort memberships/snapshots from scoped data.
 
-### Why snapshot memberships are stored
+4. **Cohort CRUD (`/cohorts`)**
+   - Create/update stores metadata + condition rows and materializes membership.
+   - Delete removes metadata + conditions + membership + snapshot.
+   - `All Users` is protected from update/delete.
 
-- Prevents cohort drift when source events change after cohort creation.
-- Makes retention reproducible across remaps/uploads.
-- Supports auditing and deterministic test behavior.
+5. **Analytics (`GET /retention`, `GET /usage`)**
+   - Read active cohorts only (`is_active = TRUE`).
+   - Use `cohort_membership` + `cohort_activity_snapshot` + overlay join to `events_scoped` so analytics reflect current scoped dataset.
 
-### Why conditions are in their own table
+## Cohort Membership SQL Logic
 
-- Supports multiple conditions per cohort with explicit rows.
-- Enables future condition editing/versioning without schema redesign.
-- Cleaner relational model vs serialized condition payloads.
+For each condition, backend builds a CTE over one event stream:
 
----
+- Filters by `event_name` (+ optional property filter).
+- Computes cumulative volume using:
+  - `SUM(event_count) OVER (PARTITION BY user_id ORDER BY event_time, event_name ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`
+- Finds first timestamp where cumulative count reaches threshold (`min_event_count`).
 
-## 3. Cohort Engine Design
+Condition combination:
 
-### 3.1 Multi-Condition Logic
+- **AND:** `INNER JOIN` condition CTEs by `user_id`; join timestamp is `LEAST(c0.event_time, c1.event_time, ...)`.
+- **OR:** `UNION ALL` condition CTEs then `MIN(event_time)` per user.
 
-- Supports flat boolean composition only:
-  - `AND`: user must satisfy all condition CTEs.
-  - `OR`: user can satisfy any condition CTE.
-- Hard cap: **maximum 5 conditions** enforced in request model.
-- No nested logic (e.g., `(A AND B) OR C`) by design.
+`join_type` handling:
 
-#### Why no nested logic
+- `condition_met`: keep computed qualifying timestamp.
+- `first_event`: overwrite `join_time` with each user’s minimum event time in source table.
 
-- Keeps API payload and SQL generation deterministic.
-- Avoids introducing a custom expression parser in current architecture.
-- Maintains explainability for non-technical users and faster UI implementation.
+After membership insert, snapshot is rebuilt by joining source events to cohort membership on `user_id` + `cohort_id`.
 
-### 3.2 Join Time Computation
+## Retention Logic
 
-For each condition `(event_name, min_event_count)`:
+`GET /retention?max_day=<int>=7&retention_event=<optional>`:
 
-1. Filter `events_normalized` to the requested `event_name`.
-2. Order each user’s matching events by `event_time`.
-3. Assign `ROW_NUMBER()` per user.
-4. Select row where `rn = min_event_count`.
+- Computes day bucket as `DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)`.
+- Limits buckets to `0..max_day`.
+- Active users per cohort/day are counted distinct.
+- If `retention_event` is provided and not `any`, only that event is counted.
+- Final value is percentage: `active_users / cohort_size * 100`.
 
-Interpretation:
+`cohort_size` is computed from currently scoped users (membership left-joined to `events_scoped` and requiring scoped presence).
 
-- `min_event_count = 1` → first occurrence timestamp.
-- `min_event_count = 3` → timestamp of third occurrence.
+## Usage Logic
 
-Then:
+`GET /usage?event=<required>&max_day=<int>=7&retention_event=<optional>` returns three tables:
 
-- **AND mode**: combine per-condition qualifying rows per user, compute `LEAST(c0.event_time, c1.event_time, ...)`, then take `MIN(event_time)` grouped by user.
-- **OR mode**: union qualifying rows and take `MIN(event_time)` grouped by user.
+- `usage_volume_table` -> `COUNT(*)` event rows by cohort/day for selected usage event.
+- `usage_users_table` -> `COUNT(DISTINCT user_id)` by cohort/day for selected usage event.
+- `retained_users_table` -> same retained-user counts produced by retention query path.
 
-Final result is inserted as `join_time` into `cohort_membership`.
+If scoped table does not exist, no active cohorts exist, or selected usage event is absent in scoped data, returns empty tables.
 
-### 3.3 Snapshot Modeling
+## Column Values Endpoint
 
-#### Why snapshot-based cohorts were chosen
+`GET /column-values?column=<name>`:
 
-- Cohort membership is persisted at creation time and not recomputed on read.
-- Retention is computed against the frozen activity snapshot for that cohort.
-- This guarantees historical consistency for business reporting.
-
-#### Tradeoffs vs dynamic cohorts
-
-- **Snapshot advantages**:
-  - Stable, reproducible metrics.
-  - Faster reads (no full cohort recomputation each query).
-  - Clear temporal semantics.
-- **Snapshot disadvantages**:
-  - Storage duplication in `cohort_activity_snapshot`.
-  - Cohorts can become stale relative to newly uploaded data.
-  - Requires explicit recalc workflow (currently create new cohort / remap behavior).
-
-#### Impact on retention stability
+- Validates column exists in `events_normalized`.
+- Returns up to 100 distinct non-null values (`ORDER BY 1 LIMIT 100`).
+- Also returns true distinct count (`COUNT(DISTINCT column)`).
 
-- Remapping or replacing `events_normalized` does not retroactively alter previously snapshotted cohort retention curves.
-- This behavior is explicitly covered by tests.
+## Constraints / Limits / Defaults
 
-#### Deletion cascade behavior
+- Cohort request `conditions`: max 5.
+- `min_event_count`: `>= 1`.
+- Scope and cohort operators are type-validated.
+- `build_where_clause` supports `=`, `!=`, `<`, `>`, `<=`, `>=`, `IN`, `NOT IN`.
+- Scope timestamp operators exclude `IN` / `NOT IN`.
+- Cohort property filters allow timestamp `IN` / `NOT IN` but normalize strings to `%Y-%m-%d %H:%M:%S`.
+- SearchableSelect limits visible options to 100 in frontend.
+- Cohort property multi-select caps selected values at 100 in frontend.
+- Retention and usage default `max_day` = 7.
+- `retention_event` defaults logically to `any` when omitted.
 
-`DELETE /cohorts/{id}` executes manual cascade in order:
+## Frontend Architecture
 
-1. `cohort_activity_snapshot`
-2. `cohort_membership`
-3. `cohort_conditions`
-4. `cohorts`
+- `App.jsx` composes workflow: Upload -> Mapping -> Filter Data -> Cohort Form -> Retention -> Usage.
+- `api.js` centralizes backend calls and error extraction (`detail`).
+- `FilterData.jsx` loads columns/scope/date range, constructs `/apply-filters` payloads, and supports enabled/disabled filter rows.
+- `CohortForm.jsx` supports create/edit/delete, join type selection, AND/OR logic, optional typed property filters, and column value lookup.
+- `RetentionTable.jsx` controls `maxDay`, retention event, and renders day columns `D0..Dn`.
+- `UsageTable.jsx` loads usage by selected event and supports display transforms (`count`, `%`, per-active-user, per-event-firer) on top of backend tables.
+- `SearchableSelect.jsx` normalizes options, client-side filters, keyboard navigation, and truncates displayed matches to 100.
 
-This keeps orphaned records out of analytical queries and protects referential integrity by convention.
+## Test-Corroborated Behavior
 
----
+Backend tests verify:
 
-## 4. Retention Engine
-
-Retention is calculated as day-based active-user percentage per cohort.
-
-### Core approach
-
-- `join_time` in `cohort_membership` is the day-zero anchor.
-- For each activity record, compute:
-
-```sql
-DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
-```
-
-- Filter to `day_number BETWEEN 0 AND :max_day`.
-- Count `COUNT(DISTINCT user_id)` per `(cohort_id, day_number)`.
-- Convert to percentage via:
-
-```text
-retention% = active_users / cohort_size * 100
-```
-
-### `max_day` behavior
-
-- Controls output width (`D0...Dmax_day`).
-- Days outside range are excluded at query time.
-
-### `retention_event` behavior
-
-- If omitted (`any`), activity comes from all snapshotted events.
-- If provided, retention query joins snapshot rows back to `events_normalized` to filter by `event_name`.
-
-### Pseudo-query example (any event)
-
-```sql
-WITH activity_deltas AS (
-  SELECT
-    cm.cohort_id,
-    cm.user_id,
-    DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
-  FROM cohort_membership cm
-  JOIN cohort_activity_snapshot cas
-    ON cm.cohort_id = cas.cohort_id
-   AND cm.user_id = cas.user_id
-  WHERE DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)
-        BETWEEN 0 AND :max_day
-)
-SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
-FROM activity_deltas
-GROUP BY cohort_id, day_number;
-```
-
-### Pseudo-query example (filtered by event)
-
-```sql
-WITH activity_deltas AS (
-  SELECT
-    cm.cohort_id,
-    cm.user_id,
-    DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
-  FROM cohort_membership cm
-  JOIN cohort_activity_snapshot cas
-    ON cm.cohort_id = cas.cohort_id
-   AND cm.user_id = cas.user_id
-  JOIN events_normalized e
-    ON e.user_id = cas.user_id
-   AND e.event_time = cas.event_time
-  WHERE e.event_name = :retention_event
-    AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)
-        BETWEEN 0 AND :max_day
-)
-SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
-FROM activity_deltas
-GROUP BY cohort_id, day_number;
-```
-
-### Edge cases
-
-- **No cohorts** → returns empty `retention_table`.
-- **Zero-sized cohort** → percentage guarded to `0.0` (no divide-by-zero).
-- **No matching events in day bucket** → explicit `0.0` value returned for that day.
-
----
-
-## 5. Usage Engine
-
-Usage answers **"how much activity happened"**, while retention answers **"what share of cohort was active"**.
-
-### Metrics returned
-
-- **Volume computation**: `COUNT(*)` events per cohort/day.
-- **Distinct user computation**: `COUNT(DISTINCT user_id)` per cohort/day.
-- **Per-active-user metric** (frontend-derived):
-
-```text
-per_active_user = total_events / distinct_users
-```
-
-(Guarded to `0` when distinct users = 0.)
-
-### Relationship to retention window
-
-- Usage also uses `DATE_DIFF` from cohort `join_time` and `max_day` filtering.
-- Unlike retention, usage is always scoped to a single selected event (`event` query parameter is required).
-
-### Conceptual distinction from retention
-
-- **Retention**: normalized percentage metric tied to cohort size.
-- **Usage**: absolute or intensity metric tied to event frequency and user concentration.
-
----
-
-## 6. Frontend Architecture
-
-### React + Vite structure
-
-- Vite provides build tooling and env injection (`VITE_API_BASE_URL`).
-- Top-level `App` composes five feature components in workflow order.
-
-### Component breakdown
-
-- `Upload` → CSV selection and `POST /upload`.
-- `Mapping` → source-to-canonical column mapping via `POST /map-columns`.
-- `CohortForm` → condition builder, cohort creation/deletion.
-- `RetentionTable` → day matrix with optional event filtering.
-- `UsageTable` → volume + distinct user matrices, with display modes.
-
-### API interaction flow
-
-- Centralized in `src/api.js` through a common `request()` wrapper.
-- Handles JSON parsing and error normalization (`detail` fallback).
-
-### State management approach
-
-- Local component state via `useState`.
-- Side effects and refresh via `useEffect`.
-- Parent-level `retentionRefreshToken` in `App` triggers downstream table reloads after mapping/cohort changes.
-- No global state library (Redux/Zustand) is currently needed.
-
-### Form-to-payload mapping
-
-- Mapping form maps directly to:
-
-```json
-{
-  "user_id_column": "...",
-  "event_name_column": "...",
-  "event_time_column": "..."
-}
-```
-
-- Cohort form maps to:
-
-```json
-{
-  "name": "...",
-  "logic_operator": "AND|OR",
-  "conditions": [
-    { "event_name": "signup", "min_event_count": 1 }
-  ]
-}
-```
-
-### UX flow coverage
-
-- **Upload flow**: file -> backend response -> column options initialized.
-- **Mapping flow**: selected columns -> normalized table creation -> analytics refresh.
-- **Cohort creation flow**: define conditions -> create cohort -> refresh retention/usage surfaces.
-- **Retention visualization**: adjustable day horizon and optional event filter.
-- **Usage dashboard**: selected event across day buckets with count/%/per-user display options.
-
----
-
-## 7. Data Flow (Step-by-Step)
-
-1. **CSV upload**
-   - Frontend sends multipart upload.
-   - Backend validates and writes raw rows to `events`.
-2. **Raw storage in `events`**
-   - Table mirrors source columns exactly.
-3. **Mapping to canonical model**
-   - Backend creates/replaces `events_normalized` using selected user/event/time columns.
-   - Non-selected columns are packed into `raw_data` JSON.
-4. **Cohort creation + snapshot**
-   - Cohort metadata/conditions stored.
-   - Membership (`cohort_membership`) computed with `join_time`.
-   - Related activity copied to `cohort_activity_snapshot`.
-5. **Retention computation**
-   - Day deltas computed from `join_time` to snapshot activity.
-   - Distinct active users converted to percentages per cohort/day.
-6. **Usage computation**
-   - For selected event, count total events and distinct users per cohort/day.
-   - Frontend optionally derives per-active-user intensity.
-
----
-
-## 8. Testing Strategy
-
-### Pytest coverage areas
-
-- Upload endpoint:
-  - Valid CSV handling.
-  - Non-CSV rejection.
-  - Minimum column constraints.
-- Mapping endpoint:
-  - Unknown-column validation.
-  - Timestamp coercion behavior.
-  - `raw_data` JSON capture for unmapped columns.
-- Cohort operations:
-  - Creation across logic operators.
-  - Min-event-count behavior.
-  - Deletion behavior and guardrails.
-- Retention:
-  - Day bucket correctness.
-  - `max_day` behavior.
-  - Multiple cohorts.
-  - Snapshot stability after remapping.
-
-### Why snapshot behavior is explicitly tested
-
-Snapshot correctness is central to analytics trust. Tests ensure historical cohort metrics stay stable even when base normalized events are replaced.
-
-### Current gaps / not yet covered
-
-- No dedicated tests for `/usage` endpoint behavior.
-- No performance/load regression tests.
-- No migration/versioning tests for schema evolution.
-- Limited frontend automated tests (UI behavior currently validated manually).
-
-### Testing philosophy
-
-- Emphasize deterministic endpoint behavior and data invariants over framework internals.
-- Use representative synthetic CSV fixtures to validate analytics semantics.
-- Prefer integration-style API tests that exercise SQL paths end-to-end.
-
----
-
-## 9. Deployment Architecture
-
-### Target deployment topology
-
-- **Backend**: Render web service running FastAPI/uvicorn.
-- **Frontend**: Vercel static deployment for Vite build output.
-
-### Runtime integration concerns
-
-- **CORS**:
-  - Current backend allows all origins (`*`) for simplicity.
-  - Production hardening should restrict to known frontend origins.
-- **Environment variables**:
-  - Frontend uses `VITE_API_BASE_URL` to target backend environment.
-  - Local fallback points to `http://127.0.0.1:8000`.
-
-### Production vs local differences
-
-- Local: both services run on localhost ports (5173 + 8000).
-- Production: cross-origin HTTPS calls between separate hosts.
-- DuckDB file path persistence semantics differ by host/container lifecycle policy.
-
----
-
-## 10. Scalability & Limitations
-
-- **DuckDB limitations**:
-  - Strong for embedded analytics, weaker for high-concurrency OLTP and distributed workloads.
-- **Memory constraints**:
-  - Large CSV uploads and wide scans can pressure RAM due to in-process execution.
-- **Single-node architecture**:
-  - Backend and DB scale vertically, not horizontally.
-- **No multi-tenant isolation**:
-  - All users/data share same database file and namespace.
-- **No authentication/authorization**:
-  - API is effectively open in current form.
-- **CSV-only ingestion**:
-  - No streaming connectors or warehouse sync.
-- **No incremental ingestion**:
-  - Upload currently replaces `events`; append/merge semantics are absent.
-
----
-
-## 11. Future Architecture Evolution
-
-Potential evolutions in likely order:
-
-1. **Move to Postgres** for stronger concurrency, indexing, and transactional semantics.
-2. **Add background job queue** (e.g., Celery/RQ) for heavy cohort recomputation and imports.
-3. **Incremental ingestion** with append + dedup strategies.
-4. **Dynamic cohorts** with query-time recomputation for near-real-time segments.
-5. **Cache retention/usage results** for repeated dashboard reads.
-6. **Multi-tenant isolation** via tenant keys, schemas, or database-per-tenant.
-7. **Role-based access control** and API auth boundary.
-8. **Partitioned storage** (time/user partitions) for larger event volumes.
-
-Recommended principle: preserve the current clear API contracts while evolving storage and execution internals behind stable endpoints.
+- Threshold uses cumulative **sum of `event_count`**, not raw row count.
+- Join type behavior (`condition_met` vs `first_event`) and normalization of uppercase input.
+- Snapshot overlay avoids inflation when different events share the same timestamp.
+- Scope operations rebuild memberships and can inactivate cohorts (including All Users).
+- `/column-values` enforces the 100-value response limit while returning full distinct cardinality.

@@ -1,50 +1,81 @@
-# Cohort Analysis (Full Stack)
+# Cohort Analysis
 
-This repository contains a full-stack cohort analysis app:
+A full-stack cohort analysis app backed by FastAPI + DuckDB, with a React/Vite UI for CSV ingestion, schema mapping, cohort definition, retention, and usage analytics.
 
-- **Backend**: FastAPI + DuckDB analytics engine
-- **Frontend**: React + Vite UI for upload, mapping, cohort creation, and retention visualization
+## Tech Stack
 
-## Project Structure
+- **Backend:** FastAPI, Pydantic, DuckDB, pandas
+- **Frontend:** React, Vite
+- **Tests:** pytest + FastAPI TestClient
 
-```text
-cohort-analysis/
-├── backend/
-│   ├── app/
-│   ├── tests/
-│   ├── requirements.txt
-│   └── main.py
-├── frontend/
-│   ├── package.json
-│   ├── vite.config.js
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── api.js
-│   │   └── components/
-│   │       ├── Upload.jsx
-│   │       ├── Mapping.jsx
-│   │       ├── CohortForm.jsx
-│   │       └── RetentionTable.jsx
-│   └── index.html
-└── README.md
-```
+## What It Actually Does
 
-## Backend Setup
+1. Upload a CSV (`/upload`).
+2. Map source columns to canonical fields (`/map-columns`):
+   - `user_id` (TEXT)
+   - `event_name` (TEXT)
+   - `event_time` (TIMESTAMP)
+   - optional `event_count` (NUMERIC)
+3. Normalize + deduplicate events into `events_normalized` (duplicate keys are merged by summing `event_count`).
+4. Apply dataset scope filters (`/apply-filters`) to produce `events_scoped`.
+5. Create/edit/delete cohorts (`/cohorts`) with:
+   - up to 5 conditions
+   - AND/OR logic
+   - join type: `condition_met` or `first_event`
+   - optional typed property filters
+6. Query retention (`/retention`) and usage (`/usage`) from scoped cohort snapshots.
+
+## API Surface
+
+- `GET /` health/status
+- `POST /upload`
+- `POST /map-columns`
+- `POST /apply-filters`
+- `GET /scope`
+- `GET /columns`
+- `GET /column-values?column=...`
+- `GET /date-range`
+- `POST /cohorts`
+- `GET /cohorts`
+- `PUT /cohorts/{cohort_id}`
+- `DELETE /cohorts/{cohort_id}`
+- `GET /events`
+- `GET /retention?max_day=...&retention_event=...`
+- `GET /usage?event=...&max_day=...&retention_event=...`
+
+## Key Behavioral Details
+
+- Cohort thresholding uses cumulative `SUM(event_count)` over time per user.
+- `first_event` join type rewrites cohort join time to each user’s first event in current source table.
+- Analytics are scoped through `events_scoped` overlay joins, so filters can hide/inactivate cohorts.
+- `/column-values` returns at most 100 sample distinct values plus `total_distinct`.
+
+## Real Constraints and Defaults
+
+- CSV only.
+- Upload requires at least 3 columns.
+- Cohort conditions: max 5.
+- `min_event_count >= 1`.
+- `max_day` default is 7 for retention and usage.
+- All Users cohort is auto-created on mapping and cannot be edited/deleted.
+- No authentication/authorization.
+- Single DuckDB file (single-node architecture).
+
+## Local Run
+
+### Backend
 
 ```bash
 cd backend
 python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-# source venv/bin/activate
+source venv/bin/activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Backend runs on **http://127.0.0.1:8000**.
+Default backend URL: `http://127.0.0.1:8000`
 
-## Frontend Setup
+### Frontend
 
 ```bash
 cd frontend
@@ -52,27 +83,13 @@ npm install
 npm run dev
 ```
 
-Frontend runs on **http://localhost:5173**.
+Default frontend URL: `http://localhost:5173`
 
-## CORS / Integration
+Frontend API base URL:
+- `VITE_API_BASE_URL` if set
+- otherwise `http://127.0.0.1:8000`
 
-The backend enables CORS for `http://localhost:5173` so the Vite app can call FastAPI endpoints from the browser.
-
-## API Endpoints
-
-- `POST /upload`
-- `POST /map-columns`
-- `POST /cohorts`
-- `GET /retention?max_day=7`
-
-## End-to-End Flow
-
-1. Upload CSV in the frontend.
-2. Map CSV columns to user/event/time.
-3. Create cohort rules.
-4. Load retention table for dynamic day columns (`D0..Dn`).
-
-## Run Backend Tests
+## Tests
 
 ```bash
 cd backend
