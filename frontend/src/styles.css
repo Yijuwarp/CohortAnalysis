@@ -502,3 +502,39 @@ li .button {
 .searchable-select-disabled {
   opacity: 0.7;
 }
+
+.cohort-rule-filter-grid {
+  display: grid;
+  grid-template-columns: 90px 1fr;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.cohort-multi-values {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.cohort-pills {
+  display: flex;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.cohort-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: #e5e7eb;
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.cohort-pill button {
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+}

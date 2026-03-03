@@ -368,14 +368,14 @@ def test_update_all_users_is_forbidden(client: TestClient) -> None:
 
 def _prepare_property_filter_events(client: TestClient) -> None:
     csv_text = (
-        "user_id,event_name,event_time,version,amount\n"
-        "u1,search,2024-01-01 09:00:00,3.9.1,10\n"
-        "u1,search,2024-01-02 09:00:00,3.9.1,11\n"
-        "u1,search,2024-01-03 09:00:00,4.0.0,12\n"
-        "u2,search,2024-01-01 10:00:00,3.9.1,20\n"
-        "u2,search,2024-01-04 10:00:00,3.8.0,21\n"
-        "u3,search,2024-01-02 11:00:00,3.9.1,30\n"
-        "u3,search,2024-01-03 11:00:00,3.9.1,31\n"
+        "user_id,event_name,event_time,version,amount,is_premium\n"
+        "u1,search,2024-01-01 09:00:00,3.9.1,10,true\n"
+        "u1,search,2024-01-02 09:00:00,3.9.1,11,true\n"
+        "u1,search,2024-01-03 09:00:00,4.0.0,12,true\n"
+        "u2,search,2024-01-01 10:00:00,3.9.1,20,false\n"
+        "u2,search,2024-01-04 10:00:00,3.8.0,21,false\n"
+        "u3,search,2024-01-02 11:00:00,3.9.1,30,true\n"
+        "u3,search,2024-01-03 11:00:00,3.9.1,31,true\n"
     )
     upload = csv_upload(client, csv_text=csv_text)
     assert upload.status_code == 200, f"Precondition failed: upload returned {upload.text}"
@@ -419,7 +419,7 @@ def test_create_cohort_with_property_filter_membership_correct_phase1(client: Te
                 {
                     "event_name": "search",
                     "min_event_count": 2,
-                    "property_filter": {"column": "version", "operator": "=", "value": "3.9.1"},
+                    "property_filter": {"column": "version", "operator": "=", "values": "3.9.1"},
                 }
             ],
         },
@@ -448,7 +448,7 @@ def test_update_cohort_remove_property_filter_recalculates_membership(client: Te
                 {
                     "event_name": "search",
                     "min_event_count": 2,
-                    "property_filter": {"column": "version", "operator": "=", "value": "3.9.1"},
+                    "property_filter": {"column": "version", "operator": "=", "values": "3.9.1"},
                 }
             ],
         },
@@ -486,7 +486,7 @@ def test_create_cohort_rejects_invalid_property_filter_operator(client: TestClie
                 {
                     "event_name": "search",
                     "min_event_count": 1,
-                    "property_filter": {"column": "version", "operator": ">", "value": "3.9.1"},
+                    "property_filter": {"column": "version", "operator": ">", "values": "3.9.1"},
                 }
             ],
         },
@@ -508,7 +508,7 @@ def test_create_cohort_rejects_unknown_property_filter_column(client: TestClient
                 {
                     "event_name": "search",
                     "min_event_count": 1,
-                    "property_filter": {"column": "missing_col", "operator": "=", "value": "3.9.1"},
+                    "property_filter": {"column": "missing_col", "operator": "=", "values": "3.9.1"},
                 }
             ],
         },
@@ -530,7 +530,7 @@ def test_property_filter_applies_before_aggregation(client: TestClient, db_conne
                 {
                     "event_name": "search",
                     "min_event_count": 2,
-                    "property_filter": {"column": "version", "operator": "=", "value": "4.0.0"},
+                    "property_filter": {"column": "version", "operator": "=", "values": "4.0.0"},
                 }
             ],
         },
@@ -542,10 +542,286 @@ def test_property_filter_applies_before_aggregation(client: TestClient, db_conne
 
     condition_row = db_connection.execute(
         """
-        SELECT property_column, property_operator, property_value
+        SELECT property_column, property_operator, property_values
         FROM cohort_conditions
         WHERE cohort_id = ?
         """,
         [cohort_id],
     ).fetchone()
-    assert condition_row == ("version", "=", "4.0.0")
+    assert condition_row == ("version", "=", "\"4.0.0\"")
+
+
+def test_create_cohort_with_in_operator_multiple_values(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_version_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "version", "operator": "IN", "values": ["3.9.1", "3.8.0"]},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 3
+
+
+def test_create_cohort_with_not_in_operator_multiple_values(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_version_not_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "version", "operator": "NOT IN", "values": ["3.9.1"]},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 2
+
+
+def test_create_cohort_with_numeric_gt_filter(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_amount_gt",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "amount", "operator": ">", "values": 25},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 1
+
+
+def test_create_cohort_with_boolean_equals_filter(client: TestClient, db_connection) -> None:
+    _prepare_property_filter_events(client)
+    db_connection.execute("""
+        ALTER TABLE events_normalized
+        ALTER COLUMN is_premium TYPE BOOLEAN
+        USING CAST(is_premium AS BOOLEAN)
+    """)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_premium",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "is_premium", "operator": "=", "values": True},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 2
+
+
+def test_create_cohort_rejects_empty_in_values(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "version", "operator": "IN", "values": []},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Operator IN requires a non-empty array value"}
+
+
+def test_create_cohort_rejects_non_numeric_value_for_numeric_operator(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_numeric",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "amount", "operator": ">", "values": "abc"},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Numeric operators require numeric values"}
+
+
+def test_create_cohort_with_timestamp_in_filter(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_time_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {
+                    "column": "event_time",
+                    "operator": "IN",
+                    "values": ["2024-01-01 09:00:00", "2024-01-01 10:00:00"],
+                },
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 2
+
+
+def test_create_cohort_rejects_non_string_timestamp_values(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_timestamp",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "event_time", "operator": ">=", "values": 123},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Timestamp filters require string values"}
+
+
+def test_create_cohort_rejects_boolean_value_for_numeric_operator(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_numeric_bool",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "amount", "operator": ">", "values": True},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Numeric operators require numeric values"}
+
+
+def test_create_cohort_normalizes_datetime_local_timestamp_values(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "search_time_local",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "event_time", "operator": "=", "values": "2024-01-01T09:00"},
+            }],
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    listed = client.get('/cohorts')
+    assert listed.status_code == 200, listed.text
+    cohort = next(row for row in listed.json()['cohorts'] if row['cohort_id'] == created.json()['cohort_id'])
+    assert cohort['conditions'][0]['property_filter']['values'] == '2024-01-01 09:00:00'
+
+
+def test_create_cohort_rejects_empty_timestamp_string(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_timestamp_empty",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "event_time", "operator": "=", "values": "   "},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Timestamp filters require non-empty string values"}
+
+
+def test_create_cohort_rejects_empty_timestamp_string_in_list(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_timestamp_list_empty",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {
+                    "column": "event_time",
+                    "operator": "IN",
+                    "values": ["2024-01-01 09:00:00", " "],
+                },
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Timestamp filters require non-empty string values"}
+
+
+def test_create_cohort_rejects_invalid_timestamp_format(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_timestamp_format",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "event_time", "operator": "=", "values": "not-a-date"},
+            }],
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "Invalid timestamp format"}

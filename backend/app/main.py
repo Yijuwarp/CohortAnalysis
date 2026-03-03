@@ -33,20 +33,24 @@ class ScopeFilter(BaseModel):
     value: str | float | int | list[str] | list[float] | list[int]
 
 
+class CohortPropertyFilter(BaseModel):
+    column: str
+    operator: str
+    values: str | float | int | bool | list[str] | list[float] | list[int] | list[bool]
+
+
 class CohortCondition(BaseModel):
     event_name: str
     min_event_count: int = Field(ge=1)
-    property_filter: ScopeFilter | None = None
+    property_filter: CohortPropertyFilter | None = None
 
     @field_validator("property_filter")
     @classmethod
-    def validate_property_filter(cls, value: ScopeFilter | None) -> ScopeFilter | None:
+    def validate_property_filter(cls, value: CohortPropertyFilter | None) -> CohortPropertyFilter | None:
         if value is None:
             return value
-        if value.value is None or (isinstance(value.value, str) and value.value == ""):
-            raise ValueError("property_filter.value is required")
-        if isinstance(value.value, list):
-            raise ValueError("property_filter.value must be a scalar")
+        if value.values is None or (isinstance(value.values, str) and value.values == ""):
+            raise ValueError("property_filter.values is required")
         return value
 
 
@@ -98,9 +102,10 @@ NUMERIC_TYPES = {
     "DOUBLE",
     "DECIMAL",
 }
-TEXT_ALLOWED_OPERATORS = {"=", "!="}
-NUMERIC_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<="}
-TIMESTAMP_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<="}
+TEXT_ALLOWED_OPERATORS = {"=", "!=", "IN", "NOT IN"}
+NUMERIC_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
+TIMESTAMP_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
+BOOLEAN_ALLOWED_OPERATORS = {"=", "!="}
 
 
 def get_column_type_map(connection: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, str]:
@@ -118,6 +123,8 @@ def get_column_type_map(connection: duckdb.DuckDBPyConnection, table_name: str) 
 
 
 def get_column_kind(data_type: str) -> str:
+    if data_type in {"BOOLEAN", "BOOL"}:
+        return "BOOLEAN"
     if "TIMESTAMP" in data_type or data_type == "DATE":
         return "TIMESTAMP"
     if data_type in NUMERIC_TYPES or data_type.startswith("DECIMAL"):
@@ -130,7 +137,56 @@ def get_allowed_operators(column_kind: str) -> set[str]:
         return TIMESTAMP_ALLOWED_OPERATORS
     if column_kind == "NUMERIC":
         return NUMERIC_ALLOWED_OPERATORS
+    if column_kind == "BOOLEAN":
+        return BOOLEAN_ALLOWED_OPERATORS
     return TEXT_ALLOWED_OPERATORS
+
+
+def normalize_timestamp_filter_value(value: str) -> str:
+    normalized = value.strip().replace("T", " ")
+    if not normalized:
+        return ""
+
+    try:
+        parsed = datetime.fromisoformat(normalized.replace(" ", "T"))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid timestamp format") from exc
+
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter, column_kind: str) -> None:
+    operator = property_filter.operator.upper()
+    values = property_filter.values
+    if operator in {"IN", "NOT IN"}:
+        if not isinstance(values, list) or not values:
+            raise HTTPException(status_code=400, detail=f"Operator {operator} requires a non-empty array value")
+    else:
+        if isinstance(values, list):
+            raise HTTPException(status_code=400, detail=f"Operator {operator} requires a scalar value")
+
+    scalar_values = values if isinstance(values, list) else [values]
+    if column_kind == "NUMERIC":
+        for value in scalar_values:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise HTTPException(status_code=400, detail="Numeric operators require numeric values")
+    elif column_kind == "TIMESTAMP":
+        normalized_values: list[str] = []
+        for value in scalar_values:
+            if not isinstance(value, str):
+                raise HTTPException(status_code=400, detail="Timestamp filters require string values")
+            normalized = normalize_timestamp_filter_value(value)
+            if not normalized:
+                raise HTTPException(status_code=400, detail="Timestamp filters require non-empty string values")
+            normalized_values.append(normalized)
+
+        property_filter.values = normalized_values if isinstance(values, list) else normalized_values[0]
+    elif column_kind == "BOOLEAN":
+        if operator in {"IN", "NOT IN"}:
+            raise HTTPException(status_code=400, detail=f"Operator '{operator}' not allowed for column type BOOLEAN")
+        for value in scalar_values:
+            if not isinstance(value, bool):
+                raise HTTPException(status_code=400, detail="Boolean filters only accept true/false values")
 
 
 def validate_cohort_conditions(
@@ -158,6 +214,7 @@ def validate_cohort_conditions(
                 status_code=400,
                 detail=f"Operator '{operator}' not allowed for column type {column_kind}",
             )
+        validate_cohort_property_filter_value(property_filter, column_kind)
 
 
 def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
@@ -208,12 +265,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         "min_event_count",
         "property_column",
         "property_operator",
-        "property_value",
+        "property_values",
     }
-    if existing_condition_columns and existing_condition_columns != expected_condition_columns:
-        connection.execute("DROP TABLE cohort_conditions")
-        connection.execute("DROP SEQUENCE IF EXISTS cohort_condition_id_sequence")
-
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS cohort_conditions (
@@ -223,11 +276,32 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             min_event_count INTEGER NOT NULL,
             property_column VARCHAR,
             property_operator VARCHAR,
-            property_value VARCHAR
+            property_values TEXT
         )
         """
     )
     connection.execute("CREATE SEQUENCE IF NOT EXISTS cohort_condition_id_sequence START 1")
+    if existing_condition_columns:
+        if "property_values" not in existing_condition_columns:
+            connection.execute("ALTER TABLE cohort_conditions ADD COLUMN property_values TEXT")
+        if "property_value" in existing_condition_columns:
+            connection.execute(
+                """
+                UPDATE cohort_conditions
+                SET property_values = COALESCE(property_values, json_array(property_value))
+                WHERE property_value IS NOT NULL
+                """
+            )
+            connection.execute("ALTER TABLE cohort_conditions DROP COLUMN property_value")
+        connection.execute(
+            """
+            UPDATE cohort_conditions
+            SET property_operator = '='
+            WHERE property_column IS NOT NULL
+              AND property_values IS NOT NULL
+              AND (property_operator IS NULL OR property_operator = '')
+            """
+        )
 
     existing_columns = {
         row[0]
@@ -372,7 +446,7 @@ def build_cohort_membership(
     logic_operator = str(cohort_row[0] or "OR").upper()
     conditions = connection.execute(
         """
-        SELECT event_name, min_event_count, property_column, property_operator, property_value
+        SELECT event_name, min_event_count, property_column, property_operator, property_values
         FROM cohort_conditions
         WHERE cohort_id = ?
         ORDER BY condition_id
@@ -393,13 +467,21 @@ def build_cohort_membership(
     else:
         cte_parts: list[str] = []
         query_params: list[object] = []
-        for index, (event_name, min_event_count, property_column, property_operator, property_value) in enumerate(conditions):
+        for index, (event_name, min_event_count, property_column, property_operator, property_values) in enumerate(conditions):
             event_conditions = ["event_name = ?"]
             event_params: list[object] = [event_name]
 
-            if property_column and property_operator and property_value is not None:
-                event_conditions.append(f"{quote_identifier(str(property_column))} {str(property_operator).upper()} ?")
-                event_params.append(property_value)
+            if property_column and property_operator and property_values is not None:
+                parsed_values = json.loads(str(property_values))
+                normalized_operator = str(property_operator).upper()
+                if normalized_operator in {"IN", "NOT IN"}:
+                    placeholders = ", ".join(["?"] * len(parsed_values))
+                    event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
+                    event_params.extend(parsed_values)
+                else:
+                    scalar_value = parsed_values[0] if isinstance(parsed_values, list) else parsed_values
+                    event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ?")
+                    event_params.append(scalar_value)
 
             where_clause = " AND ".join(event_conditions)
             cte_parts.append(
@@ -959,11 +1041,11 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
         for condition in payload.conditions:
             property_column = None
             property_operator = None
-            property_value = None
+            property_values = None
             if condition.property_filter:
                 property_column = condition.property_filter.column
                 property_operator = condition.property_filter.operator.upper()
-                property_value = str(condition.property_filter.value)
+                property_values = json.dumps(condition.property_filter.values)
 
             connection.execute(
                 """
@@ -974,7 +1056,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
                     min_event_count,
                     property_column,
                     property_operator,
-                    property_value
+                    property_values
                 )
                 VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
                 """,
@@ -984,7 +1066,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
                     condition.min_event_count,
                     property_column,
                     property_operator,
-                    property_value,
+                    property_values,
                 ],
             )
 
@@ -1019,7 +1101,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 cc.min_event_count,
                 cc.property_column,
                 cc.property_operator,
-                cc.property_value
+                cc.property_values
             FROM cohorts c
             LEFT JOIN cohort_conditions cc ON c.cohort_id = cc.cohort_id
             ORDER BY c.cohort_id, cc.condition_id
@@ -1027,7 +1109,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ).fetchall()
 
         cohorts: dict[int, dict[str, object]] = {}
-        for cohort_id, name, is_active, logic_operator, event_name, min_event_count, property_column, property_operator, property_value in rows:
+        for cohort_id, name, is_active, logic_operator, event_name, min_event_count, property_column, property_operator, property_values in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
                 cohorts[cohort_id] = {
@@ -1040,11 +1122,11 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
 
             if event_name is not None and min_event_count is not None:
                 property_filter = None
-                if property_column and property_operator and property_value is not None:
+                if property_column and property_operator and property_values is not None:
                     property_filter = {
                         "column": str(property_column),
                         "operator": str(property_operator),
-                        "value": str(property_value),
+                        "values": json.loads(str(property_values)),
                     }
                 cohorts[cohort_id]["conditions"].append(
                     {
@@ -1094,11 +1176,11 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
         for condition in payload.conditions:
             property_column = None
             property_operator = None
-            property_value = None
+            property_values = None
             if condition.property_filter:
                 property_column = condition.property_filter.column
                 property_operator = condition.property_filter.operator.upper()
-                property_value = str(condition.property_filter.value)
+                property_values = json.dumps(condition.property_filter.values)
 
             connection.execute(
                 """
@@ -1109,7 +1191,7 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
                     min_event_count,
                     property_column,
                     property_operator,
-                    property_value
+                    property_values
                 )
                 VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
                 """,
@@ -1119,7 +1201,7 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
                     condition.min_event_count,
                     property_column,
                     property_operator,
-                    property_value,
+                    property_values,
                 ],
             )
 

@@ -2,16 +2,20 @@ import { useEffect, useMemo, useState } from 'react'
 import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, updateCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
 
-const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=']
+const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
 
 const TYPE_OPERATOR_MAP = {
-  TEXT: ['=', '!='],
-  NUMERIC: ['=', '!=', '>', '>=', '<', '<='],
-  TIMESTAMP: ['=', '!=', '>', '>=', '<', '<='],
+  TEXT: ['IN', 'NOT IN', '=', '!='],
+  NUMERIC: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
+  TIMESTAMP: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
+  BOOLEAN: ['=', '!='],
 }
 
 const normalizeColumnType = (dataType = '') => {
   const upper = String(dataType).toUpperCase()
+  if (upper === 'BOOLEAN' || upper === 'BOOL') {
+    return 'BOOLEAN'
+  }
   if (upper.includes('TIMESTAMP') || upper === 'DATE') {
     return 'TIMESTAMP'
   }
@@ -38,9 +42,34 @@ const normalizeColumnType = (dataType = '') => {
   return 'TEXT'
 }
 
+const createEmptyCondition = (defaultEvent = '') => ({
+  event_name: defaultEvent,
+  min_event_count: 1,
+  property_filter: null,
+  property_filter_expanded: false,
+})
+
+const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
+
+const formatPropertyFilter = (propertyFilter) => {
+  if (!propertyFilter) {
+    return ''
+  }
+
+  const formattedValues = Array.isArray(propertyFilter.values)
+    ? propertyFilter.values.join(', ')
+    : propertyFilter.values
+
+  if (isMultiOperator(propertyFilter.operator)) {
+    return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} (${formattedValues})`
+  }
+
+  return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`
+}
+
 export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [name, setName] = useState('')
-  const [conditions, setConditions] = useState([{ event_name: '', min_event_count: 1, property_filter: null }])
+  const [conditions, setConditions] = useState([createEmptyCondition('')])
   const [logicOperator, setLogicOperator] = useState('AND')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
@@ -53,10 +82,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [infoCohortId, setInfoCohortId] = useState(null)
   const [editingCohortId, setEditingCohortId] = useState(null)
 
-  const columnByName = useMemo(
-    () => Object.fromEntries(columns.map((column) => [column.name, column])),
-    [columns]
-  )
+  const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
 
   const getAllowedOperators = (columnName, map = columnByName) => {
     if (!columnName || !map[columnName]) {
@@ -64,6 +90,16 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     }
     const type = normalizeColumnType(map[columnName]?.data_type)
     return TYPE_OPERATOR_MAP[type] || OPERATOR_ORDER
+  }
+
+  const getDefaultValuesForOperator = (operator, columnType) => {
+    if (isMultiOperator(operator)) {
+      return []
+    }
+    if (columnType === 'BOOLEAN') {
+      return true
+    }
+    return ''
   }
 
   const ensureColumnValuesLoaded = async (columnName) => {
@@ -92,7 +128,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const resetForm = () => {
     setEditingCohortId(null)
     setName('')
-    setConditions([{ event_name: events[0] || '', min_event_count: 1, property_filter: null }])
+    setConditions([createEmptyCondition(events[0] || '')])
     setLogicOperator('AND')
   }
 
@@ -119,20 +155,22 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         setConditions((prev) =>
           prev.map((condition) => {
             if (eventList.length === 0) {
-              return { ...condition, event_name: '', property_filter: null }
+              return { ...condition, event_name: '', property_filter: null, property_filter_expanded: false }
             }
 
             if (condition.event_name && eventList.includes(condition.event_name)) {
               return condition
             }
 
-            return { ...condition, event_name: eventList[0], property_filter: null }
+            return { ...condition, event_name: eventList[0], property_filter: null, property_filter_expanded: false }
           })
         )
       } catch {
         setEvents([])
         setColumns([])
-        setConditions((prev) => prev.map((condition) => ({ ...condition, event_name: '', property_filter: null })))
+        setConditions((prev) =>
+          prev.map((condition) => ({ ...condition, event_name: '', property_filter: null, property_filter_expanded: false }))
+        )
       }
     }
     load()
@@ -157,13 +195,27 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       return
     }
 
+    const hasEmptyNumericFilter = conditions.some((condition) => {
+      const propertyFilter = condition.property_filter
+      if (!propertyFilter || isMultiOperator(propertyFilter.operator)) {
+        return false
+      }
+      const columnType = normalizeColumnType(columnByName[propertyFilter.column]?.data_type)
+      return columnType === 'NUMERIC' && propertyFilter.values === ''
+    })
+    if (hasEmptyNumericFilter) {
+      setError('Numeric property filters require a value')
+      return
+    }
+
     setLoading(true)
 
     try {
+      const payloadConditions = conditions.map(({ property_filter_expanded, ...condition }) => condition)
       const payload = {
         name,
         logic_operator: logicOperator,
-        conditions,
+        conditions: payloadConditions,
       }
 
       const isEditing = Boolean(editingCohortId)
@@ -201,8 +253,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setLogicOperator(cohort.logic_operator || 'AND')
     setConditions(
       cohort.conditions?.length
-        ? cohort.conditions.map((condition) => ({ ...condition, property_filter: condition.property_filter || null }))
-        : [{ event_name: events[0] || '', min_event_count: 1, property_filter: null }]
+        ? cohort.conditions.map((condition) => ({ ...condition, property_filter: condition.property_filter || null, property_filter_expanded: false }))
+        : [createEmptyCondition(events[0] || '')]
     )
   }
 
@@ -217,127 +269,234 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       </div>
 
       <h4>Rules</h4>
-      {conditions.map((condition, index) => (
-        <div key={index}>
-          <div className="cohort-condition-block">
-            <div className="cohort-condition-content">
-              <SearchableSelect
-                options={events}
-                value={condition.event_name}
-                onChange={(nextEventName) => {
-                  const updated = [...conditions]
-                  updated[index].event_name = nextEventName
-                  updated[index].property_filter = null
-                  setConditions(updated)
-                }}
-                placeholder="Select event"
-              />
+      {conditions.map((condition, index) => {
+        const propertyFilter = condition.property_filter
+        const selectedColumn = propertyFilter?.column || ''
+        const columnType = normalizeColumnType(columnByName[selectedColumn]?.data_type)
+        const showProperty = condition.property_filter_expanded && propertyFilter
 
-              <span className="cohort-operator-symbol">≥</span>
-
-              <input
-                type="number"
-                min="1"
-                value={condition.min_event_count}
-                onChange={(e) => {
-                  const updated = [...conditions]
-                  updated[index].min_event_count = Number(e.target.value)
-                  setConditions(updated)
-                }}
-              />
-
-              {conditions.length > 1 && (
-                <button
-                  className="cohort-condition-remove"
-                  type="button"
-                  onClick={() => {
-                    const updated = conditions.filter((_, i) => i !== index)
+        return (
+          <div key={index}>
+            <div className="cohort-condition-block">
+              <div className="cohort-condition-content">
+                <SearchableSelect
+                  options={events}
+                  value={condition.event_name}
+                  onChange={(nextEventName) => {
+                    const updated = [...conditions]
+                    updated[index].event_name = nextEventName
+                    updated[index].property_filter = null
+                    updated[index].property_filter_expanded = false
                     setConditions(updated)
                   }}
-                >
-                  X
-                </button>
-              )}
-            </div>
+                  placeholder="Select event"
+                />
 
-            {!condition.property_filter && (
+                <span className="cohort-operator-symbol">≥</span>
+
+                <input
+                  type="number"
+                  min="1"
+                  value={condition.min_event_count}
+                  onChange={(e) => {
+                    const updated = [...conditions]
+                    updated[index].min_event_count = Number(e.target.value)
+                    setConditions(updated)
+                  }}
+                />
+
+                {conditions.length > 1 && (
+                  <button
+                    className="cohort-condition-remove"
+                    type="button"
+                    onClick={() => {
+                      const updated = conditions.filter((_, i) => i !== index)
+                      setConditions(updated)
+                    }}
+                  >
+                    X
+                  </button>
+                )}
+              </div>
+
               <button
                 className="cohort-add-condition"
                 type="button"
                 onClick={() => {
                   const updated = [...conditions]
-                  const defaultColumn = columns[0]?.name || ''
-                  updated[index].property_filter = {
-                    column: defaultColumn,
-                    operator: getAllowedOperators(defaultColumn)[0] || '=',
-                    value: '',
+                  if (!updated[index].property_filter_expanded) {
+                    const defaultColumn = columns[0]?.name || ''
+                    const allowedOperators = getAllowedOperators(defaultColumn)
+                    updated[index].property_filter = {
+                      column: defaultColumn,
+                      operator: allowedOperators[0] || '=',
+                      values: getDefaultValuesForOperator(allowedOperators[0] || '=', normalizeColumnType(columnByName[defaultColumn]?.data_type)),
+                    }
+                    updated[index].property_filter_expanded = true
+                    ensureColumnValuesLoaded(defaultColumn)
+                  } else {
+                    updated[index].property_filter_expanded = false
                   }
                   setConditions(updated)
-                  ensureColumnValuesLoaded(defaultColumn)
                 }}
               >
-                + Add property filter
+                {showProperty ? '▼ Property Filter' : '▶ Add Property Filter (Optional)'}
               </button>
-            )}
 
-            {condition.property_filter && (
-              <div className="cohort-rule-filters">
-                <label>Where:</label>
-                <div className="cohort-condition-content">
-                  <SearchableSelect
-                    options={columns.map((column) => ({ label: column.name, value: column.name }))}
-                    value={condition.property_filter.column}
-                    onChange={(nextColumn) => {
-                      const allowed = getAllowedOperators(nextColumn)
-                      const updated = [...conditions]
-                      updated[index].property_filter = {
-                        ...updated[index].property_filter,
-                        column: nextColumn,
-                        operator: allowed[0],
-                        value: '',
-                      }
-                      setConditions(updated)
-                      ensureColumnValuesLoaded(nextColumn)
-                    }}
-                    placeholder="Select column"
-                  />
+              {showProperty && (
+                <div className="cohort-rule-filters">
+                  <div className="cohort-rule-filter-grid">
+                    <label>Property</label>
+                    <SearchableSelect
+                      options={columns.map((column) => ({ label: column.name, value: column.name }))}
+                      value={propertyFilter.column}
+                      onChange={(nextColumn) => {
+                        if (!nextColumn) {
+                          const updated = [...conditions]
+                          updated[index].property_filter = null
+                          updated[index].property_filter_expanded = false
+                          setConditions(updated)
+                          return
+                        }
+                        const allowed = getAllowedOperators(nextColumn)
+                        const nextType = normalizeColumnType(columnByName[nextColumn]?.data_type)
+                        const updated = [...conditions]
+                        updated[index].property_filter = {
+                          ...updated[index].property_filter,
+                          column: nextColumn,
+                          operator: allowed[0],
+                          values: getDefaultValuesForOperator(allowed[0], nextType),
+                        }
+                        setConditions(updated)
+                        ensureColumnValuesLoaded(nextColumn)
+                      }}
+                      placeholder="Select column"
+                    />
 
-                  <select
-                    value={condition.property_filter.operator}
-                    onChange={(e) => {
-                      const updated = [...conditions]
-                      updated[index].property_filter = {
-                        ...updated[index].property_filter,
-                        operator: e.target.value,
-                      }
-                      setConditions(updated)
-                    }}
-                  >
-                    {getAllowedOperators(condition.property_filter.column).map((operator) => (
-                      <option key={operator} value={operator}>
-                        {operator}
-                      </option>
-                    ))}
-                  </select>
+                    <label>Operator</label>
+                    <select
+                      value={propertyFilter.operator}
+                      onChange={(e) => {
+                        const nextOperator = e.target.value
+                        const updated = [...conditions]
+                        updated[index].property_filter = {
+                          ...updated[index].property_filter,
+                          operator: nextOperator,
+                          values: getDefaultValuesForOperator(nextOperator, columnType),
+                        }
+                        setConditions(updated)
+                        if (isMultiOperator(nextOperator)) {
+                          ensureColumnValuesLoaded(propertyFilter.column)
+                        }
+                      }}
+                    >
+                      {getAllowedOperators(propertyFilter.column).map((operator) => (
+                        <option key={operator} value={operator}>
+                          {operator}
+                        </option>
+                      ))}
+                    </select>
 
-                  <input
-                    value={condition.property_filter.value}
-                    onChange={(e) => {
-                      const updated = [...conditions]
-                      updated[index].property_filter = {
-                        ...updated[index].property_filter,
-                        value: e.target.value,
-                      }
-                      setConditions(updated)
-                    }}
-                    list={`cohort-filter-values-${index}`}
-                    onFocus={() => ensureColumnValuesLoaded(condition.property_filter.column)}
-                  />
-                  <datalist id={`cohort-filter-values-${index}`}>
-                    {(valueCache[condition.property_filter.column]?.values || []).map((value) => (
-                      <option key={value} value={value} />
-                    ))}
-                  </datalist>
+                    <label>Values</label>
+                    <div>
+                      {columnType === 'BOOLEAN' ? (
+                        <select
+                          value={String(propertyFilter.values)}
+                          onChange={(e) => {
+                            const updated = [...conditions]
+                            updated[index].property_filter = {
+                              ...updated[index].property_filter,
+                              values: e.target.value === 'true',
+                            }
+                            setConditions(updated)
+                          }}
+                        >
+                          <option value="true">True</option>
+                          <option value="false">False</option>
+                        </select>
+                      ) : isMultiOperator(propertyFilter.operator) ? (
+                        <div className="cohort-multi-values">
+                          <SearchableSelect
+                            options={valueCache[propertyFilter.column]?.values || []}
+                            value=""
+                            onChange={(selected) => {
+                              const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
+                              if (existing.includes(selected) || existing.length >= 100) {
+                                return
+                              }
+                              const updated = [...conditions]
+                              updated[index].property_filter = {
+                                ...updated[index].property_filter,
+                                values: [...existing, selected],
+                              }
+                              setConditions(updated)
+                            }}
+                            placeholder="Select values"
+                          />
+                          <div className="cohort-pills">
+                            {(propertyFilter.values || []).map((value) => (
+                              <span className="cohort-pill" key={value}>
+                                {value}
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: (updated[index].property_filter.values || []).filter((item) => item !== value),
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                >
+                                  ×
+                                </button>
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      ) : columnType === 'NUMERIC' ? (
+                        <input
+                          type="number"
+                          value={propertyFilter.values}
+                          onChange={(e) => {
+                            const updated = [...conditions]
+                            updated[index].property_filter = {
+                              ...updated[index].property_filter,
+                              values: e.target.value === '' ? '' : Number(e.target.value),
+                            }
+                            setConditions(updated)
+                          }}
+                        />
+                      ) : columnType === 'TIMESTAMP' ? (
+                        <input
+                          type="datetime-local"
+                          value={String(propertyFilter.values || '')}
+                          onChange={(e) => {
+                            const updated = [...conditions]
+                            updated[index].property_filter = {
+                              ...updated[index].property_filter,
+                              values: e.target.value,
+                            }
+                            setConditions(updated)
+                          }}
+                        />
+                      ) : (
+                        <SearchableSelect
+                          options={valueCache[propertyFilter.column]?.values || []}
+                          value={String(propertyFilter.values || '')}
+                          onChange={(nextValue) => {
+                            const updated = [...conditions]
+                            updated[index].property_filter = {
+                              ...updated[index].property_filter,
+                              values: nextValue,
+                            }
+                            setConditions(updated)
+                          }}
+                          placeholder="Select value"
+                        />
+                      )}
+                    </div>
+                  </div>
 
                   <button
                     className="cohort-condition-remove"
@@ -345,32 +504,33 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     onClick={() => {
                       const updated = [...conditions]
                       updated[index].property_filter = null
+                      updated[index].property_filter_expanded = false
                       setConditions(updated)
                     }}
                   >
                     Remove Filter
                   </button>
                 </div>
+              )}
+            </div>
+
+            {conditions.length > 1 && index < conditions.length - 1 && (
+              <div className="cohort-logic-connector">
+                <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
+                  <option value="AND">AND</option>
+                  <option value="OR">OR</option>
+                </select>
               </div>
             )}
           </div>
-
-          {conditions.length > 1 && index < conditions.length - 1 && (
-            <div className="cohort-logic-connector">
-              <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
-                <option value="AND">AND</option>
-                <option value="OR">OR</option>
-              </select>
-            </div>
-          )}
-        </div>
-      ))}
+        )
+      })}
 
       <button
         className="cohort-add-condition"
         type="button"
         disabled={conditions.length >= 5}
-        onClick={() => setConditions([...conditions, { event_name: events[0] || '', min_event_count: 1, property_filter: null }])}
+        onClick={() => setConditions([...conditions, createEmptyCondition(events[0] || '')])}
       >
         + Add Condition
       </button>
@@ -435,11 +595,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   <div>
                     <strong>Logic:</strong> {cohort.logic_operator}
                   </div>
-                  {(cohort.conditions || []).map((c, index) => (
-                    <div key={index}>
+                  {(cohort.conditions || []).map((c, infoIndex) => (
+                    <div key={infoIndex}>
                       {c.event_name}
                       {c.property_filter
-                        ? ` WHERE ${c.property_filter.column} ${c.property_filter.operator} ${c.property_filter.value}`
+                        ? formatPropertyFilter(c.property_filter)
                         : ''}{' '}
                       ≥ {c.min_event_count}
                     </div>
