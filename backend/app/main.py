@@ -1117,7 +1117,10 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
 
 
 @app.get("/column-values")
-def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[str] | int]:
+def get_column_values(
+    column: str = Query(..., min_length=1),
+    event_name: str | None = Query(default=None, min_length=1),
+) -> dict[str, list[str] | int]:
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
@@ -1126,34 +1129,66 @@ def get_column_values(column: str = Query(..., min_length=1)) -> dict[str, list[
         if not normalized_exists:
             return {"values": [], "total_distinct": 0}
 
+        table_name = "events_scoped" if event_name is not None else "events_normalized"
         known_columns = {
             row[0]
             for row in connection.execute(
                 """
                 SELECT column_name
                 FROM information_schema.columns
-                WHERE table_name = 'events_normalized'
-                """
+                WHERE table_name = ?
+                """,
+                [table_name],
             ).fetchall()
         }
         if column not in known_columns:
             raise HTTPException(status_code=400, detail=f"Unknown column: {column}")
 
         column_ref = quote_identifier(column)
-        rows = connection.execute(
-            f"""
-            SELECT DISTINCT {column_ref}
-            FROM events_normalized
-            WHERE {column_ref} IS NOT NULL
-            ORDER BY 1
-            LIMIT 100
-            """
-        ).fetchall()
-        total_distinct = int(
-            connection.execute(
-                f"SELECT COUNT(DISTINCT {column_ref}) FROM events_normalized WHERE {column_ref} IS NOT NULL"
+
+        if event_name is not None:
+            event_exists = connection.execute(
+                "SELECT COUNT(*) FROM events_scoped WHERE event_name = ?",
+                [event_name],
             ).fetchone()[0]
-        )
+            if not event_exists:
+                raise HTTPException(status_code=400, detail=f"Unknown event_name: {event_name}")
+
+            rows = connection.execute(
+                f"""
+                SELECT DISTINCT {column_ref}
+                FROM events_scoped
+                WHERE {column_ref} IS NOT NULL AND event_name = ?
+                ORDER BY 1
+                LIMIT 100
+                """,
+                [event_name],
+            ).fetchall()
+            total_distinct = int(
+                connection.execute(
+                    f"""
+                    SELECT COUNT(DISTINCT {column_ref})
+                    FROM events_scoped
+                    WHERE {column_ref} IS NOT NULL AND event_name = ?
+                    """,
+                    [event_name],
+                ).fetchone()[0]
+            )
+        else:
+            rows = connection.execute(
+                f"""
+                SELECT DISTINCT {column_ref}
+                FROM events_normalized
+                WHERE {column_ref} IS NOT NULL
+                ORDER BY 1
+                LIMIT 100
+                """
+            ).fetchall()
+            total_distinct = int(
+                connection.execute(
+                    f"SELECT COUNT(DISTINCT {column_ref}) FROM events_normalized WHERE {column_ref} IS NOT NULL"
+                ).fetchone()[0]
+            )
         return {
             "values": [str(value) for (value,) in rows],
             "total_distinct": total_distinct,

@@ -103,23 +103,30 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     return ''
   }
 
-  const ensureColumnValuesLoaded = async (columnName) => {
-    if (!columnName || valueCache[columnName]) {
+  const getValueCacheKey = (eventName, columnName) => `${eventName || ''}__${columnName || ''}`
+
+  const ensureColumnValuesLoaded = async (columnName, eventName) => {
+    if (!columnName || !eventName) {
+      return
+    }
+
+    const cacheKey = getValueCacheKey(eventName, columnName)
+    if (valueCache[cacheKey]) {
       return
     }
 
     try {
-      const response = await getColumnValues(columnName)
+      const response = await getColumnValues(columnName, eventName)
       setValueCache((prev) => ({
         ...prev,
-        [columnName]: {
+        [cacheKey]: {
           values: (response.values || []).map((value) => String(value)),
         },
       }))
     } catch {
       setValueCache((prev) => ({
         ...prev,
-        [columnName]: {
+        [cacheKey]: {
           values: [],
         },
       }))
@@ -277,6 +284,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         const propertyFilter = condition.property_filter
         const selectedColumn = propertyFilter?.column || ''
         const columnType = normalizeColumnType(columnByName[selectedColumn]?.data_type)
+        const valueCacheKey = getValueCacheKey(condition.event_name, selectedColumn)
+        const availableValues = valueCache[valueCacheKey]?.values || []
+        const isValueSelectionDisabled = !condition.event_name
         const showProperty = condition.property_filter_expanded && propertyFilter
 
         return (
@@ -337,7 +347,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                       values: getDefaultValuesForOperator(allowedOperators[0] || '=', normalizeColumnType(columnByName[defaultColumn]?.data_type)),
                     }
                     updated[index].property_filter_expanded = true
-                    ensureColumnValuesLoaded(defaultColumn)
+                    ensureColumnValuesLoaded(defaultColumn, updated[index].event_name)
                   } else {
                     updated[index].property_filter_expanded = false
                   }
@@ -372,7 +382,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                           values: getDefaultValuesForOperator(allowed[0], nextType),
                         }
                         setConditions(updated)
-                        ensureColumnValuesLoaded(nextColumn)
+                        ensureColumnValuesLoaded(nextColumn, updated[index].event_name)
                       }}
                       placeholder="Select column"
                     />
@@ -390,7 +400,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                         }
                         setConditions(updated)
                         if (isMultiOperator(nextOperator)) {
-                          ensureColumnValuesLoaded(propertyFilter.column)
+                          ensureColumnValuesLoaded(propertyFilter.column, updated[index].event_name)
                         }
                       }}
                     >
@@ -405,6 +415,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     <div>
                       {columnType === 'BOOLEAN' ? (
                         <select
+                          disabled={isValueSelectionDisabled}
                           value={String(propertyFilter.values)}
                           onChange={(e) => {
                             const updated = [...conditions]
@@ -421,8 +432,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                       ) : isMultiOperator(propertyFilter.operator) ? (
                         <div className="cohort-multi-values">
                           <SearchableSelect
-                            options={valueCache[propertyFilter.column]?.values || []}
+                            options={availableValues}
                             value=""
+                            disabled={isValueSelectionDisabled}
                             onChange={(selected) => {
                               const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
                               if (existing.includes(selected) || existing.length >= 100) {
@@ -460,6 +472,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                         </div>
                       ) : columnType === 'NUMERIC' ? (
                         <input
+                          disabled={isValueSelectionDisabled}
                           type="number"
                           value={propertyFilter.values}
                           onChange={(e) => {
@@ -473,6 +486,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                         />
                       ) : columnType === 'TIMESTAMP' ? (
                         <input
+                          disabled={isValueSelectionDisabled}
                           type="datetime-local"
                           value={String(propertyFilter.values || '')}
                           onChange={(e) => {
@@ -486,8 +500,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                         />
                       ) : (
                         <SearchableSelect
-                          options={valueCache[propertyFilter.column]?.values || []}
+                          options={availableValues}
                           value={String(propertyFilter.values || '')}
+                          disabled={isValueSelectionDisabled}
                           onChange={(nextValue) => {
                             const updated = [...conditions]
                             updated[index].property_filter = {
