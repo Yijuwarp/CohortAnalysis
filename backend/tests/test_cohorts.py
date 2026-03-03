@@ -86,6 +86,149 @@ def test_nth_event_logic_uses_min_event_count_as_join_time(
     ], f"The cohort join_time should be the second purchase timestamp, got {rows}"
 
 
+
+
+def test_cohort_join_type_defaults_to_condition_met_when_omitted(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_twice_default_join",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 2}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+
+    cohort_row = db_connection.execute(
+        "SELECT join_type FROM cohorts WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchone()
+    assert cohort_row == ("condition_met",)
+
+    rows = db_connection.execute(
+        "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchall()
+    assert rows == [("u1", datetime(2024, 1, 3, 9, 0, 0))]
+
+
+def test_first_event_join_type_overrides_join_time_not_membership(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_twice_first_event",
+            "logic_operator": "AND",
+            "join_type": "first_event",
+            "conditions": [{"event_name": "purchase", "min_event_count": 2}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 1
+
+    rows = db_connection.execute(
+        "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchall()
+    assert rows == [("u1", datetime(2024, 1, 1, 9, 0, 0))]
+
+
+
+
+def test_create_cohort_normalizes_uppercase_join_type(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_upper_join",
+            "logic_operator": "AND",
+            "join_type": "FIRST_EVENT",
+            "conditions": [{"event_name": "purchase", "min_event_count": 2}],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+
+    cohort_row = db_connection.execute(
+        "SELECT join_type FROM cohorts WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchone()
+    assert cohort_row == ("first_event",)
+
+
+def test_all_users_cohort_defaults_to_first_event_join_type(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    all_users = db_connection.execute(
+        "SELECT join_type FROM cohorts WHERE name = 'All Users'",
+    ).fetchone()
+    assert all_users == ("first_event",)
+
+
+def test_create_cohort_rejects_invalid_join_type(client: TestClient) -> None:
+    _prepare_normalized_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "invalid_join",
+            "logic_operator": "AND",
+            "join_type": "invalid",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["msg"] == "Value error, join_type must be 'condition_met' or 'first_event'"
+
+
+def test_update_cohort_can_change_join_type(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_twice",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 2}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    cohort_id = created.json()["cohort_id"]
+
+    updated = client.put(
+        f"/cohorts/{cohort_id}",
+        json={
+            "name": "purchase_twice",
+            "logic_operator": "AND",
+            "join_type": "first_event",
+            "conditions": [{"event_name": "purchase", "min_event_count": 2}],
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    cohort_row = db_connection.execute(
+        "SELECT join_type FROM cohorts WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchone()
+    assert cohort_row == ("first_event",)
+
+    rows = db_connection.execute(
+        "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?",
+        [cohort_id],
+    ).fetchall()
+    assert rows == [("u1", datetime(2024, 1, 1, 9, 0, 0))]
+
+
 def test_cohort_creation_with_no_matching_users_inserts_zero(client: TestClient, db_connection) -> None:
     _prepare_normalized_events(client)
 

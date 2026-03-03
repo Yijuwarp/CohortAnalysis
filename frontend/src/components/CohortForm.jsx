@@ -71,6 +71,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [name, setName] = useState('')
   const [conditions, setConditions] = useState([createEmptyCondition('')])
   const [logicOperator, setLogicOperator] = useState('AND')
+  const [joinType, setJoinType] = useState('condition_met')
   const [result, setResult] = useState(null)
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
@@ -130,6 +131,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setName('')
     setConditions([createEmptyCondition(events[0] || '')])
     setLogicOperator('AND')
+    setJoinType('condition_met')
   }
 
   const loadCohorts = async () => {
@@ -215,6 +217,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       const payload = {
         name,
         logic_operator: logicOperator,
+        join_type: joinType,
         conditions: payloadConditions,
       }
 
@@ -251,6 +254,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setEditingCohortId(cohort.cohort_id)
     setName(cohort.cohort_name)
     setLogicOperator(cohort.logic_operator || 'AND')
+    setJoinType(cohort.join_type || 'condition_met')
     setConditions(
       cohort.conditions?.length
         ? cohort.conditions.map((condition) => ({ ...condition, property_filter: condition.property_filter || null, property_filter_expanded: false }))
@@ -535,6 +539,32 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         + Add Condition
       </button>
 
+      <h4>Cohort Join Time</h4>
+      <div>
+        <label>
+          <input
+            type="radio"
+            name="join-type"
+            value="condition_met"
+            checked={joinType === 'condition_met'}
+            onChange={(e) => setJoinType(e.target.value)}
+          />{' '}
+          When condition is met
+        </label>
+      </div>
+      <div>
+        <label>
+          <input
+            type="radio"
+            name="join-type"
+            value="first_event"
+            checked={joinType === 'first_event'}
+            onChange={(e) => setJoinType(e.target.value)}
+          />{' '}
+          On first event
+        </label>
+      </div>
+
       <div className="inline-controls">
         <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
           {loading ? (editingCohortId ? 'Updating...' : 'Creating...') : editingCohortId ? 'Update Cohort' : 'Create Cohort'}
@@ -594,6 +624,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                 <div className="cohort-info">
                   <div>
                     <strong>Logic:</strong> {cohort.logic_operator}
+                  </div>
+                  <div>
+                    <strong>Join:</strong> {cohort.join_type || 'condition_met'}
                   </div>
                   {(cohort.conditions || []).map((c, infoIndex) => (
                     <div key={infoIndex}>
