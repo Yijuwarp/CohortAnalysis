@@ -285,8 +285,8 @@ def test_date_range_includes_end_of_day_events(client: TestClient, db_connection
 
     db_connection.execute(
         """
-        INSERT INTO events_normalized (user_id, event_name, event_time, country, device, campaign_id)
-        VALUES ('u9', 'open', '2026-01-31 18:00:00', 'US', 'Android', 'c9')
+        INSERT INTO events_normalized (user_id, event_name, event_time, event_count, country, device, campaign_id)
+        VALUES ('u9', 'open', '2026-01-31 18:00:00', 1, 'US', 'Android', 'c9')
         """
     )
 
@@ -388,7 +388,7 @@ def test_columns_includes_data_type(client: TestClient) -> None:
     columns = response.json()['columns']
     event_time = next((column for column in columns if column['name'] == 'event_time'), None)
     assert event_time is not None
-    assert event_time['data_type'] == 'TIMESTAMP'
+    assert str(event_time['data_type']).startswith('TIMESTAMP')
 
 
 def test_column_values_returns_distinct_values(client: TestClient) -> None:
@@ -406,13 +406,13 @@ def test_column_values_respects_100_limit(client: TestClient, db_connection) -> 
     _prepare_scoped_fixture(client)
 
     rows = [
-        (f'u_extra_{index}', 'open', f'2026-02-10 12:{index % 60:02d}:00', f'code_{index}', 'Web', f'cx_{index}')
+        (f'u_extra_{index}', 'open', f'2026-02-10 12:{index % 60:02d}:00', 1, f'code_{index}', 'Web', f'cx_{index}')
         for index in range(150)
     ]
     db_connection.executemany(
         """
-        INSERT INTO events_normalized (user_id, event_name, event_time, country, device, campaign_id)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO events_normalized (user_id, event_name, event_time, event_count, country, device, campaign_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         rows,
     )

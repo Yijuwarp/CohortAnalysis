@@ -19,7 +19,7 @@ export default function Upload({ onUploaded }) {
     try {
       const data = await uploadCSV(file)
       setResult(data)
-      onUploaded(data.columns)
+      onUploaded(data.columns, data.detected_types || {})
     } catch (err) {
       setError(err.message)
       setResult(null)

@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -25,6 +26,8 @@ class ColumnMappingRequest(BaseModel):
     user_id_column: str
     event_name_column: str
     event_time_column: str
+    event_count_column: str | None = None
+    column_types: dict[str, str] = Field(default_factory=dict)
 
 
 class ScopeFilter(BaseModel):
@@ -162,6 +165,78 @@ def normalize_timestamp_filter_value(value: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid timestamp format") from exc
 
     return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+TIMESTAMP_INPUT_FORMATS: tuple[str, ...] = (
+    "%Y-%m-%d",
+    "%Y-%m-%d %H",
+    "%Y-%m-%d %H:%M",
+    "%Y-%m-%d %H:%M:%S",
+)
+
+
+def normalize_event_timestamp_value(value: object, *, allow_empty: bool) -> datetime | None:
+    if value is None:
+        if allow_empty:
+            return None
+        raise HTTPException(status_code=400, detail="Timestamp value cannot be null")
+
+    raw = str(value).strip().replace("T", " ")
+    if raw == "":
+        if allow_empty:
+            return None
+        raise HTTPException(status_code=400, detail="Timestamp value cannot be null")
+
+    for fmt in TIMESTAMP_INPUT_FORMATS:
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return datetime.strptime(parsed.strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {raw}")
+
+
+def parse_bool_value(value: object) -> bool:
+    normalized = str(value).strip().lower()
+    if normalized == "true":
+        return True
+    if normalized == "false":
+        return False
+    raise ValueError("Expected true/false")
+
+
+def parse_int_value(value: object) -> int:
+    normalized = str(value).strip()
+    if not re.fullmatch(r"[+-]?\d+", normalized):
+        raise ValueError("Expected integer")
+    return int(normalized)
+
+
+def detect_column_type(values: pd.Series) -> str:
+    non_null = [str(value).strip() for value in values.tolist() if value is not None and str(value).strip() != ""]
+    if not non_null:
+        return "TEXT"
+
+    try:
+        for value in non_null:
+            parse_int_value(value)
+        return "NUMERIC"
+    except ValueError:
+        pass
+
+    try:
+        for value in non_null:
+            parse_bool_value(value)
+        return "BOOLEAN"
+    except ValueError:
+        pass
+
+    try:
+        for value in non_null:
+            normalize_event_timestamp_value(value, allow_empty=False)
+        return "TIMESTAMP"
+    except HTTPException:
+        return "TEXT"
 
 
 def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter, column_kind: str) -> None:
@@ -510,16 +585,21 @@ def build_cohort_membership(
             cte_parts.append(
                 f"""
                 c{index} AS (
-                    SELECT user_id, event_time
+                    SELECT user_id, MIN(event_time) AS event_time
                     FROM (
                         SELECT
                             user_id,
                             event_time,
-                            ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY event_time) AS rn
+                            SUM(event_count) OVER (
+                                PARTITION BY user_id
+                                ORDER BY event_time, event_name
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+                            ) AS cumulative_event_count
                         FROM {source_table}
                         WHERE {where_clause}
                     ) t
-                    WHERE rn = ?
+                    WHERE cumulative_event_count >= ?
+                    GROUP BY user_id
                 )
                 """
             )
@@ -676,7 +756,7 @@ def read_root() -> dict[str, str]:
 
 
 @app.post("/upload")
-async def upload_csv(file: UploadFile = File(...)) -> dict[str, int | list[str]]:
+async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
@@ -697,9 +777,15 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, int | list[str]]
     finally:
         connection.close()
 
+    detected_types = {
+        str(column): detect_column_type(dataframe[column])
+        for column in dataframe.columns
+    }
+
     return {
         "rows_imported": int(len(dataframe)),
         "columns": [str(column) for column in dataframe.columns.tolist()],
+        "detected_types": detected_types,
     }
 
 
@@ -730,6 +816,8 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             mapping.event_name_column,
             mapping.event_time_column,
         }
+        if mapping.event_count_column:
+            requested_columns.add(mapping.event_count_column)
         missing_columns = sorted(requested_columns - set(existing_columns))
         if missing_columns:
             raise HTTPException(
@@ -737,50 +825,97 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                 detail=f"Mapped columns not found in uploaded CSV: {', '.join(missing_columns)}",
             )
 
-        column_defs: list[str] = []
-        select_defs: list[str] = []
-        for column in existing_columns:
-            col_ref = quote_identifier(column)
-            col_alias = quote_identifier(column)
-            if column == mapping.event_time_column:
-                column_defs.append(f"{col_alias} TIMESTAMP")
-                select_defs.append(f"CAST({col_ref} AS TIMESTAMP) AS {col_alias}")
-            elif column in {mapping.user_id_column, mapping.event_name_column}:
-                column_defs.append(f"{col_alias} TEXT")
-                select_defs.append(f"CAST({col_ref} AS TEXT) AS {col_alias}")
-            else:
-                numeric_probe = connection.execute(
-                    f"""
-                    SELECT COUNT(*)
-                    FROM events
-                    WHERE {col_ref} IS NOT NULL
-                      AND CAST({col_ref} AS VARCHAR) <> ''
-                      AND TRY_CAST({col_ref} AS DOUBLE) IS NULL
-                    """
-                ).fetchone()[0]
-                if numeric_probe == 0:
-                    column_defs.append(f"{col_alias} DOUBLE")
-                    select_defs.append(f"TRY_CAST({col_ref} AS DOUBLE) AS {col_alias}")
+        events_df = connection.execute("SELECT * FROM events").df()
+        selected_types = {
+            column: str(mapping.column_types.get(column, detect_column_type(events_df[column]))).upper()
+            for column in existing_columns
+        }
+        allowed_types = {"TEXT", "NUMERIC", "TIMESTAMP", "BOOLEAN"}
+        for column, selected_type in selected_types.items():
+            if selected_type not in allowed_types:
+                raise HTTPException(status_code=400, detail=f"Invalid type override for column '{column}': {selected_type}")
+
+        for field_name, column_name, expected_type in [
+            ("user_id", mapping.user_id_column, "TEXT"),
+            ("event_name", mapping.event_name_column, "TEXT"),
+            ("event_time", mapping.event_time_column, "TIMESTAMP"),
+        ]:
+            actual = selected_types[column_name]
+            if actual != expected_type:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Mapped field '{field_name}' requires {expected_type} type, got {actual}",
+                )
+        if mapping.event_count_column:
+            actual = selected_types[mapping.event_count_column]
+            if actual != "NUMERIC":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Mapped field 'event_count' requires NUMERIC type, got {actual}",
+                )
+
+        parsed_rows: list[dict[str, object]] = []
+        for _, row in events_df.iterrows():
+            parsed_row: dict[str, object] = {}
+            for column in existing_columns:
+                value = row[column]
+                if pd.isna(value):
+                    value = None
+                selected_type = selected_types[column]
+                if selected_type == "TEXT":
+                    parsed_row[column] = None if value is None or str(value).strip() == "" else str(value)
+                elif selected_type == "NUMERIC":
+                    if value is None or str(value).strip() == "":
+                        parsed_row[column] = None
+                    else:
+                        try:
+                            parsed_row[column] = parse_int_value(value)
+                        except ValueError as exc:
+                            raise HTTPException(status_code=400, detail=f"Invalid integer value in column '{column}': {value}") from exc
+                elif selected_type == "BOOLEAN":
+                    if value is None or str(value).strip() == "":
+                        parsed_row[column] = None
+                    else:
+                        try:
+                            parsed_row[column] = parse_bool_value(value)
+                        except ValueError as exc:
+                            raise HTTPException(status_code=400, detail=f"Invalid boolean value in column '{column}': {value}") from exc
                 else:
-                    column_defs.append(f"{col_alias} TEXT")
-                    select_defs.append(f"CAST({col_ref} AS TEXT) AS {col_alias}")
+                    parsed_row[column] = normalize_event_timestamp_value(
+                        value,
+                        allow_empty=column != mapping.event_time_column,
+                    )
+
+            event_count = 1
+            if mapping.event_count_column:
+                candidate_count = parsed_row[mapping.event_count_column]
+                if candidate_count is None:
+                    raise HTTPException(status_code=400, detail="event_count must not be null")
+                if not isinstance(candidate_count, int):
+                    raise HTTPException(status_code=400, detail="event_count must be an integer")
+                if candidate_count < 1:
+                    raise HTTPException(status_code=400, detail="event_count must be >= 1")
+                event_count = candidate_count
+
+            parsed_row["user_id"] = parsed_row.pop(mapping.user_id_column)
+            parsed_row["event_name"] = parsed_row.pop(mapping.event_name_column)
+            parsed_row["event_time"] = parsed_row.pop(mapping.event_time_column)
+            if mapping.event_count_column:
+                parsed_row.pop(mapping.event_count_column)
+            parsed_row["event_count"] = event_count
+            parsed_rows.append(parsed_row)
+
+        normalized_df = pd.DataFrame(parsed_rows)
+        group_columns = [column for column in normalized_df.columns if column != "event_count"]
+        normalized_df = (
+            normalized_df.groupby(group_columns, dropna=False, as_index=False)["event_count"]
+            .sum()
+        )
 
         connection.execute("DROP TABLE IF EXISTS events_normalized")
-        connection.execute(f"CREATE TABLE events_normalized ({', '.join(column_defs)})")
-        connection.execute(
-            f"INSERT INTO events_normalized SELECT {', '.join(select_defs)} FROM events"
-        )
-
-        # Canonical aliases used by analytics/cohort logic.
-        connection.execute(
-            f"ALTER TABLE events_normalized RENAME COLUMN {quote_identifier(mapping.user_id_column)} TO user_id"
-        )
-        connection.execute(
-            f"ALTER TABLE events_normalized RENAME COLUMN {quote_identifier(mapping.event_name_column)} TO event_name"
-        )
-        connection.execute(
-            f"ALTER TABLE events_normalized RENAME COLUMN {quote_identifier(mapping.event_time_column)} TO event_time"
-        )
+        connection.register("temp_import", normalized_df)
+        connection.execute("CREATE TABLE events_normalized AS SELECT * FROM temp_import")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN event_count SET NOT NULL")
 
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
@@ -966,12 +1101,13 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
             "user_id": "user id",
             "event_name": "event name",
             "event_time": "event time",
+            "event_count": "event count",
         }
         payload = [
             {
                 "name": str(name),
                 "role": role_map.get(str(name)),
-                "data_type": str(data_type).upper(),
+                "data_type": "TIMESTAMP" if "TIMESTAMP" in str(data_type).upper() else str(data_type).upper(),
             }
             for name, data_type in rows
         ]
