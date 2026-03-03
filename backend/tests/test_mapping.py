@@ -15,7 +15,7 @@ def _upload_base_csv(client: TestClient) -> None:
     assert response.status_code == 200, f"Precondition failed: upload endpoint returned {response.text}"
 
 
-def test_valid_mapping_creates_normalized_table_with_timestamp_and_same_row_count(
+def test_valid_mapping_creates_normalized_table_with_timestamp_and_event_count(
     client: TestClient,
     db_connection,
 ) -> None:
@@ -27,30 +27,34 @@ def test_valid_mapping_creates_normalized_table_with_timestamp_and_same_row_coun
             "user_id_column": "uid",
             "event_name_column": "event",
             "event_time_column": "timestamp",
+            "event_count_column": None,
+            "column_types": {
+                "uid": "TEXT",
+                "event": "TEXT",
+                "timestamp": "TIMESTAMP",
+                "plan": "TEXT",
+                "region": "TEXT",
+            },
         },
     )
 
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["status"] == "normalized"
-    assert payload["row_count"] == 2, "Mapping should preserve the original row count"
+    assert payload["row_count"] == 2
 
-    exists = db_connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
-    ).fetchone()[0]
-    assert exists == 1, "events_normalized table should exist after successful column mapping"
-
-    row_count = db_connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0]
-    assert row_count == 2, "events_normalized row count should match uploaded events"
-
-    event_time_type = db_connection.execute(
-        """
-        SELECT data_type
-        FROM information_schema.columns
-        WHERE table_name = 'events_normalized' AND column_name = 'event_time'
-        """
-    ).fetchone()[0]
-    assert event_time_type == "TIMESTAMP", f"event_time should be TIMESTAMP, got {event_time_type}"
+    columns = {
+        row[0]: row[1]
+        for row in db_connection.execute(
+            """
+            SELECT column_name, data_type
+            FROM information_schema.columns
+            WHERE table_name = 'events_normalized'
+            """
+        ).fetchall()
+    }
+    assert str(columns["event_time"]).startswith("TIMESTAMP")
+    assert columns["event_count"] in {"INTEGER", "BIGINT"}
 
 
 def test_mapping_rejects_unknown_column_names(client: TestClient) -> None:
@@ -65,54 +69,18 @@ def test_mapping_rejects_unknown_column_names(client: TestClient) -> None:
         },
     )
 
-    assert response.status_code == 400, "Mapping should fail when a requested column does not exist"
+    assert response.status_code == 400
     assert "Mapped columns not found" in response.json()["detail"]
 
 
-def test_mapping_promotes_mapped_columns_as_first_class_columns(
-    client: TestClient,
-    db_connection,
-) -> None:
-    _upload_base_csv(client)
-
-    response = client.post(
-        "/map-columns",
-        json={
-            "user_id_column": "uid",
-            "event_name_column": "event",
-            "event_time_column": "timestamp",
-        },
-    )
-    assert response.status_code == 200, response.text
-
-    columns = {
-        row[0]: row[1]
-        for row in db_connection.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'events_normalized'
-            """
-        ).fetchall()
-    }
-
-    assert "plan" in columns
-    assert "region" in columns
-    assert columns["user_id"] == "VARCHAR"
-    assert columns["event_name"] == "VARCHAR"
-
-
-def test_mapping_allows_empty_timestamp_cells_as_null(
-    client: TestClient,
-    db_connection,
-) -> None:
+def test_mapping_rejects_empty_event_timestamp(client: TestClient) -> None:
     csv_text = (
         "uid,event,timestamp,plan,region\n"
         "u1,signup,,free,NA\n"
         "u2,click,2024-01-02 11:00:00,pro,EU\n"
     )
     upload = csv_upload(client, csv_text=csv_text)
-    assert upload.status_code == 200, f"Precondition failed: upload endpoint returned {upload.text}"
+    assert upload.status_code == 200
 
     response = client.post(
         "/map-columns",
@@ -120,11 +88,81 @@ def test_mapping_allows_empty_timestamp_cells_as_null(
             "user_id_column": "uid",
             "event_name_column": "event",
             "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP", "plan": "TEXT", "region": "TEXT"},
         },
     )
 
+    assert response.status_code == 400
+    assert "Timestamp value cannot be null" in response.json()["detail"]
+
+
+def test_mapping_deduplicates_and_aggregates_event_count(client: TestClient, db_connection) -> None:
+    csv_text = (
+        "uid,event,timestamp,count\n"
+        "u1,purchase,2024-01-01,5\n"
+        "u1,purchase,2024-01-01,3\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "event_count_column": "count",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP", "count": "NUMERIC"},
+        },
+    )
     assert response.status_code == 200, response.text
-    event_time = db_connection.execute(
-        "SELECT event_time FROM events_normalized WHERE user_id = 'u1'"
-    ).fetchone()[0]
-    assert event_time is None, "Blank timestamp cells should be ingested as NULL"
+
+    rows = db_connection.execute(
+        "SELECT user_id, event_name, event_count FROM events_normalized"
+    ).fetchall()
+    assert rows == [("u1", "purchase", 8)]
+
+
+def test_mapping_rejects_float_event_count(client: TestClient) -> None:
+    csv_text = "uid,event,timestamp,count\nu1,purchase,2024-01-01,2.5\n"
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "event_count_column": "count",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP", "count": "NUMERIC"},
+        },
+    )
+    assert response.status_code == 400
+    assert "Invalid integer value" in response.json()["detail"]
+
+
+def test_mapping_normalizes_coarse_timestamps(client: TestClient, db_connection) -> None:
+    csv_text = (
+        "uid,event,timestamp\n"
+        "u1,signup,2024-01-01\n"
+        "u2,signup,2024-01-01 09\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    rows = db_connection.execute(
+        "SELECT user_id, strftime(event_time, '%Y-%m-%d %H:%M:%S') FROM events_normalized ORDER BY user_id"
+    ).fetchall()
+    assert rows == [
+        ("u1", "2024-01-01 00:00:00"),
+        ("u2", "2024-01-01 09:00:00"),
+    ]

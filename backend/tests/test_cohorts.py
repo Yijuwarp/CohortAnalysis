@@ -88,6 +88,47 @@ def test_nth_event_logic_uses_min_event_count_as_join_time(
 
 
 
+
+def test_cohort_threshold_uses_sum_event_count_for_aggregated_rows(client: TestClient, db_connection) -> None:
+    csv_text = (
+        "user_id,event_name,event_time,event_count\n"
+        "u1,purchase,2024-01-01,5\n"
+        "u2,purchase,2024-01-01,1\n"
+        "u2,purchase,2024-01-02,1\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    mapping = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+            "event_count_column": "event_count",
+            "column_types": {
+                "user_id": "TEXT",
+                "event_name": "TEXT",
+                "event_time": "TIMESTAMP",
+                "event_count": "NUMERIC",
+            },
+        },
+    )
+    assert mapping.status_code == 200, mapping.text
+
+    response = client.post(
+        "/cohorts",
+        json={"name": "purchase_twice", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 2}]},
+    )
+    assert response.status_code == 200, response.text
+
+    rows = db_connection.execute(
+        "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [response.json()["cohort_id"]],
+    ).fetchall()
+    assert rows == [
+        ("u1", datetime(2024, 1, 1, 0, 0, 0)),
+        ("u2", datetime(2024, 1, 2, 0, 0, 0)),
+    ]
+
 def test_cohort_join_type_defaults_to_condition_met_when_omitted(client: TestClient, db_connection) -> None:
     _prepare_normalized_events(client)
 

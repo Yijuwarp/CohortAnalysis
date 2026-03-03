@@ -17,6 +17,7 @@ def test_upload_valid_csv_inserts_rows_and_returns_columns(
     payload = response.json()
     assert payload["rows_imported"] == 2, "Upload should report two imported rows"
     assert payload["columns"] == ["user", "event", "time", "plan"], "Returned columns should match CSV order"
+    assert payload["detected_types"]["user"] == "TEXT"
 
     table_exists = db_connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events'"

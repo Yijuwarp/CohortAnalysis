@@ -8,6 +8,7 @@ import UsageTable from './components/UsageTable'
 
 export default function App() {
   const [columns, setColumns] = useState([])
+  const [detectedTypes, setDetectedTypes] = useState({})
   const [retentionRefreshToken, setRetentionRefreshToken] = useState(0)
   const [selectedRetentionEvent, setSelectedRetentionEvent] = useState('any')
 
@@ -18,8 +19,8 @@ export default function App() {
   return (
     <main className="app-container">
       <h1>Cohort Analysis Dashboard</h1>
-      <Upload onUploaded={setColumns} />
-      <Mapping columns={columns} onMappingComplete={refreshRetention} />
+      <Upload onUploaded={(newColumns, types) => { setColumns(newColumns); setDetectedTypes(types) }} />
+      <Mapping columns={columns} detectedTypes={detectedTypes} onMappingComplete={refreshRetention} />
       <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
       <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
       <RetentionTable
