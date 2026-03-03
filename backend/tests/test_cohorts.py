@@ -795,6 +795,52 @@ def test_create_cohort_with_numeric_gt_filter(client: TestClient) -> None:
     assert response.json()["users_joined"] == 1
 
 
+def test_numeric_in_operator_accepts_string_numbers(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_amount_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "amount", "operator": "IN", "values": ["20", "30"]},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 2
+
+    listed = client.get('/cohorts')
+    assert listed.status_code == 200, listed.text
+    cohort = next(row for row in listed.json()['cohorts'] if row['cohort_id'] == response.json()['cohort_id'])
+    assert cohort['conditions'][0]['property_filter']['values'] == [20, 30]
+
+
+
+
+def test_numeric_not_in_operator_accepts_string_numbers(client: TestClient) -> None:
+    _prepare_property_filter_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "search_amount_not_in",
+            "logic_operator": "AND",
+            "conditions": [{
+                "event_name": "search",
+                "min_event_count": 1,
+                "property_filter": {"column": "amount", "operator": "NOT IN", "values": ["20", "21"]},
+            }],
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["users_joined"] == 2
+
 def test_create_cohort_with_boolean_equals_filter(client: TestClient, db_connection) -> None:
     _prepare_property_filter_events(client)
     db_connection.execute("""
