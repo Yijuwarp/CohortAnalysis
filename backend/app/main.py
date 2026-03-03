@@ -57,6 +57,7 @@ class CohortCondition(BaseModel):
 class CreateCohortRequest(BaseModel):
     name: str = Field(min_length=1)
     logic_operator: str
+    join_type: str = "condition_met"
     conditions: list[CohortCondition] = Field(max_length=5)
 
     @field_validator("logic_operator")
@@ -65,6 +66,14 @@ class CreateCohortRequest(BaseModel):
         normalized = value.upper()
         if normalized not in {"AND", "OR"}:
             raise ValueError("logic_operator must be either AND or OR")
+        return normalized
+
+    @field_validator("join_type")
+    @classmethod
+    def validate_join_type(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in {"condition_met", "first_event"}:
+            raise ValueError("join_type must be 'condition_met' or 'first_event'")
         return normalized
 
 
@@ -224,6 +233,7 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             cohort_id INTEGER PRIMARY KEY,
             name TEXT,
             logic_operator TEXT,
+            join_type TEXT DEFAULT 'condition_met',
             is_active BOOLEAN DEFAULT TRUE
         )
         """
@@ -315,6 +325,15 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     }
     if "logic_operator" not in existing_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN logic_operator TEXT")
+    if "join_type" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN join_type TEXT DEFAULT 'condition_met'")
+    connection.execute(
+        """
+        UPDATE cohorts
+        SET join_type = 'condition_met'
+        WHERE join_type IS NULL OR join_type = ''
+        """
+    )
     if "is_active" not in existing_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
 
@@ -437,13 +456,17 @@ def build_cohort_membership(
         raise ValueError("Unsupported source table")
 
     cohort_row = connection.execute(
-        "SELECT logic_operator FROM cohorts WHERE cohort_id = ?",
+        "SELECT logic_operator, join_type FROM cohorts WHERE cohort_id = ?",
         [cohort_id],
     ).fetchone()
     if cohort_row is None:
         raise HTTPException(status_code=404, detail="Cohort not found")
 
     logic_operator = str(cohort_row[0] or "OR").upper()
+    join_type = str(cohort_row[1] or "condition_met")
+
+    connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
+    connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
     conditions = connection.execute(
         """
         SELECT event_name, min_event_count, property_column, property_operator, property_values
@@ -536,6 +559,22 @@ def build_cohort_membership(
             [*query_params, cohort_id],
         )
 
+    if join_type == "first_event":
+        connection.execute(
+            f"""
+            UPDATE cohort_membership cm
+            SET join_time = sub.min_event_time
+            FROM (
+                SELECT user_id, MIN(event_time) AS min_event_time
+                FROM {source_table}
+                GROUP BY user_id
+            ) sub
+            WHERE cm.user_id = sub.user_id
+              AND cm.cohort_id = ?
+            """,
+            [cohort_id],
+        )
+
     connection.execute(
         f"""
         INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
@@ -590,8 +629,8 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
 
     cohort_id = connection.execute(
         """
-        INSERT INTO cohorts (cohort_id, name, logic_operator, is_active)
-        VALUES (nextval('cohorts_id_sequence'), 'All Users', 'OR', TRUE)
+        INSERT INTO cohorts (cohort_id, name, logic_operator, join_type, is_active)
+        VALUES (nextval('cohorts_id_sequence'), 'All Users', 'OR', 'first_event', TRUE)
         RETURNING cohort_id
         """
     ).fetchone()[0]
@@ -1031,11 +1070,11 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
 
         cohort_id = connection.execute(
             """
-            INSERT INTO cohorts (cohort_id, name, logic_operator, is_active)
-            VALUES (nextval('cohorts_id_sequence'), ?, ?, TRUE)
+            INSERT INTO cohorts (cohort_id, name, logic_operator, join_type, is_active)
+            VALUES (nextval('cohorts_id_sequence'), ?, ?, ?, TRUE)
             RETURNING cohort_id
             """,
-            [payload.name, payload.logic_operator],
+            [payload.name, payload.logic_operator, payload.join_type],
         ).fetchone()[0]
 
         for condition in payload.conditions:
@@ -1097,6 +1136,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 c.name,
                 c.is_active,
                 c.logic_operator,
+                c.join_type,
                 cc.event_name,
                 cc.min_event_count,
                 cc.property_column,
@@ -1109,7 +1149,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ).fetchall()
 
         cohorts: dict[int, dict[str, object]] = {}
-        for cohort_id, name, is_active, logic_operator, event_name, min_event_count, property_column, property_operator, property_values in rows:
+        for cohort_id, name, is_active, logic_operator, join_type, event_name, min_event_count, property_column, property_operator, property_values in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
                 cohorts[cohort_id] = {
@@ -1117,6 +1157,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                     "cohort_name": str(name),
                     "is_active": bool(is_active),
                     "logic_operator": str(logic_operator or "AND"),
+                    "join_type": str(join_type or "condition_met"),
                     "conditions": [],
                 }
 
@@ -1168,8 +1209,8 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
         validate_cohort_conditions(connection, source_table, payload.conditions)
 
         connection.execute(
-            "UPDATE cohorts SET name = ?, logic_operator = ? WHERE cohort_id = ?",
-            [payload.name, payload.logic_operator, cohort_id],
+            "UPDATE cohorts SET name = ?, logic_operator = ?, join_type = ? WHERE cohort_id = ?",
+            [payload.name, payload.logic_operator, payload.join_type, cohort_id],
         )
         connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
 
@@ -1204,9 +1245,6 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
                     property_values,
                 ],
             )
-
-        connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
-        connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
 
         build_cohort_membership(connection, cohort_id, source_table)
         refresh_cohort_activity(connection)

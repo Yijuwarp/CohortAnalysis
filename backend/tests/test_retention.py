@@ -91,6 +91,30 @@ def test_retention_handles_multiple_cohorts(client: TestClient) -> None:
     assert by_name["purchase_once"]["retention"] == {"0": 100.0, "1": 100.0, "2": 0.0}
 
 
+
+
+def test_first_event_join_type_shifts_retention_anchor(client: TestClient) -> None:
+    _prepare_events(client)
+
+    cohort = client.post(
+        "/cohorts",
+        json={
+            "name": "purchase_first_event",
+            "logic_operator": "AND",
+            "join_type": "first_event",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+    assert cohort.status_code == 200, cohort.text
+
+    response = client.get("/retention?max_day=3")
+    assert response.status_code == 200, response.text
+
+    by_name = {row["cohort_name"]: row for row in response.json()["retention_table"]}
+    row = by_name["purchase_first_event"]
+    assert row["size"] == 2
+    assert row["retention"] == {"0": 100.0, "1": 100.0, "2": 50.0, "3": 50.0}
+
 def test_retention_respects_max_day_parameter(client: TestClient) -> None:
     _prepare_events(client)
 
