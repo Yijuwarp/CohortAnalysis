@@ -67,8 +67,13 @@ export async function getColumns() {
   return request('/columns', { method: 'GET' })
 }
 
-export async function getColumnValues(column) {
-  return request(`/column-values?column=${encodeURIComponent(column)}`, { method: 'GET' })
+export async function getColumnValues(column, eventName) {
+  let path = `/column-values?column=${encodeURIComponent(column)}`
+  if (eventName) {
+    path += `&event_name=${encodeURIComponent(eventName)}`
+  }
+
+  return request(path, { method: 'GET' })
 }
 
 export async function getDateRange() {

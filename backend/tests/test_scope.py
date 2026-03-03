@@ -402,6 +402,94 @@ def test_column_values_returns_distinct_values(client: TestClient) -> None:
     assert payload['total_distinct'] == 2
 
 
+def test_column_values_scoped_by_event_name(client: TestClient) -> None:
+    csv_text = (
+        'user_id,event_name,event_time,version\n'
+        'u1,search,2026-01-01 09:00:00,1.0\n'
+        'u2,search,2026-01-01 10:00:00,1.1\n'
+        'u3,signup,2026-01-01 11:00:00,2.0\n'
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    response = client.get('/column-values?column=version&event_name=search')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload['values'] == ['1.0', '1.1']
+    assert payload['total_distinct'] == 2
+
+
+def test_column_values_global_fallback_without_event_name(client: TestClient) -> None:
+    csv_text = (
+        'user_id,event_name,event_time,version\n'
+        'u1,search,2026-01-01 09:00:00,1.0\n'
+        'u2,search,2026-01-01 10:00:00,1.1\n'
+        'u3,signup,2026-01-01 11:00:00,2.0\n'
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    response = client.get('/column-values?column=version')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload['values'] == ['1.0', '1.1', '2.0']
+    assert payload['total_distinct'] == 3
+
+
+def test_column_values_global_validation_uses_events_normalized_when_scoped_table_missing(
+    client: TestClient,
+    db_connection,
+) -> None:
+    csv_text = (
+        'user_id,event_name,event_time,version\n'
+        'u1,search,2026-01-01 09:00:00,1.0\n'
+        'u2,signup,2026-01-01 10:00:00,2.0\n'
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    db_connection.execute('DROP TABLE IF EXISTS events_scoped')
+
+    response = client.get('/column-values?column=version')
+    assert response.status_code == 200, response.text
+
+    payload = response.json()
+    assert payload['values'] == ['1.0', '2.0']
+    assert payload['total_distinct'] == 2
+
+
 def test_column_values_respects_100_limit(client: TestClient, db_connection) -> None:
     _prepare_scoped_fixture(client)
 
