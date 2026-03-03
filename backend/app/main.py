@@ -251,9 +251,21 @@ def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter,
 
     scalar_values = values if isinstance(values, list) else [values]
     if column_kind == "NUMERIC":
+        normalized_values: list[int | float] = []
         for value in scalar_values:
-            if not isinstance(value, (int, float)) or isinstance(value, bool):
+            if isinstance(value, bool):
                 raise HTTPException(status_code=400, detail="Numeric operators require numeric values")
+            try:
+                parsed = float(value)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=400, detail="Numeric operators require numeric values") from None
+
+            if parsed.is_integer():
+                normalized_values.append(int(parsed))
+            else:
+                normalized_values.append(parsed)
+
+        property_filter.values = normalized_values if isinstance(values, list) else normalized_values[0]
     elif column_kind == "TIMESTAMP":
         normalized_values: list[str] = []
         for value in scalar_values:
