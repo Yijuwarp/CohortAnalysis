@@ -192,15 +192,16 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
         <div style={{ marginTop: 16 }}>
           <h3>Revenue Events</h3>
           {revenueEvents.map((event) => (
-            <label key={event.event_name} style={{ display: 'block' }}>
+            <div key={event.event_name} className="revenue-event-row">
+              <span>{event.event_name}</span>
               <input
                 type="checkbox"
                 checked={event.is_included}
-                onChange={(e) => toggleRevenueEvent(event.event_name, e.target.checked)}
+                onChange={(e) =>
+                  toggleRevenueEvent(event.event_name, e.target.checked)
+                }
               />
-              {' '}
-              {event.event_name}
-            </label>
+            </div>
           ))}
           {hasNoSelectedRevenueEvents && (
             <p className="error">No revenue events selected. Monetization will show 0.</p>

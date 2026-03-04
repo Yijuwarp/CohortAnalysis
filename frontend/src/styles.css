@@ -538,3 +538,15 @@ li .button {
   cursor: pointer;
   padding: 0;
 }
+
+.revenue-event-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  max-width: 320px;
+  margin-bottom: 6px;
+}
+
+.revenue-event-row input {
+  width: auto;
+}

@@ -223,9 +223,19 @@ def parse_int_value(value: object) -> int:
 
 
 def detect_column_type(values: pd.Series) -> str:
-    non_null = [str(value).strip() for value in values.tolist() if value is not None and str(value).strip() != ""]
-    if not non_null:
+    cleaned = values.dropna().astype(str).str.strip()
+    cleaned = cleaned[cleaned != ""]
+
+    if cleaned.empty:
         return "TEXT"
+
+    try:
+        cleaned.astype(float)
+        return "NUMERIC"
+    except ValueError:
+        pass
+
+    non_null = cleaned.tolist()
 
     try:
         for value in non_null:
@@ -523,6 +533,7 @@ def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) ->
         SELECT DISTINCT event_name, TRUE
         FROM events_normalized
         WHERE event_name IS NOT NULL
+          AND revenue_amount != 0
         ORDER BY event_name
         """
     )
@@ -955,12 +966,12 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                         parsed_row[column] = None
                     else:
                         try:
-                            if column == mapping.revenue_column:
-                                parsed_row[column] = float(value)
-                            else:
+                            if column == mapping.event_count_column:
                                 parsed_row[column] = parse_int_value(value)
+                            else:
+                                parsed_row[column] = float(value)
                         except ValueError as exc:
-                            error_prefix = "Invalid numeric value" if column == mapping.revenue_column else "Invalid integer value"
+                            error_prefix = "Invalid integer value" if column == mapping.event_count_column else "Invalid numeric value"
                             raise HTTPException(status_code=400, detail=f"{error_prefix} in column '{column}': {value}") from exc
                 elif selected_type == "BOOLEAN":
                     if value is None or str(value).strip() == "":
@@ -1012,6 +1023,9 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         connection.register("temp_import", normalized_df)
         connection.execute("CREATE TABLE events_normalized AS SELECT * FROM temp_import")
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN event_count SET NOT NULL")
+        connection.execute(
+            "ALTER TABLE events_normalized ALTER COLUMN revenue_amount SET DEFAULT 0"
+        )
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN revenue_amount SET NOT NULL")
 
         ensure_cohort_tables(connection)

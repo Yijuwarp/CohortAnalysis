@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from fastapi.testclient import TestClient
+import pandas as pd
 
+from app.main import detect_column_type
 from tests.utils import csv_upload
 
 
@@ -45,3 +47,9 @@ def test_upload_requires_minimum_three_columns(client: TestClient) -> None:
 
     assert response.status_code == 400, "Uploads with fewer than three columns should fail"
     assert response.json()["detail"] == "CSV must contain at least 3 columns"
+
+
+def test_detect_column_type_detects_float_numeric() -> None:
+    series = pd.Series(["9.99", "-2.25", "0", None, ""])
+
+    assert detect_column_type(series) == "NUMERIC"
