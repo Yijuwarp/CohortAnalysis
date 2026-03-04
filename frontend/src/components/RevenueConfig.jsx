@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getRevenueConfigEvents, updateRevenueConfig } from '../api'
 
 export default function RevenueConfig({ refreshToken, onUpdated }) {
+  const [hasRevenueMapping, setHasRevenueMapping] = useState(false)
   const [availableRevenueEvents, setAvailableRevenueEvents] = useState([])
   const [pendingRevenueConfig, setPendingRevenueConfig] = useState({})
   const [pendingOverrideInputs, setPendingOverrideInputs] = useState({})
@@ -15,7 +16,8 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
       try {
         const payload = await getRevenueConfigEvents()
         const events = payload.events || []
-        setAvailableRevenueEvents(events.map((event) => event.event_name))
+        setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
+        setAvailableRevenueEvents(payload.addable_events || [])
         const config = events.reduce((acc, event) => ({
           ...acc,
           [event.event_name]: { included: Boolean(event.included), override: event.override ?? null },
@@ -26,6 +28,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
           [event.event_name]: event.override === null || event.override === undefined ? '' : String(event.override),
         }), {}))
       } catch {
+        setHasRevenueMapping(false)
         setAvailableRevenueEvents([])
         setPendingRevenueConfig({})
         setPendingOverrideInputs({})
@@ -49,7 +52,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
 
   const canApplyRevenueChanges = invalidOverrideEvents.length === 0 && !saving
 
-  if (!availableRevenueEvents.length) {
+  if (!hasRevenueMapping) {
     return null
   }
 
@@ -92,7 +95,8 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
     try {
       const payload = await updateRevenueConfig(pendingRevenueConfig)
       const events = payload.events || []
-      setAvailableRevenueEvents(events.map((event) => event.event_name))
+      setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
+      setAvailableRevenueEvents((previous) => payload.addable_events || previous)
       setPendingRevenueConfig(events.reduce((acc, event) => ({
         ...acc,
         [event.event_name]: { included: Boolean(event.included), override: event.override ?? null },

@@ -74,7 +74,7 @@ def test_revenue_events_include_only_non_zero_revenue_events_by_default(client: 
 
 
 
-def test_revenue_config_events_show_all_events_and_default_zero_revenue_to_excluded(client: TestClient) -> None:
+def test_revenue_config_events_show_only_configured_revenue_events_and_return_addable_events(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
 
     response = client.get('/revenue-config-events')
@@ -83,9 +83,10 @@ def test_revenue_config_events_show_all_events_and_default_zero_revenue_to_exclu
 
     assert payload['has_revenue_mapping'] is True
     config_by_event = {event['event_name']: event for event in payload['events']}
+    assert set(config_by_event) == {'purchase', 'refund'}
     assert config_by_event['purchase']['included'] is True
     assert config_by_event['refund']['included'] is True
-    assert config_by_event['signup']['included'] is False
+    assert payload['addable_events'] == ['signup']
 
 def test_revenue_events_default_to_included_and_can_be_toggled(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
@@ -242,6 +243,7 @@ def test_revenue_config_events_returns_persisted_included_and_override_state(cli
     assert config_by_event['purchase']['override'] == 12
     assert config_by_event['refund']['included'] is False
     assert config_by_event['refund']['override'] is None
+    assert response.json()['addable_events'] == ['signup']
 
 
 def test_update_revenue_config_rejects_empty_payload(client: TestClient) -> None:
