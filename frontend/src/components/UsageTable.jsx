@@ -9,6 +9,9 @@ function formatRatioValue(value) {
 export default function UsageTable({ refreshToken, retentionEvent }) {
   const [event, setEvent] = useState('')
   const [maxDay, setMaxDay] = useState(7)
+  const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(7)
+  const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(7)
+  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
   const [modeUsers, setModeUsers] = useState('count')
   const [metricType, setMetricType] = useState('count')
   const [events, setEvents] = useState([])
@@ -137,6 +140,58 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
       ? 'Events per Event Firer'
       : 'Events per Active User'
 
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      return
+    }
+
+    let lastNonZero = 0
+    volumeDisplayRows.forEach((row) => {
+      Object.entries(row.values || {}).forEach(([day, value]) => {
+        const numeric = Number(value)
+        if (!Number.isNaN(numeric) && numeric !== 0) {
+          lastNonZero = Math.max(lastNonZero, Number(day))
+        }
+      })
+    })
+
+    setEffectiveMaxDayVolume(Math.min(Number(maxDay), lastNonZero))
+  }, [maxDay, userModifiedMaxDay, volumeDisplayRows])
+
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      return
+    }
+
+    let lastNonZero = 0
+    userDisplayRows.forEach((row) => {
+      Object.entries(row.values || {}).forEach(([day, value]) => {
+        const numeric = Number(value)
+        if (!Number.isNaN(numeric) && numeric !== 0) {
+          lastNonZero = Math.max(lastNonZero, Number(day))
+        }
+      })
+    })
+
+    setEffectiveMaxDayUsers(Math.min(Number(maxDay), lastNonZero))
+  }, [maxDay, userDisplayRows, userModifiedMaxDay])
+
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      setEffectiveMaxDayVolume(Number(maxDay))
+      setEffectiveMaxDayUsers(Number(maxDay))
+    }
+  }, [maxDay, userModifiedMaxDay])
+
+  const dayColumnsVolume = useMemo(
+    () => Array.from({ length: Number(effectiveMaxDayVolume) + 1 }, (_, index) => index),
+    [effectiveMaxDayVolume]
+  )
+  const dayColumnsUsers = useMemo(
+    () => Array.from({ length: Number(effectiveMaxDayUsers) + 1 }, (_, index) => index),
+    [effectiveMaxDayUsers]
+  )
+
   return (
     <section className="card">
       <h2>6. Usage Analytics</h2>
@@ -152,10 +207,18 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
         </label>
         <label>
           Max Day
-          <input type="number" min="0" value={maxDay} onChange={(e) => setMaxDay(e.target.value)} />
+          <input
+            type="number"
+            min="0"
+            value={maxDay}
+            onChange={(e) => {
+              setUserModifiedMaxDay(true)
+              setMaxDay(e.target.value)
+            }}
+          />
         </label>
         <label>
-          Distinct Users
+          Unique Users
           <select value={modeUsers} onChange={(e) => setModeUsers(e.target.value)}>
             <option value="count">Count</option>
             <option value="percent">%</option>
@@ -180,14 +243,14 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
 
       {error && <p className="error">{error}</p>}
 
-      <h3>Volume Table ({volumeLabel})</h3>
+      <h3>Event Volume ({volumeLabel})</h3>
       {volumeDisplayRows.length > 0 && (
         <table>
           <thead>
             <tr>
               <th>Cohort</th>
               <th>Size</th>
-              {dayColumns.map((day) => (
+              {dayColumnsVolume.map((day) => (
                 <th key={day}>D{day}</th>
               ))}
             </tr>
@@ -197,7 +260,7 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
               <tr key={row.cohort_id}>
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
-                {dayColumns.map((day) => (
+                {dayColumnsVolume.map((day) => (
                   <td key={day}>{row.values?.[String(day)] ?? 0}</td>
                 ))}
               </tr>
@@ -206,14 +269,14 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
         </table>
       )}
 
-      <h3>Distinct Users Table</h3>
+      <h3>Unique Users</h3>
       {userDisplayRows.length > 0 && (
         <table>
           <thead>
             <tr>
               <th>Cohort</th>
               <th>Size</th>
-              {dayColumns.map((day) => (
+              {dayColumnsUsers.map((day) => (
                 <th key={day}>D{day}</th>
               ))}
             </tr>
@@ -223,7 +286,7 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
               <tr key={row.cohort_id}>
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
-                {dayColumns.map((day) => {
+                {dayColumnsUsers.map((day) => {
                   const value = row.values?.[String(day)] ?? 0
                   return <td key={day}>{modeUsers === 'percent' ? `${value}%` : value}</td>
                 })}

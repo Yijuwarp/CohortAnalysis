@@ -21,6 +21,8 @@ function formatCurrency(value) {
 
 export default function MonetizationTable({ refreshToken }) {
   const [maxDay, setMaxDay] = useState(7)
+  const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
+  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
   const [revenueRows, setRevenueRows] = useState([])
   const [cohortSizes, setCohortSizes] = useState([])
@@ -84,6 +86,35 @@ export default function MonetizationTable({ refreshToken }) {
     formatCurrency,
   }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
 
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      return
+    }
+
+    let lastNonZero = 0
+    displayRows.forEach((row) => {
+      Object.entries(row.values || {}).forEach(([day, value]) => {
+        const numeric = Number(value)
+        if (!Number.isNaN(numeric) && numeric !== 0) {
+          lastNonZero = Math.max(lastNonZero, Number(day))
+        }
+      })
+    })
+
+    setEffectiveMaxDay(Math.min(Number(maxDay), lastNonZero))
+  }, [displayRows, maxDay, userModifiedMaxDay])
+
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      setEffectiveMaxDay(Number(maxDay))
+    }
+  }, [maxDay, userModifiedMaxDay])
+
+  const visibleDayColumns = useMemo(
+    () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),
+    [effectiveMaxDay]
+  )
+
   if (!hasRevenueMapping) {
     return null
   }
@@ -94,7 +125,15 @@ export default function MonetizationTable({ refreshToken }) {
       <div className="inline-controls">
         <label>
           Max Day
-          <input type="number" min="0" value={maxDay} onChange={(e) => setMaxDay(e.target.value)} />
+          <input
+            type="number"
+            min="0"
+            value={maxDay}
+            onChange={(e) => {
+              setUserModifiedMaxDay(true)
+              setMaxDay(e.target.value)
+            }}
+          />
         </label>
         <label>
           Metric
@@ -116,7 +155,7 @@ export default function MonetizationTable({ refreshToken }) {
             <tr>
               <th>Cohort</th>
               <th>Size</th>
-              {dayColumns.map((day) => <th key={day}>D{day}</th>)}
+              {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
             </tr>
           </thead>
           <tbody>
@@ -124,7 +163,7 @@ export default function MonetizationTable({ refreshToken }) {
               <tr key={row.cohort_id}>
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
-                {dayColumns.map((day) => <td key={day}>{row.values[String(day)]}</td>)}
+                {visibleDayColumns.map((day) => <td key={day}>{row.values[String(day)]}</td>)}
               </tr>
             ))}
           </tbody>

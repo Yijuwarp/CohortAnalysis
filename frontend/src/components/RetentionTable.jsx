@@ -4,6 +4,8 @@ import SearchableSelect from './SearchableSelect'
 
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange }) {
   const [maxDay, setMaxDay] = useState(7)
+  const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
+  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
@@ -42,7 +44,31 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
     loadRetention()
   }, [retentionEvent, maxDay])
 
-  const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      return
+    }
+
+    let lastNonZero = 0
+    data.forEach((row) => {
+      Object.entries(row.retention || {}).forEach(([day, value]) => {
+        const numeric = Number(value)
+        if (!Number.isNaN(numeric) && numeric !== 0) {
+          lastNonZero = Math.max(lastNonZero, Number(day))
+        }
+      })
+    })
+
+    setEffectiveMaxDay(Math.min(Number(maxDay), lastNonZero))
+  }, [data, maxDay, userModifiedMaxDay])
+
+  useEffect(() => {
+    if (userModifiedMaxDay) {
+      setEffectiveMaxDay(Number(maxDay))
+    }
+  }, [maxDay, userModifiedMaxDay])
+
+  const dayColumns = Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, index) => index)
 
   return (
     <section className="card">
@@ -50,7 +76,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       <div className="inline-controls">
         <label>
           Max Day
-          <input type="number" min="0" value={maxDay} onChange={(e) => setMaxDay(e.target.value)} />
+          <input
+            type="number"
+            min="0"
+            value={maxDay}
+            onChange={(e) => {
+              setUserModifiedMaxDay(true)
+              setMaxDay(e.target.value)
+            }}
+          />
         </label>
         <label>
           Retention Event
