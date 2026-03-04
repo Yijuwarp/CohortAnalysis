@@ -96,7 +96,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
       const payload = await updateRevenueConfig(pendingRevenueConfig)
       const events = payload.events || []
       setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
-      setAvailableRevenueEvents((previous) => payload.addable_events || previous)
+      setAvailableRevenueEvents(payload.addable_events || [])
       setPendingRevenueConfig(events.reduce((acc, event) => ({
         ...acc,
         [event.event_name]: { included: Boolean(event.included), override: event.override ?? null },
