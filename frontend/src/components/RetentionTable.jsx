@@ -75,31 +75,35 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   return (
     <section className="card">
       <h2>5. Retention</h2>
-      <div className="inline-controls">
-        <label>
-          Max Day
-          <input
-            type="number"
-            min="0"
-            value={maxDay}
-            onChange={(e) => {
-              setUserModifiedMaxDay(true)
-              setMaxDay(e.target.value)
-            }}
-          />
-        </label>
-        <label>
-          Retention Event
-          <SearchableSelect
-            options={[{ label: 'Any Event', value: 'any' }, ...events]}
-            value={retentionEvent}
-            onChange={onRetentionEventChange}
-            placeholder="Select retention event"
-          />
-        </label>
-        <div className="retention-controls-right">
+      <div className="retention-header">
+        <div className="retention-controls-left">
           <label>
-            Significance
+            Max Day
+            <input
+              type="number"
+              min="0"
+              value={maxDay}
+              onChange={(e) => {
+                setUserModifiedMaxDay(true)
+                setMaxDay(e.target.value)
+              }}
+            />
+          </label>
+          <label>
+            Retention Event
+            <SearchableSelect
+              options={[{ label: 'Any Event', value: 'any' }, ...events]}
+              value={retentionEvent}
+              onChange={onRetentionEventChange}
+              placeholder="Select retention event"
+            />
+          </label>
+        </div>
+
+        <div className="retention-controls-right">
+          <label className="significance-toggle">
+            <span className="stat-icon">σ</span>
+            <span>Significance</span>
             <input
               type="checkbox"
               checked={includeCI}
@@ -149,7 +153,9 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
                     <td key={day}>
                       <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
                       {includeCI && ci && ci.lower !== null && ci.upper !== null && (
-                        <div className="retention-ci">({Number(ci.lower).toFixed(1)}–{Number(ci.upper).toFixed(1)})</div>
+                        <div className="retention-ci">
+                          {Number(ci.lower).toFixed(2)}% - {Number(ci.upper).toFixed(2)}%
+                        </div>
                       )}
                     </td>
                   )
