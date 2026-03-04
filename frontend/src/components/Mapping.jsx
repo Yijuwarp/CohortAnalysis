@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getRevenueEvents, mapColumns, updateRevenueEvents } from '../api'
+import { mapColumns } from '../api'
 
 const TYPE_OPTIONS = ['TEXT', 'NUMERIC', 'TIMESTAMP', 'BOOLEAN']
 
@@ -15,7 +15,6 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [revenueEvents, setRevenueEvents] = useState([])
 
 
   useEffect(() => {
@@ -75,27 +74,6 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
     setColumnTypes((prev) => ({ ...prev, [column]: value }))
   }
 
-  const loadRevenueEvents = async () => {
-    try {
-      const response = await getRevenueEvents()
-      setRevenueEvents(response.events || [])
-    } catch {
-      setRevenueEvents([])
-    }
-  }
-
-  const toggleRevenueEvent = async (eventName, isIncluded) => {
-    const nextEvents = revenueEvents.map((item) => (
-      item.event_name === eventName ? { ...item, is_included: isIncluded } : item
-    ))
-    setRevenueEvents(nextEvents)
-    try {
-      const updated = await updateRevenueEvents(nextEvents)
-      setRevenueEvents(updated.events || [])
-    } catch (err) {
-      setError(err.message)
-    }
-  }
 
   const handleSubmit = async () => {
     setLoading(true)
@@ -110,11 +88,6 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
       }
       const data = await mapColumns(payload)
       setMessage(`Success! Normalized ${data.row_count} rows.`)
-      if (payload.revenue_column) {
-        await loadRevenueEvents()
-      } else {
-        setRevenueEvents([])
-      }
       if (onMappingComplete) {
         onMappingComplete()
       }
@@ -125,7 +98,6 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
     }
   }
 
-  const hasNoSelectedRevenueEvents = revenueEvents.length > 0 && revenueEvents.every((event) => !event.is_included)
 
   return (
     <section className="card">
@@ -222,26 +194,6 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
       {message && <p className="success">{message}</p>}
       {error && <p className="error">{error}</p>}
 
-      {form.revenue_column && revenueEvents.length > 0 && (
-        <div style={{ marginTop: 16 }}>
-          <h3>Revenue Events</h3>
-          {revenueEvents.map((event) => (
-            <div key={event.event_name} className="revenue-event-row">
-              <span>{event.event_name}</span>
-              <input
-                type="checkbox"
-                checked={event.is_included}
-                onChange={(e) =>
-                  toggleRevenueEvent(event.event_name, e.target.checked)
-                }
-              />
-            </div>
-          ))}
-          {hasNoSelectedRevenueEvents && (
-            <p className="error">No revenue events selected. Monetization will show 0.</p>
-          )}
-        </div>
-      )}
     </section>
   )
 }

@@ -2,6 +2,7 @@ import { useState } from 'react'
 import Upload from './components/Upload'
 import Mapping from './components/Mapping'
 import FilterData from './components/FilterData'
+import RevenueConfig from './components/RevenueConfig'
 import CohortForm from './components/CohortForm'
 import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
@@ -28,6 +29,7 @@ export default function App() {
         suggestedMappings={suggestedMappings}
         onMappingComplete={refreshRetention}
       />
+      <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
       <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
       <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
       <RetentionTable

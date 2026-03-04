@@ -35,7 +35,7 @@ def _prepare_monetization_fixture(client: TestClient) -> None:
     assert mapped.status_code == 200, mapped.text
 
 
-def test_revenue_events_only_include_non_zero_revenue(client: TestClient) -> None:
+def test_revenue_events_include_all_mapped_event_names(client: TestClient) -> None:
     csv_text = (
         "user_id,event_name,event_time,revenue\n"
         "u1,signup,2026-01-01 09:00:00,0\n"
@@ -68,8 +68,8 @@ def test_revenue_events_only_include_non_zero_revenue(client: TestClient) -> Non
 
     assert 'purchase' in events
     assert 'refund' in events
-    assert 'signup' not in events
-    assert 'session_start' not in events
+    assert 'signup' in events
+    assert 'session_start' in events
 
 
 def test_revenue_events_default_to_included_and_can_be_toggled(client: TestClient) -> None:
@@ -82,10 +82,10 @@ def test_revenue_events_default_to_included_and_can_be_toggled(client: TestClien
     events = {row['event_name']: row['is_included'] for row in payload['events']}
     assert events['purchase'] is True
 
-    update = client.put('/revenue-events', json={'events': [{'event_name': 'purchase', 'is_included': False}]})
+    update = client.post('/update-revenue-config', json={'revenue_config': {'purchase': {'included': False, 'override': None}}})
     assert update.status_code == 200, update.text
-    toggled = {row['event_name']: row['is_included'] for row in update.json()['events']}
-    assert toggled['purchase'] is False
+    purchase = next(event for event in update.json()['events'] if event['event_name'] == 'purchase')
+    assert purchase['included'] is False
 
 
 def test_monetization_returns_daily_raw_values_and_day_buckets(client: TestClient) -> None:
@@ -103,7 +103,7 @@ def test_monetization_returns_daily_raw_values_and_day_buckets(client: TestClien
 def test_monetization_respects_event_selection_and_scope(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
 
-    update = client.put('/revenue-events', json={'events': [{'event_name': 'refund', 'is_included': False}]})
+    update = client.post('/update-revenue-config', json={'revenue_config': {'purchase': {'included': True, 'override': None}, 'refund': {'included': False, 'override': None}}})
     assert update.status_code == 200, update.text
 
     scoped = client.post('/apply-filters', json={'filters': [{'column': 'region', 'operator': '=', 'value': 'EU'}]})
@@ -114,9 +114,8 @@ def test_monetization_respects_event_selection_and_scope(client: TestClient) -> 
     payload = response.json()
 
     all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
-    assert all_users == [
-        {'cohort_id': 1, 'cohort_name': 'All Users', 'day_number': 1, 'revenue': 5.0},
-    ]
+    by_day = {row['day_number']: row['revenue'] for row in all_users}
+    assert by_day == {0: 0.0, 1: 5.0}
 
 
 def test_monetization_negative_revenue_included(client: TestClient) -> None:
@@ -144,3 +143,95 @@ def test_monetization_excludes_hidden_cohorts(client: TestClient) -> None:
 
     cohort_names = {row['cohort_name'] for row in response.json()['cohort_sizes']}
     assert 'signup_users' not in cohort_names
+
+
+def test_update_revenue_config_override_clear_and_reapply(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    override = client.post('/update-revenue-config', json={
+        'revenue_config': {
+            'purchase': {'included': True, 'override': 10},
+            'refund': {'included': True, 'override': None},
+        },
+    })
+    assert override.status_code == 200, override.text
+
+    payload = client.get('/monetization?max_day=1').json()
+    all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
+    by_day = {row['day_number']: row['revenue'] for row in all_users}
+    assert by_day == {0: 10.0, 1: 7.75}
+
+    cleared = client.post('/update-revenue-config', json={
+        'revenue_config': {
+            'purchase': {'included': True, 'override': None},
+            'refund': {'included': True, 'override': None},
+        },
+    })
+    assert cleared.status_code == 200, cleared.text
+
+    payload = client.get('/monetization?max_day=1').json()
+    all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
+    by_day = {row['day_number']: row['revenue'] for row in all_users}
+    assert by_day == {0: 10.5, 1: 2.75}
+
+    override_again = client.post('/update-revenue-config', json={
+        'revenue_config': {
+            'purchase': {'included': True, 'override': 5},
+            'refund': {'included': True, 'override': None},
+        },
+    })
+    assert override_again.status_code == 200, override_again.text
+
+    payload = client.get('/monetization?max_day=1').json()
+    all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
+    by_day = {row['day_number']: row['revenue'] for row in all_users}
+    assert by_day == {0: 5.0, 1: 2.75}
+
+
+def test_partial_revenue_config_payload_does_not_reset_other_events(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    response = client.post('/update-revenue-config', json={
+        'revenue_config': {
+            'purchase': {'included': True, 'override': 10},
+        },
+    })
+    assert response.status_code == 200, response.text
+
+    config_by_event = {event['event_name']: event for event in response.json()['events']}
+    assert config_by_event['purchase']['override'] == 10
+    assert config_by_event['refund']['included'] is True
+
+    payload = client.get('/monetization?max_day=1').json()
+    all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
+    by_day = {row['day_number']: row['revenue'] for row in all_users}
+    assert by_day == {0: 10.0, 1: 7.75}
+
+
+def test_revenue_config_events_returns_persisted_included_and_override_state(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    update = client.post('/update-revenue-config', json={
+        'revenue_config': {
+            'purchase': {'included': True, 'override': 12},
+            'refund': {'included': False, 'override': None},
+        },
+    })
+    assert update.status_code == 200, update.text
+
+    response = client.get('/revenue-config-events')
+    assert response.status_code == 200, response.text
+    config_by_event = {event['event_name']: event for event in response.json()['events']}
+
+    assert config_by_event['purchase']['included'] is True
+    assert config_by_event['purchase']['override'] == 12
+    assert config_by_event['refund']['included'] is False
+    assert config_by_event['refund']['override'] is None
+
+
+def test_update_revenue_config_rejects_empty_payload(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    response = client.post('/update-revenue-config', json={'revenue_config': {}})
+    assert response.status_code == 400
+    assert response.json()['detail'] == 'revenue_config cannot be empty'

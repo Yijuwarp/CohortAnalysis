@@ -35,10 +35,20 @@ class ColumnMappingRequest(BaseModel):
 class RevenueEventSelectionItem(BaseModel):
     event_name: str
     is_included: bool
+    override: float | None = None
 
 
 class RevenueEventSelectionRequest(BaseModel):
     events: list[RevenueEventSelectionItem] = Field(default_factory=list)
+
+
+class RevenueConfigItem(BaseModel):
+    included: bool
+    override: float | None = None
+
+
+class UpdateRevenueConfigRequest(BaseModel):
+    revenue_config: dict[str, RevenueConfigItem] = Field(default_factory=dict)
 
 
 class ScopeFilter(BaseModel):
@@ -631,25 +641,139 @@ def ensure_revenue_event_selection_table(connection: duckdb.DuckDBPyConnection) 
         """
         CREATE TABLE IF NOT EXISTS revenue_event_selection (
             event_name TEXT PRIMARY KEY,
-            is_included BOOLEAN NOT NULL
+            is_included BOOLEAN NOT NULL,
+            override_value DOUBLE
         )
         """
     )
 
+    existing_columns = {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'revenue_event_selection'
+            """
+        ).fetchall()
+    }
+    if "override_value" not in existing_columns:
+        connection.execute("ALTER TABLE revenue_event_selection ADD COLUMN override_value DOUBLE")
+
+
+def ensure_normalized_events_revenue_columns(connection: duckdb.DuckDBPyConnection, table_name: str = "events_normalized") -> None:
+    table_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+        [table_name],
+    ).fetchone()[0]
+    if not table_exists:
+        return
+
+    existing_columns = {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = ?
+            """,
+            [table_name],
+        ).fetchall()
+    }
+
+    if "original_event_count" not in existing_columns and "event_count" in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} RENAME COLUMN event_count TO original_event_count")
+        existing_columns.discard("event_count")
+        existing_columns.add("original_event_count")
+    if "original_revenue" not in existing_columns and "revenue_amount" in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} RENAME COLUMN revenue_amount TO original_revenue")
+        existing_columns.discard("revenue_amount")
+        existing_columns.add("original_revenue")
+
+    if "original_event_count" not in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN original_event_count INTEGER")
+    if "original_revenue" not in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN original_revenue DOUBLE")
+    if "modified_event_count" not in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_event_count INTEGER")
+    if "modified_revenue" not in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_revenue DOUBLE")
+
+    connection.execute(
+        f"""
+        UPDATE {table_name}
+        SET modified_event_count = COALESCE(modified_event_count, original_event_count),
+            modified_revenue = COALESCE(modified_revenue, original_revenue)
+        """
+    )
+
+
+
+
+def recompute_modified_revenue_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
+    table_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?",
+        [table_name],
+    ).fetchone()[0]
+    if not table_exists:
+        return
+
+    ensure_normalized_events_revenue_columns(connection, table_name)
+    connection.execute(
+        f"""
+        UPDATE {table_name} en
+        SET
+            modified_event_count = CASE
+                WHEN rc.event_name IS NULL OR rc.is_included = FALSE THEN 0
+                ELSE en.original_event_count
+            END,
+            modified_revenue = CASE
+                WHEN rc.event_name IS NULL OR rc.is_included = FALSE THEN 0
+                WHEN rc.override_value IS NOT NULL THEN en.original_event_count * rc.override_value
+                ELSE en.original_revenue
+            END
+        FROM revenue_event_selection rc
+        WHERE en.event_name = rc.event_name
+        """
+    )
+    connection.execute(
+        f"""
+        UPDATE {table_name}
+        SET
+            modified_event_count = 0,
+            modified_revenue = 0
+        WHERE event_name NOT IN (
+            SELECT event_name FROM revenue_event_selection
+        )
+        """
+    )
 
 def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) -> None:
     ensure_revenue_event_selection_table(connection)
     connection.execute("DELETE FROM revenue_event_selection")
     connection.execute(
         """
-        INSERT INTO revenue_event_selection (event_name, is_included)
-        SELECT DISTINCT event_name, TRUE
+        INSERT INTO revenue_event_selection (event_name, is_included, override_value)
+        SELECT DISTINCT event_name, TRUE, NULL
         FROM events_normalized
         WHERE event_name IS NOT NULL
-          AND revenue_amount != 0
         ORDER BY event_name
         """
     )
+
+def ensure_revenue_event_selection_coverage(connection: duckdb.DuckDBPyConnection) -> None:
+    ensure_revenue_event_selection_table(connection)
+    connection.execute(
+        """
+        INSERT INTO revenue_event_selection (event_name, is_included, override_value)
+        SELECT DISTINCT en.event_name, TRUE, NULL
+        FROM events_normalized en
+        LEFT JOIN revenue_event_selection rc ON en.event_name = rc.event_name
+        WHERE en.event_name IS NOT NULL
+          AND rc.event_name IS NULL
+        """
+    )
+
 
 def create_scoped_indexes(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_events_scoped_user_id ON events_scoped(user_id)")
@@ -664,6 +788,8 @@ def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
         return
 
     connection.execute("CREATE OR REPLACE TABLE events_scoped AS SELECT * FROM events_normalized")
+    ensure_normalized_events_revenue_columns(connection, "events_scoped")
+    recompute_modified_revenue_columns(connection, "events_scoped")
     create_scoped_indexes(connection)
     upsert_dataset_scope(connection, {"date_range": None, "filters": []})
     refresh_cohort_activity(connection)
@@ -791,7 +917,7 @@ def build_cohort_membership(
                         SELECT
                             user_id,
                             event_time,
-                            SUM(event_count) OVER (
+                            SUM(original_event_count) OVER (
                                 PARTITION BY user_id
                                 ORDER BY event_time, event_name
                                 ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
@@ -1126,25 +1252,34 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                 parsed_row.pop(mapping.revenue_column)
             if mapping.event_count_column:
                 parsed_row.pop(mapping.event_count_column)
-            parsed_row["event_count"] = event_count
-            parsed_row["revenue_amount"] = revenue_amount
+            parsed_row["original_event_count"] = event_count
+            parsed_row["original_revenue"] = revenue_amount
+            parsed_row["modified_event_count"] = event_count
+            parsed_row["modified_revenue"] = revenue_amount
             parsed_rows.append(parsed_row)
 
         normalized_df = pd.DataFrame(parsed_rows)
-        group_columns = [column for column in normalized_df.columns if column not in {"event_count", "revenue_amount"}]
+        group_columns = [column for column in normalized_df.columns if column not in {"original_event_count", "original_revenue", "modified_event_count", "modified_revenue"}]
         normalized_df = normalized_df.groupby(group_columns, dropna=False, as_index=False).agg(
-            event_count=("event_count", "sum"),
-            revenue_amount=("revenue_amount", "sum"),
+            original_event_count=("original_event_count", "sum"),
+            original_revenue=("original_revenue", "sum"),
+            modified_event_count=("modified_event_count", "sum"),
+            modified_revenue=("modified_revenue", "sum"),
         )
 
         connection.execute("DROP TABLE IF EXISTS events_normalized")
         connection.register("temp_import", normalized_df)
         connection.execute("CREATE TABLE events_normalized AS SELECT * FROM temp_import")
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN event_count SET NOT NULL")
+        ensure_normalized_events_revenue_columns(connection)
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN original_event_count SET NOT NULL")
         connection.execute(
-            "ALTER TABLE events_normalized ALTER COLUMN revenue_amount SET DEFAULT 0"
+            "ALTER TABLE events_normalized ALTER COLUMN original_revenue SET DEFAULT 0"
         )
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN revenue_amount SET NOT NULL")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN original_revenue SET NOT NULL")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_event_count SET DEFAULT 0")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_event_count SET NOT NULL")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET DEFAULT 0")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET NOT NULL")
 
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
@@ -1158,7 +1293,12 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         initialize_scoped_dataset(connection)
         if mapping.revenue_column:
             initialize_revenue_event_selection(connection)
-            set_has_revenue_mapping(connection, True)
+            recompute_modified_revenue_columns(connection, "events_normalized")
+            recompute_modified_revenue_columns(connection, "events_scoped")
+            has_revenue = connection.execute(
+                "SELECT COUNT(*) FROM events_normalized WHERE original_revenue != 0"
+            ).fetchone()[0] > 0
+            set_has_revenue_mapping(connection, has_revenue)
         else:
             connection.execute("DELETE FROM revenue_event_selection")
             set_has_revenue_mapping(connection, False)
@@ -1267,6 +1407,8 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
             f"CREATE TABLE events_scoped AS SELECT * FROM events_normalized {where_clause}",
             params,
         )
+        ensure_normalized_events_revenue_columns(connection, "events_scoped")
+        recompute_modified_revenue_columns(connection, "events_scoped")
         create_scoped_indexes(connection)
 
         counts = upsert_dataset_scope(
@@ -1894,6 +2036,46 @@ def list_events() -> dict[str, list[str]]:
 
 
 
+@app.get("/revenue-config-events")
+def get_revenue_config_events() -> dict[str, object]:
+    connection = get_connection()
+    try:
+        ensure_revenue_event_selection_table(connection)
+        has_revenue_mapping = get_has_revenue_mapping(connection)
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()[0]
+        if not normalized_exists:
+            return {"has_revenue_mapping": has_revenue_mapping, "events": []}
+
+        ensure_revenue_event_selection_coverage(connection)
+        rows = connection.execute(
+            """
+            SELECT
+                en.event_name,
+                COALESCE(rc.is_included, TRUE) AS included,
+                rc.override_value
+            FROM (
+                SELECT DISTINCT event_name
+                FROM events_normalized
+                WHERE event_name IS NOT NULL
+            ) en
+            LEFT JOIN revenue_event_selection rc
+              ON en.event_name = rc.event_name
+            ORDER BY en.event_name
+            """
+        ).fetchall()
+        return {
+            "has_revenue_mapping": has_revenue_mapping,
+            "events": [
+                {"event_name": str(event_name), "included": bool(included), "override": override}
+                for event_name, included, override in rows
+            ],
+        }
+    finally:
+        connection.close()
+
+
 @app.get("/revenue-events")
 def get_revenue_events() -> dict[str, object]:
     connection = get_connection()
@@ -1901,46 +2083,83 @@ def get_revenue_events() -> dict[str, object]:
         ensure_revenue_event_selection_table(connection)
         has_revenue_mapping = get_has_revenue_mapping(connection)
         rows = connection.execute(
-            "SELECT event_name, is_included FROM revenue_event_selection ORDER BY event_name"
+            "SELECT event_name, is_included, override_value FROM revenue_event_selection ORDER BY event_name"
         ).fetchall()
         return {
             "has_revenue_mapping": has_revenue_mapping,
             "events": [
-                {"event_name": str(event_name), "is_included": bool(is_included)}
-                for event_name, is_included in rows
+                {"event_name": str(event_name), "is_included": bool(is_included), "override": override_value}
+                for event_name, is_included, override_value in rows
             ],
         }
     finally:
         connection.close()
 
 
-@app.put("/revenue-events")
-def update_revenue_events(payload: RevenueEventSelectionRequest) -> dict[str, object]:
+@app.post("/update-revenue-config")
+def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, object]:
     connection = get_connection()
     try:
         ensure_revenue_event_selection_table(connection)
-        known_events = {
-            str(row[0])
-            for row in connection.execute("SELECT event_name FROM revenue_event_selection").fetchall()
-        }
 
-        for item in payload.events:
-            if item.event_name not in known_events:
-                raise HTTPException(status_code=400, detail=f"Unknown event_name: {item.event_name}")
+        normalized_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        ).fetchone()[0]
+        if not normalized_exists:
+            raise HTTPException(status_code=400, detail="No normalized events found. Upload and map columns first.")
+        if not payload.revenue_config:
+            raise HTTPException(status_code=400, detail="revenue_config cannot be empty")
+
+        for event_name, config in payload.revenue_config.items():
             connection.execute(
-                "UPDATE revenue_event_selection SET is_included = ? WHERE event_name = ?",
-                [bool(item.is_included), item.event_name],
+                """
+                INSERT INTO revenue_event_selection (event_name, is_included, override_value)
+                VALUES (?, ?, ?)
+                ON CONFLICT (event_name)
+                DO UPDATE SET
+                    is_included = excluded.is_included,
+                    override_value = excluded.override_value
+                """,
+                [event_name, bool(config.included), config.override],
             )
 
-        has_revenue_mapping = get_has_revenue_mapping(connection)
+        ensure_revenue_event_selection_coverage(connection)
+
+        has_revenue = connection.execute(
+            "SELECT COUNT(*) FROM events_normalized WHERE original_revenue != 0"
+        ).fetchone()[0] > 0
+        set_has_revenue_mapping(connection, has_revenue)
+
+        recompute_modified_revenue_columns(connection, "events_normalized")
+
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        ).fetchone()[0]
+        if scoped_exists:
+            recompute_modified_revenue_columns(connection, "events_scoped")
+            create_scoped_indexes(connection)
+
         rows = connection.execute(
-            "SELECT event_name, is_included FROM revenue_event_selection ORDER BY event_name"
+            """
+            SELECT
+                en.event_name,
+                COALESCE(rc.is_included, TRUE) AS included,
+                rc.override_value
+            FROM (
+                SELECT DISTINCT event_name
+                FROM events_normalized
+                WHERE event_name IS NOT NULL
+            ) en
+            LEFT JOIN revenue_event_selection rc
+              ON en.event_name = rc.event_name
+            ORDER BY en.event_name
+            """
         ).fetchall()
         return {
-            "has_revenue_mapping": has_revenue_mapping,
+            "has_revenue_mapping": has_revenue,
             "events": [
-                {"event_name": str(event_name), "is_included": bool(is_included)}
-                for event_name, is_included in rows
+                {"event_name": str(event_name), "included": bool(included), "override": override}
+                for event_name, included, override in rows
             ],
         }
     finally:
@@ -1981,7 +2200,8 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
                 SELECT
                     cm.cohort_id,
                     DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number,
-                    SUM(es.revenue_amount) AS revenue
+                    SUM(es.modified_revenue) AS revenue,
+                    SUM(es.modified_event_count) AS event_count
                 FROM cohort_membership cm
                 JOIN cohorts c ON c.cohort_id = cm.cohort_id
                 JOIN events_scoped es
@@ -1990,7 +2210,7 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
                   AND es.event_name IN (SELECT event_name FROM revenue_events)
                 GROUP BY cm.cohort_id, day_number
             )
-            SELECT cohort_id, day_number, revenue
+            SELECT cohort_id, day_number, revenue, event_count
             FROM revenue_by_day
             WHERE day_number BETWEEN 0 AND ?
             ORDER BY cohort_id, day_number
@@ -2007,8 +2227,9 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
                 "cohort_name": cohort_name_by_id[int(cohort_id)],
                 "day_number": int(day_number),
                 "revenue": float(revenue),
+                "event_count": int(event_count),
             }
-            for cohort_id, day_number, revenue in revenue_rows
+            for cohort_id, day_number, revenue, event_count in revenue_rows
         ]
         cohort_size_table = [
             {"cohort_id": int(cohort_id), "cohort_name": str(cohort_name), "size": int(cohort_sizes.get(int(cohort_id), 0))}
