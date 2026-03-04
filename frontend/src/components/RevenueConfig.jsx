@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from 'react'
 import { getRevenueConfigEvents, updateRevenueConfig } from '../api'
 
 export default function RevenueConfig({ refreshToken, onUpdated }) {
-  const [hasRevenueMapping, setHasRevenueMapping] = useState(false)
   const [availableRevenueEvents, setAvailableRevenueEvents] = useState([])
   const [pendingRevenueConfig, setPendingRevenueConfig] = useState({})
   const [pendingOverrideInputs, setPendingOverrideInputs] = useState({})
@@ -16,7 +15,6 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
       try {
         const payload = await getRevenueConfigEvents()
         const events = payload.events || []
-        setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
         setAvailableRevenueEvents(events.map((event) => event.event_name))
         const config = events.reduce((acc, event) => ({
           ...acc,
@@ -28,7 +26,6 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
           [event.event_name]: event.override === null || event.override === undefined ? '' : String(event.override),
         }), {}))
       } catch {
-        setHasRevenueMapping(false)
         setAvailableRevenueEvents([])
         setPendingRevenueConfig({})
         setPendingOverrideInputs({})
@@ -52,7 +49,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
 
   const canApplyRevenueChanges = invalidOverrideEvents.length === 0 && !saving
 
-  if (!hasRevenueMapping) {
+  if (!availableRevenueEvents.length) {
     return null
   }
 
@@ -95,7 +92,6 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
     try {
       const payload = await updateRevenueConfig(pendingRevenueConfig)
       const events = payload.events || []
-      setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
       setAvailableRevenueEvents(events.map((event) => event.event_name))
       setPendingRevenueConfig(events.reduce((acc, event) => ({
         ...acc,

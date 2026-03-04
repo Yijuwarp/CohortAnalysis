@@ -267,3 +267,29 @@ def test_events_normalized_revenue_defaults_to_zero_on_manual_insert(client: Tes
         """
     ).fetchone()
     assert inserted == (0.0, 0.0)
+
+
+def test_revenue_config_events_available_when_revenue_not_mapped(client: TestClient) -> None:
+    csv_text = "uid,event,timestamp\nu1,signup,2024-01-01\nu1,session_start,2024-01-02\n"
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    config_response = client.get('/revenue-config-events')
+    assert config_response.status_code == 200, config_response.text
+    payload = config_response.json()
+    assert payload['has_revenue_mapping'] is True
+
+    config_by_event = {event['event_name']: event for event in payload['events']}
+    assert set(config_by_event) == {'session_start', 'signup'}
+    assert config_by_event['signup']['included'] is False
+    assert config_by_event['session_start']['included'] is False
