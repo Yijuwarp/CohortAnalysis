@@ -70,3 +70,22 @@ def test_usage_returns_empty_tables_when_event_absent(client: TestClient) -> Non
     assert payload["usage_volume_table"] == []
     assert payload["usage_users_table"] == []
     assert payload["retained_users_table"] == []
+
+
+def test_usage_excludes_hidden_cohorts(client: TestClient) -> None:
+    _prepare_usage_fixture(client)
+
+    created = client.post(
+        "/cohorts",
+        json={"name": "signup_users", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
+    )
+    assert created.status_code == 200, created.text
+
+    hidden = client.patch(f"/cohorts/{created.json()['cohort_id']}/hide")
+    assert hidden.status_code == 200, hidden.text
+
+    response = client.get("/usage?event=open&max_day=1")
+    assert response.status_code == 200, response.text
+
+    cohort_names = {row["cohort_name"] for row in response.json()["usage_volume_table"]}
+    assert "signup_users" not in cohort_names

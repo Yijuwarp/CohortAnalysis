@@ -451,7 +451,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             name TEXT,
             logic_operator TEXT,
             join_type TEXT DEFAULT 'condition_met',
-            is_active BOOLEAN DEFAULT TRUE
+            is_active BOOLEAN DEFAULT TRUE,
+            hidden BOOLEAN DEFAULT FALSE
         )
         """
     )
@@ -553,6 +554,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     if "is_active" not in existing_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
+    if "hidden" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN hidden BOOLEAN DEFAULT FALSE")
 
     snapshot_columns = {
         row[0]
@@ -1542,6 +1545,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 c.is_active,
                 c.logic_operator,
                 c.join_type,
+                c.hidden,
                 cc.event_name,
                 cc.min_event_count,
                 cc.property_column,
@@ -1554,7 +1558,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ).fetchall()
 
         cohorts: dict[int, dict[str, object]] = {}
-        for cohort_id, name, is_active, logic_operator, join_type, event_name, min_event_count, property_column, property_operator, property_values in rows:
+        for cohort_id, name, is_active, logic_operator, join_type, hidden, event_name, min_event_count, property_column, property_operator, property_values in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
                 cohorts[cohort_id] = {
@@ -1563,6 +1567,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                     "is_active": bool(is_active),
                     "logic_operator": str(logic_operator or "AND"),
                     "join_type": str(join_type or "condition_met"),
+                    "hidden": bool(hidden),
                     "conditions": [],
                 }
 
@@ -1691,12 +1696,44 @@ def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
     return {"deleted": True, "cohort_id": int(cohort_id)}
 
 
+@app.patch("/cohorts/{cohort_id}/hide")
+def toggle_cohort_hide(cohort_id: int) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+
+        cohort_row = connection.execute(
+            "SELECT cohort_id, hidden FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()
+        if cohort_row is None:
+            raise HTTPException(status_code=404, detail="Cohort not found")
+
+        connection.execute(
+            """
+            UPDATE cohorts
+            SET hidden = NOT hidden
+            WHERE cohort_id = ?
+            """,
+            [cohort_id],
+        )
+
+        updated_hidden = connection.execute(
+            "SELECT hidden FROM cohorts WHERE cohort_id = ?",
+            [cohort_id],
+        ).fetchone()[0]
+    finally:
+        connection.close()
+
+    return {"cohort_id": int(cohort_id), "hidden": bool(updated_hidden)}
+
+
 def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[list[tuple[int, str]], dict[int, int]]:
     cohorts = connection.execute(
         """
         SELECT cohort_id, name
         FROM cohorts
-        WHERE is_active = TRUE
+        WHERE is_active = TRUE AND hidden = FALSE
         ORDER BY cohort_id
         """
     ).fetchall()
@@ -1708,7 +1745,7 @@ def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[lis
             FROM cohorts c
             LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
             LEFT JOIN events_scoped es ON cm.user_id = es.user_id
-            WHERE c.is_active = TRUE AND es.user_id IS NOT NULL
+            WHERE c.is_active = TRUE AND c.hidden = FALSE AND es.user_id IS NOT NULL
             GROUP BY c.cohort_id
             """
         ).fetchall()
@@ -1730,6 +1767,7 @@ def fetch_retention_active_rows(
                     cm.user_id,
                     DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
                 FROM cohort_membership cm
+                JOIN cohorts c ON c.cohort_id = cm.cohort_id
                 JOIN cohort_activity_snapshot cas
                   ON cm.cohort_id = cas.cohort_id
                  AND cm.user_id = cas.user_id
@@ -1737,7 +1775,8 @@ def fetch_retention_active_rows(
                   ON es.user_id = cas.user_id
                  AND es.event_time = cas.event_time
                  AND es.event_name = cas.event_name
-                WHERE es.event_name = ?
+                WHERE c.hidden = FALSE
+                  AND es.event_name = ?
                   AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
             )
             SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
@@ -1755,6 +1794,7 @@ def fetch_retention_active_rows(
                 cm.user_id,
                 DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) AS day_number
             FROM cohort_membership cm
+            JOIN cohorts c ON c.cohort_id = cm.cohort_id
             JOIN cohort_activity_snapshot cas
               ON cm.cohort_id = cas.cohort_id
              AND cm.user_id = cas.user_id
@@ -1762,7 +1802,8 @@ def fetch_retention_active_rows(
               ON es.user_id = cas.user_id
              AND es.event_time = cas.event_time
              AND es.event_name = cas.event_name
-            WHERE DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
+            WHERE c.hidden = FALSE
+              AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) BETWEEN 0 AND ?
         )
         SELECT cohort_id, day_number, COUNT(DISTINCT user_id) AS active_users
         FROM activity_deltas
@@ -1942,9 +1983,11 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
                     DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number,
                     SUM(es.revenue_amount) AS revenue
                 FROM cohort_membership cm
+                JOIN cohorts c ON c.cohort_id = cm.cohort_id
                 JOIN events_scoped es
                   ON cm.user_id = es.user_id
-                WHERE es.event_name IN (SELECT event_name FROM revenue_events)
+                WHERE c.hidden = FALSE
+                  AND es.event_name IN (SELECT event_name FROM revenue_events)
                 GROUP BY cm.cohort_id, day_number
             )
             SELECT cohort_id, day_number, revenue
@@ -2026,8 +2069,10 @@ def get_usage(
                     cm.user_id,
                     DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number
                 FROM cohort_membership cm
+                JOIN cohorts c ON c.cohort_id = cm.cohort_id
                 JOIN events_scoped es ON es.user_id = cm.user_id
-                WHERE es.event_name = ?
+                WHERE c.hidden = FALSE
+                  AND es.event_name = ?
                   AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?
             )
             SELECT cohort_id, day_number, COUNT(*) AS total_events, COUNT(DISTINCT user_id) AS distinct_users

@@ -1055,3 +1055,27 @@ def test_create_cohort_rejects_invalid_timestamp_format(client: TestClient) -> N
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Invalid timestamp format"}
+
+
+def test_toggle_hide_updates_cohort_visibility_flag(client: TestClient, db_connection) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={"name": "purchase_once", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
+    )
+    assert created.status_code == 200, created.text
+    cohort_id = created.json()["cohort_id"]
+
+    hide_response = client.patch(f"/cohorts/{cohort_id}/hide")
+    assert hide_response.status_code == 200, hide_response.text
+    assert hide_response.json() == {"cohort_id": cohort_id, "hidden": True}
+
+    listed = client.get("/cohorts")
+    assert listed.status_code == 200, listed.text
+    toggled = next(row for row in listed.json()["cohorts"] if row["cohort_id"] == cohort_id)
+    assert toggled["hidden"] is True
+
+    unhide_response = client.patch(f"/cohorts/{cohort_id}/hide")
+    assert unhide_response.status_code == 200, unhide_response.text
+    assert unhide_response.json() == {"cohort_id": cohort_id, "hidden": False}

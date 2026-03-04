@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, updateCohort } from '../api'
+import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, toggleCohortHide, updateCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
@@ -65,6 +65,38 @@ const formatPropertyFilter = (propertyFilter) => {
   }
 
   return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`
+}
+
+function generateCohortName(currentConditions, currentLogicOperator) {
+  if (!currentConditions || currentConditions.length === 0) {
+    return 'Untitled Cohort'
+  }
+
+  const parts = currentConditions.map((cond) => {
+    const event = cond.event_name || 'event'
+    const count = cond.min_event_count ?? 1
+    const propertyFilter = cond.property_filter
+
+    let base = ''
+
+    if (count > 1) {
+      base = `Triggered ${event} more than ${count} times`
+    } else {
+      base = `Triggered ${event}`
+    }
+
+    if (propertyFilter) {
+      const values = Array.isArray(propertyFilter.values)
+        ? propertyFilter.values.join(', ')
+        : propertyFilter.values
+
+      base += ` where ${propertyFilter.column} ${propertyFilter.operator} ${values}`
+    }
+
+    return base
+  })
+
+  return parts.join(` ${currentLogicOperator} `)
 }
 
 export default function CohortForm({ refreshToken, onCohortsChanged }) {
@@ -189,11 +221,6 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setError('')
     setResult(null)
 
-    if (!name.trim()) {
-      setError('Cohort name is required')
-      return
-    }
-
     if (events.length === 0) {
       setError('No events available under current filters')
       return
@@ -221,8 +248,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
     try {
       const payloadConditions = conditions.map(({ property_filter_expanded, ...condition }) => condition)
+      const finalName = name.trim() || generateCohortName(payloadConditions, logicOperator)
       const payload = {
-        name,
+        name: finalName,
         logic_operator: logicOperator,
         join_type: joinType,
         conditions: payloadConditions,
@@ -238,6 +266,19 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       setError(err.message)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleToggleHide = async (cohortId) => {
+    setError('')
+    setResult(null)
+
+    try {
+      await toggleCohortHide(cohortId)
+      await loadCohorts()
+      onCohortsChanged()
+    } catch (err) {
+      setError(err.message)
     }
   }
 
@@ -272,14 +313,15 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   return (
     <section className="card">
       <h2>4. {editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h2>
+      <h4><strong>Name</strong></h4>
       <div className="grid">
         <label>
-          Cohort Name
+          Cohort Name (optional)
           <input value={name} onChange={(e) => setName(e.target.value)} />
         </label>
       </div>
 
-      <h4>Rules</h4>
+      <h4><strong>Conditions</strong></h4>
       {conditions.map((condition, index) => {
         const propertyFilter = condition.property_filter
         const selectedColumn = propertyFilter?.column || ''
@@ -554,29 +596,12 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         + Add Condition
       </button>
 
-      <h4>Cohort Join Time</h4>
+      <h4><strong>Join Time</strong></h4>
       <div className="cohort-join-time">
-        <label className="radio-option">
-          <input
-            type="radio"
-            name="joinType"
-            value="condition_met"
-            checked={joinType === 'condition_met'}
-            onChange={(e) => setJoinType(e.target.value)}
-          />
-          <span>When condition is met</span>
-        </label>
-
-        <label className="radio-option">
-          <input
-            type="radio"
-            name="joinType"
-            value="first_event"
-            checked={joinType === 'first_event'}
-            onChange={(e) => setJoinType(e.target.value)}
-          />
-          <span>On first event</span>
-        </label>
+        <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
+          <option value="condition_met">When condition is met</option>
+          <option value="first_event">On first event</option>
+        </select>
       </div>
 
       <div className="inline-controls">
@@ -603,11 +628,18 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         <p className="secondary-text">No cohorts created yet.</p>
       ) : (
         <ul>
-          {cohorts.map((cohort) => (
-            <li key={cohort.cohort_id} title={cohort.is_active ? '' : 'No matching members under current filters'}>
+          {cohorts.map((cohort) => {
+            const isSystemCohort = cohort.cohort_name === 'All Users'
+
+            return (
+            <li
+              key={cohort.cohort_id}
+              title={cohort.is_active ? '' : 'No matching members under current filters'}
+            >
               <div className="cohort-row">
                 <div className="cohort-left">
                   <span>{cohort.cohort_name}</span>
+                  {cohort.hidden && <span className="badge-hidden">Hidden</span>}
                   {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
                 </div>
 
@@ -620,12 +652,16 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     i
                   </button>
 
+                  <button className="button button-small" type="button" onClick={() => handleToggleHide(cohort.cohort_id)}>
+                    {cohort.hidden ? 'Unhide' : 'Hide'}
+                  </button>
+
                   <button
                     className="button button-secondary"
                     type="button"
                     onClick={() => handleEdit(cohort)}
-                    disabled={cohort.cohort_name === 'All Users'}
-                    title={cohort.cohort_name === 'All Users' ? 'System cohort cannot be modified' : ''}
+                    disabled={isSystemCohort}
+                    title={isSystemCohort ? 'System cohort cannot be modified' : ''}
                   >
                     Edit
                   </button>
@@ -634,8 +670,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     className="button button-danger"
                     type="button"
                     onClick={() => handleDelete(cohort.cohort_id)}
-                    disabled={deletingId === cohort.cohort_id || cohort.cohort_name === 'All Users'}
-                    title={cohort.cohort_name === 'All Users' ? 'System cohort cannot be deleted' : ''}
+                    disabled={deletingId === cohort.cohort_id || isSystemCohort}
+                    title={isSystemCohort ? 'System cohort cannot be deleted' : ''}
                   >
                     {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
                   </button>
@@ -661,7 +697,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                 </div>
               )}
             </li>
-          ))}
+          )})}
         </ul>
       )}
     </section>
