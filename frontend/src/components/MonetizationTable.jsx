@@ -88,27 +88,38 @@ export default function MonetizationTable({ refreshToken }) {
 
   useEffect(() => {
     if (userModifiedMaxDay) {
+      setEffectiveMaxDay(Number(maxDay))
+      return
+    }
+
+    if (!revenueRows.length) {
+      return
+    }
+
+    const allUsersRow = revenueRows.find((row) => row.cohort_name === 'All Users')
+    if (!allUsersRow || !allUsersRow.values) {
       return
     }
 
     let lastNonZero = 0
-    displayRows.forEach((row) => {
-      Object.entries(row.values || {}).forEach(([day, value]) => {
-        const numeric = Number(value)
-        if (!Number.isNaN(numeric) && numeric !== 0) {
-          lastNonZero = Math.max(lastNonZero, Number(day))
-        }
-      })
+    Object.entries(allUsersRow.values).forEach(([day, value]) => {
+      const numeric = Number(value)
+      if (!Number.isNaN(numeric) && numeric > 0) {
+        lastNonZero = Math.max(lastNonZero, Number(day))
+      }
     })
 
-    setEffectiveMaxDay(Math.min(Number(maxDay), lastNonZero))
-  }, [displayRows, maxDay, userModifiedMaxDay])
-
-  useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDay(Number(maxDay))
+    if (lastNonZero === 0) {
+      return
     }
-  }, [maxDay, userModifiedMaxDay])
+
+    const adjusted = Math.min(Number(maxDay), lastNonZero)
+    setEffectiveMaxDay(adjusted)
+
+    if (Number(maxDay) !== adjusted) {
+      setMaxDay(adjusted)
+    }
+  }, [maxDay, revenueRows, userModifiedMaxDay])
 
   const visibleDayColumns = useMemo(
     () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),

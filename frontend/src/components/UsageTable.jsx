@@ -142,46 +142,41 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
 
   useEffect(() => {
     if (userModifiedMaxDay) {
+      const manualMaxDay = Number(maxDay)
+      setEffectiveMaxDayVolume(manualMaxDay)
+      setEffectiveMaxDayUsers(manualMaxDay)
+      return
+    }
+
+    if (!volumeDisplayRows.length) {
+      return
+    }
+
+    const allUsers = volumeDisplayRows.find((row) => row.cohort_name === 'All Users')
+    if (!allUsers || !allUsers.values) {
       return
     }
 
     let lastNonZero = 0
-    volumeDisplayRows.forEach((row) => {
-      Object.entries(row.values || {}).forEach(([day, value]) => {
-        const numeric = Number(value)
-        if (!Number.isNaN(numeric) && numeric !== 0) {
-          lastNonZero = Math.max(lastNonZero, Number(day))
-        }
-      })
+    Object.entries(allUsers.values).forEach(([day, value]) => {
+      const numeric = Number(value)
+      if (!Number.isNaN(numeric) && numeric > 0) {
+        lastNonZero = Math.max(lastNonZero, Number(day))
+      }
     })
 
-    setEffectiveMaxDayVolume(Math.min(Number(maxDay), lastNonZero))
+    if (lastNonZero === 0) {
+      return
+    }
+
+    const adjusted = Math.min(Number(maxDay), lastNonZero)
+    setEffectiveMaxDayVolume(adjusted)
+    setEffectiveMaxDayUsers(adjusted)
+
+    if (Number(maxDay) !== adjusted) {
+      setMaxDay(adjusted)
+    }
   }, [maxDay, userModifiedMaxDay, volumeDisplayRows])
-
-  useEffect(() => {
-    if (userModifiedMaxDay) {
-      return
-    }
-
-    let lastNonZero = 0
-    userDisplayRows.forEach((row) => {
-      Object.entries(row.values || {}).forEach(([day, value]) => {
-        const numeric = Number(value)
-        if (!Number.isNaN(numeric) && numeric !== 0) {
-          lastNonZero = Math.max(lastNonZero, Number(day))
-        }
-      })
-    })
-
-    setEffectiveMaxDayUsers(Math.min(Number(maxDay), lastNonZero))
-  }, [maxDay, userDisplayRows, userModifiedMaxDay])
-
-  useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDayVolume(Number(maxDay))
-      setEffectiveMaxDayUsers(Number(maxDay))
-    }
-  }, [maxDay, userModifiedMaxDay])
 
   const dayColumnsVolume = useMemo(
     () => Array.from({ length: Number(effectiveMaxDayVolume) + 1 }, (_, index) => index),
