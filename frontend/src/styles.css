@@ -158,6 +158,36 @@ button:disabled {
   align-items: center;
 }
 
+.revenue-config-panel {
+  margin-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+
+.revenue-config-add {
+  display: flex;
+  gap: var(--space-3);
+  align-items: flex-end;
+  margin-bottom: var(--space-3);
+}
+
+.revenue-config-table input[type='checkbox'] {
+  width: auto;
+}
+
+.invalid-number-input {
+  border-color: #dc2626;
+}
+
+.invalid-number-input:focus {
+  border-color: #dc2626;
+}
+
+.muted-text {
+  color: #6b7280;
+  font-size: 12px;
+}
+
 
 .view-toggle {
   display: flex;
