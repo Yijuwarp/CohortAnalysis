@@ -54,7 +54,8 @@ def test_valid_mapping_creates_normalized_table_with_timestamp_and_event_count(
         ).fetchall()
     }
     assert str(columns["event_time"]).startswith("TIMESTAMP")
-    assert columns["event_count"] in {"INTEGER", "BIGINT"}
+    assert columns["original_event_count"] in {"INTEGER", "BIGINT"}
+    assert columns["modified_event_count"] in {"INTEGER", "BIGINT"}
 
 
 def test_mapping_rejects_unknown_column_names(client: TestClient) -> None:
@@ -117,7 +118,7 @@ def test_mapping_deduplicates_and_aggregates_event_count(client: TestClient, db_
     assert response.status_code == 200, response.text
 
     rows = db_connection.execute(
-        "SELECT user_id, event_name, event_count FROM events_normalized"
+        "SELECT user_id, event_name, original_event_count FROM events_normalized"
     ).fetchall()
     assert rows == [("u1", "purchase", 8)]
 
@@ -183,8 +184,8 @@ def test_mapping_sets_revenue_default_to_zero_when_not_mapped(client: TestClient
     )
     assert response.status_code == 200, response.text
 
-    rows = db_connection.execute("SELECT revenue_amount FROM events_normalized").fetchall()
-    assert rows == [(0.0,)]
+    rows = db_connection.execute("SELECT original_revenue, modified_revenue FROM events_normalized").fetchall()
+    assert rows == [(0.0, 0.0)]
 
 
 def test_mapping_deduplicates_and_aggregates_revenue_amount(client: TestClient, db_connection) -> None:
@@ -209,9 +210,9 @@ def test_mapping_deduplicates_and_aggregates_revenue_amount(client: TestClient, 
     assert response.status_code == 200, response.text
 
     rows = db_connection.execute(
-        "SELECT user_id, event_name, event_count, revenue_amount FROM events_normalized"
+        "SELECT user_id, event_name, original_event_count, original_revenue, modified_event_count, modified_revenue FROM events_normalized"
     ).fetchall()
-    assert rows == [("u1", "purchase", 5, 8.25)]
+    assert rows == [("u1", "purchase", 5, 8.25, 5, 8.25)]
 
 
 def test_revenue_events_empty_when_revenue_not_mapped(client: TestClient) -> None:
@@ -253,16 +254,16 @@ def test_events_normalized_revenue_defaults_to_zero_on_manual_insert(client: Tes
 
     db_connection.execute(
         """
-        INSERT INTO events_normalized (user_id, event_name, event_time, event_count)
-        VALUES ('u2', 'session_start', TIMESTAMP '2024-01-02 00:00:00', 1)
+        INSERT INTO events_normalized (user_id, event_name, event_time, original_event_count, modified_event_count)
+        VALUES ('u2', 'session_start', TIMESTAMP '2024-01-02 00:00:00', 1, 1)
         """
     )
 
     inserted = db_connection.execute(
         """
-        SELECT revenue_amount
+        SELECT original_revenue, modified_revenue
         FROM events_normalized
         WHERE user_id = 'u2' AND event_name = 'session_start'
         """
     ).fetchone()
-    assert inserted == (0.0,)
+    assert inserted == (0.0, 0.0)

@@ -134,11 +134,15 @@ export async function getRevenueEvents() {
   return request('/revenue-events', { method: 'GET' })
 }
 
-export async function updateRevenueEvents(events) {
-  return request('/revenue-events', {
-    method: 'PUT',
+export async function getRevenueConfigEvents() {
+  return request('/revenue-config-events', { method: 'GET' })
+}
+
+export async function updateRevenueConfig(revenueConfig) {
+  return request('/update-revenue-config', {
+    method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ events }),
+    body: JSON.stringify({ revenue_config: revenueConfig }),
   })
 }
 

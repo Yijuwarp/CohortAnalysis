@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getMonetization, getRevenueEvents } from '../api'
+import { getMonetization } from '../api'
 import { buildMonetizationRows } from '../monetization'
 import { formatCurrency } from '../utils/formatters'
 import { fitSaturatingExponential, generateProjection } from '../utils/ltvPrediction'
@@ -13,7 +13,6 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-
 export default function MonetizationTable({ refreshToken }) {
   const [maxDay, setMaxDay] = useState(7)
   const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
@@ -25,87 +24,10 @@ export default function MonetizationTable({ refreshToken }) {
   const [retainedRows, setRetainedRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [hasRevenueMapping, setHasRevenueMapping] = useState(false)
-  const [hasNoSelectedRevenueEvents, setHasNoSelectedRevenueEvents] = useState(false)
   const [predictions, setPredictions] = useState(null)
   const [predictionHorizon, setPredictionHorizon] = useState(90)
-  const [availableRevenueEvents, setAvailableRevenueEvents] = useState([])
-  const [pendingRevenueConfig, setPendingRevenueConfig] = useState({})
-  const [pendingOverrideInputs, setPendingOverrideInputs] = useState({})
-  const [revenueConfig, setRevenueConfig] = useState({})
-  const [eventToAdd, setEventToAdd] = useState('')
 
   const predictionEnabled = metricType === 'cumulative_revenue' || metricType === 'cumulative_revenue_per_acquired_user'
-
-  const loadRevenueConfig = async () => {
-    try {
-      const payload = await getRevenueEvents()
-      const events = payload.events || []
-      const nextPendingConfig = events.reduce((acc, event) => {
-        acc[event.event_name] = {
-          included: Boolean(event.is_included),
-          override: null,
-        }
-        return acc
-      }, {})
-      setHasRevenueMapping(Boolean(payload.has_revenue_mapping))
-      setHasNoSelectedRevenueEvents(Boolean(payload.has_revenue_mapping) && events.length > 0 && events.every((event) => !event.is_included))
-      setAvailableRevenueEvents(events.map((event) => event.event_name))
-      setPendingRevenueConfig(nextPendingConfig)
-      setPendingOverrideInputs(events.reduce((acc, event) => ({ ...acc, [event.event_name]: '' }), {}))
-      setRevenueConfig({})
-      setEventToAdd('')
-    } catch {
-      setHasRevenueMapping(false)
-      setHasNoSelectedRevenueEvents(false)
-      setAvailableRevenueEvents([])
-      setPendingRevenueConfig({})
-      setPendingOverrideInputs({})
-      setRevenueConfig({})
-      setEventToAdd('')
-    }
-  }
-
-  const applyRevenueOverrides = (rawRevenueRows, config) => {
-    if (!Array.isArray(rawRevenueRows) || rawRevenueRows.length === 0) {
-      return []
-    }
-
-    if (!config || Object.keys(config).length === 0) {
-      return rawRevenueRows
-    }
-
-
-    const aggregatedRows = new Map()
-    rawRevenueRows.forEach((row) => {
-      const eventConfig = config[row.event_name]
-      if (!eventConfig || eventConfig.included === false) {
-        return
-      }
-
-      const eventCount = Number(row.event_count ?? 1)
-      const safeEventCount = Number.isFinite(eventCount) ? eventCount : 1
-      const rowRevenue = eventConfig.override !== null
-        ? safeEventCount * Number(eventConfig.override)
-        : Number(row.revenue ?? 0)
-
-      const key = `${row.cohort_id}:${row.day_number}`
-      const existing = aggregatedRows.get(key)
-      if (existing) {
-        existing.revenue += rowRevenue
-        return
-      }
-
-      aggregatedRows.set(key, {
-        cohort_id: row.cohort_id,
-        cohort_name: row.cohort_name,
-        day_number: row.day_number,
-        revenue: rowRevenue,
-      })
-    })
-
-    return Array.from(aggregatedRows.values())
-  }
 
   const loadData = async () => {
     setLoading(true)
@@ -127,82 +49,18 @@ export default function MonetizationTable({ refreshToken }) {
   }
 
   useEffect(() => {
-    const run = async () => {
-      await loadRevenueConfig()
-    }
-    run()
-  }, [refreshToken])
-
-  useEffect(() => {
-    if (hasRevenueMapping) {
-      loadData()
-    }
-  }, [hasRevenueMapping, maxDay, refreshToken])
+    loadData()
+  }, [maxDay, refreshToken])
 
   const dayColumns = useMemo(() => Array.from({ length: Number(maxDay) + 1 }, (_, idx) => idx), [maxDay])
-
-  const adjustedRevenueRows = useMemo(() => applyRevenueOverrides(revenueRows, revenueConfig), [revenueConfig, revenueRows])
 
   const displayRows = useMemo(() => buildMonetizationRows({
     cohortSizes,
     retainedRows,
-    revenueRows: adjustedRevenueRows,
+    revenueRows,
     dayColumns,
     metricType,
-  }), [adjustedRevenueRows, cohortSizes, dayColumns, metricType, retainedRows])
-
-  const invalidOverrideEvents = useMemo(
-    () => Object.entries(pendingOverrideInputs)
-      .filter(([, value]) => value !== '' && !Number.isFinite(Number(value)))
-      .map(([eventName]) => eventName),
-    [pendingOverrideInputs]
-  )
-
-  const canApplyRevenueChanges = invalidOverrideEvents.length === 0
-  const hasCustomOverrides = Object.values(revenueConfig).some(
-    (cfg) => cfg.override !== null || cfg.included === false
-  )
-  const addableRevenueEvents = useMemo(
-    () => availableRevenueEvents.filter((eventName) => !pendingRevenueConfig[eventName]),
-    [availableRevenueEvents, pendingRevenueConfig]
-  )
-
-  const handleOverrideChange = (eventName, value) => {
-    setPendingOverrideInputs((previous) => ({ ...previous, [eventName]: value }))
-
-    if (value === '') {
-      setPendingRevenueConfig((previous) => ({
-        ...previous,
-        [eventName]: {
-          ...previous[eventName],
-          override: null,
-        },
-      }))
-      return
-    }
-
-    const parsed = Number(value)
-    if (!Number.isFinite(parsed)) {
-      return
-    }
-
-    setPendingRevenueConfig((previous) => ({
-      ...previous,
-      [eventName]: {
-        ...previous[eventName],
-        override: parsed,
-      },
-    }))
-  }
-
-  const handleApplyRevenueChanges = () => {
-    if (!canApplyRevenueChanges) {
-      return
-    }
-
-    setRevenueConfig(pendingRevenueConfig)
-    setPredictions(null)
-  }
+  }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
 
   useEffect(() => {
     if (userModifiedMaxDay) {
@@ -213,7 +71,6 @@ export default function MonetizationTable({ refreshToken }) {
     if (!revenueRows.length) {
       return
     }
-
 
     let lastNonZero = 0
     displayRows.forEach((row) => {
@@ -239,7 +96,7 @@ export default function MonetizationTable({ refreshToken }) {
 
   const visibleDayColumns = useMemo(
     () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),
-    [effectiveMaxDay]
+    [effectiveMaxDay],
   )
 
   const handleProjectRevenue = () => {
@@ -284,10 +141,6 @@ export default function MonetizationTable({ refreshToken }) {
     })
 
     setPredictions(nextPredictions)
-  }
-
-  if (!hasRevenueMapping) {
-    return null
   }
 
   return (
@@ -359,100 +212,7 @@ export default function MonetizationTable({ refreshToken }) {
         </div>
       </div>
 
-      {hasNoSelectedRevenueEvents && <p className="error">No revenue events selected. Monetization will show 0.</p>}
       {error && <p className="error">{error}</p>}
-      {hasCustomOverrides && <p className="success">Revenue Modified (custom overrides active)</p>}
-
-      <div className="revenue-config-panel">
-        <h3>Revenue Configuration</h3>
-        <div className="revenue-config-add">
-          <label>
-            Add Revenue Event
-            <select value={eventToAdd} onChange={(e) => setEventToAdd(e.target.value)}>
-              <option value="">Select event</option>
-              {addableRevenueEvents.map((eventName) => (
-                <option key={eventName} value={eventName}>{eventName}</option>
-              ))}
-            </select>
-          </label>
-          <button
-            type="button"
-            className="button button-secondary"
-            onClick={() => {
-              if (!eventToAdd) {
-                return
-              }
-
-              setPendingRevenueConfig((previous) => ({
-                ...previous,
-                [eventToAdd]: {
-                  included: true,
-                  override: null,
-                },
-              }))
-              setPendingOverrideInputs((previous) => ({ ...previous, [eventToAdd]: '' }))
-              setEventToAdd('')
-            }}
-            disabled={!eventToAdd}
-          >
-            Add Revenue Event +
-          </button>
-        </div>
-
-        <table className="revenue-config-table">
-          <thead>
-            <tr>
-              <th>Event Name</th>
-              <th>Include</th>
-              <th>Override ($)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(pendingRevenueConfig).map(([eventName, config]) => {
-              const isInvalid = invalidOverrideEvents.includes(eventName)
-
-              return (
-                <tr key={eventName}>
-                  <td>{eventName}</td>
-                  <td>
-                    <input
-                      type="checkbox"
-                      checked={config.included}
-                      onChange={(e) => setPendingRevenueConfig((previous) => ({
-                        ...previous,
-                        [eventName]: {
-                          ...previous[eventName],
-                          included: e.target.checked,
-                        },
-                      }))}
-                    />
-                  </td>
-                  <td>
-                    <input
-                      type="text"
-                      value={pendingOverrideInputs[eventName] ?? ''}
-                      onChange={(e) => handleOverrideChange(eventName, e.target.value)}
-                      placeholder="Leave blank for actual"
-                      disabled={!config.included}
-                      className={isInvalid ? 'invalid-number-input' : ''}
-                    />
-                  </td>
-                </tr>
-              )
-            })}
-          </tbody>
-        </table>
-
-        <p className="muted-text">(Leave blank to use actual revenue)</p>
-        <button
-          type="button"
-          className="button button-primary"
-          onClick={handleApplyRevenueChanges}
-          disabled={!canApplyRevenueChanges}
-        >
-          Modify Revenue
-        </button>
-      </div>
 
       {displayRows.length > 0 && viewMode === 'table' && (
         <table>
