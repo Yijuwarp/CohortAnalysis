@@ -2137,20 +2137,26 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
             create_scoped_indexes(connection)
 
         rows = connection.execute(
-            """
-            SELECT
-                en.event_name,
-                COALESCE(rc.is_included, TRUE) AS included,
-                rc.override_value
-            FROM (
-                SELECT DISTINCT event_name
-                FROM events_normalized
-                WHERE event_name IS NOT NULL
-            ) en
-            LEFT JOIN revenue_event_selection rc
-              ON en.event_name = rc.event_name
-            ORDER BY en.event_name
-            """
+        """
+        SELECT
+            event_name,
+            is_included,
+            override_value
+        FROM revenue_event_selection
+        ORDER BY event_name
+        """
+        ).fetchall()
+        
+        addable_rows = connection.execute(
+        """
+        SELECT DISTINCT event_name
+        FROM events_normalized
+        WHERE event_name IS NOT NULL
+          AND event_name NOT IN (
+              SELECT event_name FROM revenue_event_selection
+          )
+        ORDER BY event_name
+        """
         ).fetchall()
         return {
             "has_revenue_mapping": has_revenue,
@@ -2158,6 +2164,7 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
                 {"event_name": str(event_name), "included": bool(included), "override": override}
                 for event_name, included, override in rows
             ],
+            "addable_events": [str(row[0]) for row in addable_rows],
         }
     finally:
         connection.close()
