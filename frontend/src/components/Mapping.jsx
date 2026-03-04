@@ -3,7 +3,7 @@ import { getRevenueEvents, mapColumns, updateRevenueEvents } from '../api'
 
 const TYPE_OPTIONS = ['TEXT', 'NUMERIC', 'TIMESTAMP', 'BOOLEAN']
 
-export default function Mapping({ columns, detectedTypes = {}, onMappingComplete }) {
+export default function Mapping({ columns, detectedTypes = {}, suggestedMappings = null, onMappingComplete }) {
   const [form, setForm] = useState({
     user_id_column: '',
     event_name_column: '',
@@ -16,6 +16,28 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [revenueEvents, setRevenueEvents] = useState([])
+
+
+  useEffect(() => {
+    if (suggestedMappings) {
+      setForm({
+        user_id_column: suggestedMappings.user_id || '',
+        event_name_column: suggestedMappings.event_name || '',
+        event_time_column: suggestedMappings.event_time || '',
+        event_count_column: suggestedMappings.event_count || '',
+        revenue_column: '',
+      })
+      return
+    }
+
+    setForm({
+      user_id_column: '',
+      event_name_column: '',
+      event_time_column: '',
+      event_count_column: '',
+      revenue_column: '',
+    })
+  }, [suggestedMappings, columns])
 
   useEffect(() => {
     const initial = {}
@@ -137,6 +159,9 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
       <div className="grid">
         <label>
           User ID
+          {suggestedMappings && form.user_id_column && form.user_id_column === suggestedMappings.user_id && (
+            <span className="auto-detected-badge">Auto-detected</span>
+          )}
           <select value={form.user_id_column} onChange={(e) => updateField('user_id_column', e.target.value)}>
             <option value="">Select column</option>
             {columns.map((column) => (
@@ -146,6 +171,9 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
         </label>
         <label>
           Event Name
+          {suggestedMappings && form.event_name_column && form.event_name_column === suggestedMappings.event_name && (
+            <span className="auto-detected-badge">Auto-detected</span>
+          )}
           <select value={form.event_name_column} onChange={(e) => updateField('event_name_column', e.target.value)}>
             <option value="">Select column</option>
             {columns.map((column) => (
@@ -155,6 +183,9 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
         </label>
         <label>
           Event Time
+          {suggestedMappings && form.event_time_column && form.event_time_column === suggestedMappings.event_time && (
+            <span className="auto-detected-badge">Auto-detected</span>
+          )}
           <select value={form.event_time_column} onChange={(e) => updateField('event_time_column', e.target.value)}>
             <option value="">Select column</option>
             {columns.map((column) => (
@@ -164,6 +195,9 @@ export default function Mapping({ columns, detectedTypes = {}, onMappingComplete
         </label>
         <label>
           Event Count (optional)
+          {suggestedMappings && form.event_count_column && form.event_count_column === suggestedMappings.event_count && (
+            <span className="auto-detected-badge">Auto-detected</span>
+          )}
           <select value={form.event_count_column} onChange={(e) => updateField('event_count_column', e.target.value)}>
             <option value="">None (default = 1)</option>
             {columns.map((column) => (

@@ -283,6 +283,92 @@ def detect_column_type(values: pd.Series) -> str:
         return "TEXT"
 
 
+def suggest_user_id(columns: list[str]) -> str | None:
+    for col in columns:
+        name = col.lower()
+
+        if name == "user_id":
+            return col
+        if name.endswith("_user_id"):
+            return col
+        if "user_id" in name:
+            return col
+        if "userid" in name:
+            return col
+        if name.endswith("_uid") or name == "uid":
+            return col
+        if "customer_id" in name:
+            return col
+
+    for col in columns:
+        if "user" in col.lower() and "type" not in col.lower() and "segment" not in col.lower():
+            return col
+
+    return None
+
+
+def suggest_event_name(columns: list[str]) -> str | None:
+    strong_keywords = ["event_name", "event", "action", "activity"]
+
+    for keyword in strong_keywords:
+        for col in columns:
+            if keyword in col.lower():
+                return col
+
+    return None
+
+
+def suggest_event_time(columns: list[str]) -> str | None:
+    strong_keywords = ["event_time", "timestamp", "created_at", "time", "date"]
+
+    for keyword in strong_keywords:
+        for col in columns:
+            if keyword in col.lower():
+                return col
+
+    return None
+
+
+def suggest_event_count(columns: list[str]) -> str | None:
+    strong_keywords = ["event_count", "count", "frequency", "occurrence"]
+
+    for keyword in strong_keywords:
+        for col in columns:
+            if keyword in col.lower():
+                return col
+
+    return None
+
+
+def suggest_column_mapping(columns: list[str]) -> dict[str, str | None]:
+    return {
+        "user_id": suggest_user_id(columns),
+        "event_name": suggest_event_name(columns),
+        "event_time": suggest_event_time(columns),
+        "event_count": suggest_event_count(columns),
+    }
+
+
+def reset_application_state(connection: duckdb.DuckDBPyConnection) -> None:
+    tables_to_drop = [
+        "events_normalized",
+        "events_scoped",
+        "cohort_membership",
+        "cohort_activity_snapshot",
+        "cohort_conditions",
+        "cohorts",
+        "dataset_scope",
+    ]
+
+    for table in tables_to_drop:
+        connection.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+    connection.execute("DROP SEQUENCE IF EXISTS cohort_id_seq")
+    connection.execute("DROP SEQUENCE IF EXISTS condition_id_seq")
+    connection.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
+    connection.execute("DROP SEQUENCE IF EXISTS cohort_condition_id_sequence")
+
+
 def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter, column_kind: str) -> None:
     operator = property_filter.operator.upper()
     values = property_filter.values
@@ -885,19 +971,24 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
     connection = get_connection()
     try:
         connection.register("uploaded_events", dataframe)
-        connection.execute("CREATE OR REPLACE TABLE events AS SELECT * FROM uploaded_events")
+        connection.execute("DROP TABLE IF EXISTS events")
+        connection.execute("CREATE TABLE events AS SELECT * FROM uploaded_events")
+        reset_application_state(connection)
     finally:
         connection.close()
 
+    column_names = [str(column) for column in dataframe.columns.tolist()]
     detected_types = {
         str(column): detect_column_type(dataframe[column])
         for column in dataframe.columns
     }
+    mapping_suggestions = suggest_column_mapping(column_names)
 
     return {
         "rows_imported": int(len(dataframe)),
-        "columns": [str(column) for column in dataframe.columns.tolist()],
+        "columns": column_names,
         "detected_types": detected_types,
+        "mapping_suggestions": mapping_suggestions,
     }
 
 

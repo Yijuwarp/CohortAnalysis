@@ -671,3 +671,9 @@ li .button {
 .revenue-event-row input {
   width: auto;
 }
+
+.auto-detected-badge {
+  font-size: 11px;
+  color: #16a34a;
+  margin-left: 6px;
+}

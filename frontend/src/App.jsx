@@ -10,6 +10,7 @@ import MonetizationTable from './components/MonetizationTable'
 export default function App() {
   const [columns, setColumns] = useState([])
   const [detectedTypes, setDetectedTypes] = useState({})
+  const [suggestedMappings, setSuggestedMappings] = useState(null)
   const [retentionRefreshToken, setRetentionRefreshToken] = useState(0)
   const [selectedRetentionEvent, setSelectedRetentionEvent] = useState('any')
 
@@ -20,8 +21,13 @@ export default function App() {
   return (
     <main className="app-container">
       <h1>Cohort Explorer</h1>
-      <Upload onUploaded={(newColumns, types) => { setColumns(newColumns); setDetectedTypes(types) }} />
-      <Mapping columns={columns} detectedTypes={detectedTypes} onMappingComplete={refreshRetention} />
+      <Upload onUploaded={(newColumns, types, suggestions) => { setColumns(newColumns); setDetectedTypes(types); setSuggestedMappings(suggestions) }} />
+      <Mapping
+        columns={columns}
+        detectedTypes={detectedTypes}
+        suggestedMappings={suggestedMappings}
+        onMappingComplete={refreshRetention}
+      />
       <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
       <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
       <RetentionTable
