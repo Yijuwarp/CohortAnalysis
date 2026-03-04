@@ -555,28 +555,27 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       </button>
 
       <h4>Cohort Join Time</h4>
-      <div>
-        <label>
+      <div className="cohort-join-time">
+        <label className="radio-option">
           <input
             type="radio"
-            name="join-type"
+            name="joinType"
             value="condition_met"
             checked={joinType === 'condition_met'}
             onChange={(e) => setJoinType(e.target.value)}
-          />{' '}
-          When condition is met
+          />
+          <span>When condition is met</span>
         </label>
-      </div>
-      <div>
-        <label>
+
+        <label className="radio-option">
           <input
             type="radio"
-            name="join-type"
+            name="joinType"
             value="first_event"
             checked={joinType === 'first_event'}
             onChange={(e) => setJoinType(e.target.value)}
-          />{' '}
-          On first event
+          />
+          <span>On first event</span>
         </label>
       </div>
 
