@@ -35,6 +35,43 @@ def _prepare_monetization_fixture(client: TestClient) -> None:
     assert mapped.status_code == 200, mapped.text
 
 
+def test_revenue_events_only_include_non_zero_revenue(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time,revenue\n"
+        "u1,signup,2026-01-01 09:00:00,0\n"
+        "u1,purchase,2026-01-01 10:00:00,10.50\n"
+        "u1,refund,2026-01-02 10:00:00,-2.25\n"
+        "u2,session_start,2026-01-01 09:45:00,0\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    mapped = client.post(
+        '/map-columns',
+        json={
+            'user_id_column': 'user_id',
+            'event_name_column': 'event_name',
+            'event_time_column': 'event_time',
+            'revenue_column': 'revenue',
+            'column_types': {
+                'user_id': 'TEXT',
+                'event_name': 'TEXT',
+                'event_time': 'TIMESTAMP',
+                'revenue': 'NUMERIC',
+            },
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    response = client.get('/revenue-events')
+    assert response.status_code == 200, response.text
+    events = {row['event_name'] for row in response.json()['events']}
+
+    assert 'purchase' in events
+    assert 'refund' in events
+    assert 'signup' not in events
+    assert 'session_start' not in events
+
+
 def test_revenue_events_default_to_included_and_can_be_toggled(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
 
@@ -78,7 +115,6 @@ def test_monetization_respects_event_selection_and_scope(client: TestClient) -> 
 
     all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
     assert all_users == [
-        {'cohort_id': 1, 'cohort_name': 'All Users', 'day_number': 0, 'revenue': 0.0},
         {'cohort_id': 1, 'cohort_name': 'All Users', 'day_number': 1, 'revenue': 5.0},
     ]
 

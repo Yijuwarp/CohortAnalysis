@@ -234,3 +234,35 @@ def test_revenue_events_empty_when_revenue_not_mapped(client: TestClient) -> Non
     payload = events_response.json()
     assert payload['has_revenue_mapping'] is False
     assert payload['events'] == []
+
+
+def test_events_normalized_revenue_defaults_to_zero_on_manual_insert(client: TestClient, db_connection) -> None:
+    csv_text = "uid,event,timestamp\nu1,signup,2024-01-01\n"
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    db_connection.execute(
+        """
+        INSERT INTO events_normalized (user_id, event_name, event_time, event_count)
+        VALUES ('u2', 'session_start', TIMESTAMP '2024-01-02 00:00:00', 1)
+        """
+    )
+
+    inserted = db_connection.execute(
+        """
+        SELECT revenue_amount
+        FROM events_normalized
+        WHERE user_id = 'u2' AND event_name = 'session_start'
+        """
+    ).fetchone()
+    assert inserted == (0.0,)
