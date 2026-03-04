@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getMonetization, getRevenueEvents } from '../api'
 import { buildMonetizationRows } from '../monetization'
+import MonetizationGraph from './MonetizationGraph'
 
 const METRIC_OPTIONS = [
   { value: 'total_revenue', label: 'Total Revenue' },
@@ -10,20 +11,13 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-const usd = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
-
-function formatCurrency(value) {
-  if (value === null || value === undefined || Number.isNaN(value)) {
-    return '-'
-  }
-  return usd.format(Number(value))
-}
 
 export default function MonetizationTable({ refreshToken }) {
   const [maxDay, setMaxDay] = useState(7)
   const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
   const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
+  const [viewMode, setViewMode] = useState('table')
   const [revenueRows, setRevenueRows] = useState([])
   const [cohortSizes, setCohortSizes] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
@@ -83,7 +77,6 @@ export default function MonetizationTable({ refreshToken }) {
     revenueRows,
     dayColumns,
     metricType,
-    formatCurrency,
   }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
 
   useEffect(() => {
@@ -93,7 +86,7 @@ export default function MonetizationTable({ refreshToken }) {
 
     let lastNonZero = 0
     displayRows.forEach((row) => {
-      Object.entries(row.values || {}).forEach(([day, value]) => {
+      Object.entries(row.numericValues || {}).forEach(([day, value]) => {
         const numeric = Number(value)
         if (!Number.isNaN(numeric) && numeric !== 0) {
           lastNonZero = Math.max(lastNonZero, Number(day))
@@ -122,34 +115,55 @@ export default function MonetizationTable({ refreshToken }) {
   return (
     <section className="card">
       <h2>7. Monetization</h2>
-      <div className="inline-controls">
-        <label>
-          Max Day
-          <input
-            type="number"
-            min="0"
-            value={maxDay}
-            onChange={(e) => {
-              setUserModifiedMaxDay(true)
-              setMaxDay(e.target.value)
-            }}
-          />
-        </label>
-        <label>
-          Metric
-          <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
-            {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-          </select>
-        </label>
-        <button className="button button-primary" onClick={loadData} disabled={loading}>
-          {loading ? 'Loading...' : 'Load Monetization'}
-        </button>
+      <div className="retention-header">
+        <div className="retention-controls-left">
+          <label>
+            Max Day
+            <input
+              type="number"
+              min="0"
+              value={maxDay}
+              onChange={(e) => {
+                setUserModifiedMaxDay(true)
+                setMaxDay(e.target.value)
+              }}
+            />
+          </label>
+          <label>
+            Metric
+            <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
+              {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <button className="button button-primary" onClick={loadData} disabled={loading}>
+            {loading ? 'Loading...' : 'Load Monetization'}
+          </button>
+        </div>
+
+        <div className="retention-controls-right">
+          <div className="view-toggle">
+            <button
+              type="button"
+              className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
+              onClick={() => setViewMode('table')}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
+              onClick={() => setViewMode('graph')}
+            >
+              Graph
+            </button>
+          </div>
+        </div>
       </div>
 
       {hasNoSelectedRevenueEvents && <p className="error">No revenue events selected. Monetization will show 0.</p>}
       {error && <p className="error">{error}</p>}
 
-      {displayRows.length > 0 && (
+      {displayRows.length > 0 && viewMode === 'table' && (
         <table>
           <thead>
             <tr>
@@ -163,11 +177,19 @@ export default function MonetizationTable({ refreshToken }) {
               <tr key={row.cohort_id}>
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
-                {visibleDayColumns.map((day) => <td key={day}>{row.values[String(day)]}</td>)}
+                {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)]}</td>)}
               </tr>
             ))}
           </tbody>
         </table>
+      )}
+
+      {viewMode === 'graph' && (
+        <MonetizationGraph
+          rows={displayRows}
+          maxDay={effectiveMaxDay}
+          metricType={metricType}
+        />
       )}
     </section>
   )

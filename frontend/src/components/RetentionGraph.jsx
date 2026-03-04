@@ -9,6 +9,7 @@ import {
   Legend,
   CartesianGrid,
 } from 'recharts'
+import { getCohortColor } from '../utils/cohortColors'
 
 export default function RetentionGraph({ data, maxDay, includeCI }) {
   if (!data || data.length === 0) return null
@@ -31,8 +32,6 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
     return row
   })
 
-  const colors = ['#2563eb', '#dc2626', '#16a34a', '#7c3aed', '#f59e0b']
-
   return (
     <div className="retention-graph-container">
       <ResponsiveContainer width="100%" height="100%">
@@ -49,7 +48,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
               type="monotone"
               dataKey={`cohort_${cohort.cohort_id}`}
               name={cohort.cohort_name}
-              stroke={colors[index % colors.length]}
+              stroke={getCohortColor(cohort.cohort_id, index)}
               strokeWidth={2}
               dot={{ r: 3 }}
               isAnimationActive
@@ -63,7 +62,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
                   type="monotone"
                   dataKey={`cohort_${cohort.cohort_id}_upper`}
                   name={`${cohort.cohort_name} UB`}
-                  stroke={colors[index % colors.length]}
+                  stroke={getCohortColor(cohort.cohort_id, index)}
                   strokeDasharray="5 5"
                   strokeWidth={1}
                   legendType="none"
@@ -73,7 +72,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
                   type="monotone"
                   dataKey={`cohort_${cohort.cohort_id}_lower`}
                   name={`${cohort.cohort_name} LB`}
-                  stroke={colors[index % colors.length]}
+                  stroke={getCohortColor(cohort.cohort_id, index)}
                   strokeDasharray="5 5"
                   strokeWidth={1}
                   legendType="none"
