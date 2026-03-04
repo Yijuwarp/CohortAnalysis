@@ -254,6 +254,35 @@ select:focus {
   opacity: 0.6;
 }
 
+.cohort-join-time {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  align-items: flex-start;
+  text-align: left;
+}
+
+.radio-option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
+.radio-option input[type='radio'] {
+  margin: 0;
+}
+
+.radio-option:hover {
+  background: #f9fafb;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+
 .inline-checkbox {
   display: inline-flex;
   flex-direction: row;
