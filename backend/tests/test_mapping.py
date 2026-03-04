@@ -290,6 +290,5 @@ def test_revenue_config_events_available_when_revenue_not_mapped(client: TestCli
     assert payload['has_revenue_mapping'] is True
 
     config_by_event = {event['event_name']: event for event in payload['events']}
-    assert set(config_by_event) == {'session_start', 'signup'}
-    assert config_by_event['signup']['included'] is False
-    assert config_by_event['session_start']['included'] is False
+    assert config_by_event == {}
+    assert payload['addable_events'] == ['session_start', 'signup']

@@ -771,20 +771,6 @@ def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) ->
         """
     )
 
-def ensure_revenue_event_selection_coverage(connection: duckdb.DuckDBPyConnection) -> None:
-    ensure_revenue_event_selection_table(connection)
-    connection.execute(
-        """
-        INSERT INTO revenue_event_selection (event_name, is_included, override_value)
-        SELECT DISTINCT en.event_name, FALSE, NULL
-        FROM events_normalized en
-        LEFT JOIN revenue_event_selection rc ON en.event_name = rc.event_name
-        WHERE en.event_name IS NOT NULL
-          AND rc.event_name IS NULL
-        """
-    )
-
-
 def create_scoped_indexes(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_events_scoped_user_id ON events_scoped(user_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_events_scoped_event_name ON events_scoped(event_name)")
@@ -2054,23 +2040,27 @@ def get_revenue_config_events() -> dict[str, object]:
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
         ).fetchone()[0]
         if not normalized_exists:
-            return {"has_revenue_mapping": False, "events": []}
+            return {"has_revenue_mapping": False, "events": [], "addable_events": []}
 
-        ensure_revenue_event_selection_coverage(connection)
         rows = connection.execute(
             """
             SELECT
-                en.event_name,
-                COALESCE(rc.is_included, FALSE) AS included,
+                event_name,
+                is_included,
                 rc.override_value
-            FROM (
-                SELECT DISTINCT event_name
-                FROM events_normalized
-                WHERE event_name IS NOT NULL
-            ) en
-            LEFT JOIN revenue_event_selection rc
-              ON en.event_name = rc.event_name
-            ORDER BY en.event_name
+            FROM revenue_event_selection rc
+            ORDER BY event_name
+            """
+        ).fetchall()
+        addable_rows = connection.execute(
+            """
+            SELECT DISTINCT event_name
+            FROM events_normalized
+            WHERE event_name IS NOT NULL
+              AND event_name NOT IN (
+                SELECT event_name FROM revenue_event_selection
+              )
+            ORDER BY event_name
             """
         ).fetchall()
         return {
@@ -2079,6 +2069,7 @@ def get_revenue_config_events() -> dict[str, object]:
                 {"event_name": str(event_name), "included": bool(included), "override": override}
                 for event_name, included, override in rows
             ],
+            "addable_events": [str(row[0]) for row in addable_rows],
         }
     finally:
         connection.close()
@@ -2131,8 +2122,6 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
                 [event_name, bool(config.included), config.override],
             )
 
-        ensure_revenue_event_selection_coverage(connection)
-
         has_revenue = connection.execute(
             "SELECT COUNT(*) FROM events_normalized WHERE original_revenue != 0"
         ).fetchone()[0] > 0
@@ -2148,20 +2137,26 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
             create_scoped_indexes(connection)
 
         rows = connection.execute(
-            """
-            SELECT
-                en.event_name,
-                COALESCE(rc.is_included, TRUE) AS included,
-                rc.override_value
-            FROM (
-                SELECT DISTINCT event_name
-                FROM events_normalized
-                WHERE event_name IS NOT NULL
-            ) en
-            LEFT JOIN revenue_event_selection rc
-              ON en.event_name = rc.event_name
-            ORDER BY en.event_name
-            """
+        """
+        SELECT
+            event_name,
+            is_included,
+            override_value
+        FROM revenue_event_selection
+        ORDER BY event_name
+        """
+        ).fetchall()
+        
+        addable_rows = connection.execute(
+        """
+        SELECT DISTINCT event_name
+        FROM events_normalized
+        WHERE event_name IS NOT NULL
+          AND event_name NOT IN (
+              SELECT event_name FROM revenue_event_selection
+          )
+        ORDER BY event_name
+        """
         ).fetchall()
         return {
             "has_revenue_mapping": has_revenue,
@@ -2169,6 +2164,7 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
                 {"event_name": str(event_name), "included": bool(included), "override": override}
                 for event_name, included, override in rows
             ],
+            "addable_events": [str(row[0]) for row in addable_rows],
         }
     finally:
         connection.close()
