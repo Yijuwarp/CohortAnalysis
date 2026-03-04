@@ -40,15 +40,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis dataKey="day" />
           <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
-          <Tooltip
-            formatter={(value, name) => {
-              if (name.includes('_upper') || name.includes('_lower')) {
-                return null
-              }
-
-              return value !== null ? `${Number(value).toFixed(2)}%` : '—'
-            }}
-          />
+          <Tooltip formatter={(value) => (value !== null ? `${Number(value).toFixed(2)}%` : '—')} />
           <Legend />
 
           {data.map((cohort, index) => (
@@ -70,6 +62,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
                 <Line
                   type="monotone"
                   dataKey={`cohort_${cohort.cohort_id}_upper`}
+                  name={`${cohort.cohort_name} UB`}
                   stroke={colors[index % colors.length]}
                   strokeDasharray="5 5"
                   strokeWidth={1}
@@ -79,6 +72,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
                 <Line
                   type="monotone"
                   dataKey={`cohort_${cohort.cohort_id}_lower`}
+                  name={`${cohort.cohort_name} LB`}
                   stroke={colors[index % colors.length]}
                   strokeDasharray="5 5"
                   strokeWidth={1}
