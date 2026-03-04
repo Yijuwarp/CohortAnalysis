@@ -50,27 +50,38 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   useEffect(() => {
     if (userModifiedMaxDay) {
+      setEffectiveMaxDay(Number(maxDay))
+      return
+    }
+
+    if (!data.length) {
+      return
+    }
+
+    const allUsersRow = data.find((row) => row.cohort_name === 'All Users')
+    if (!allUsersRow || !allUsersRow.retention) {
       return
     }
 
     let lastNonZero = 0
-    data.forEach((row) => {
-      Object.entries(row.retention || {}).forEach(([day, value]) => {
-        const numeric = Number(value)
-        if (!Number.isNaN(numeric) && numeric !== 0) {
-          lastNonZero = Math.max(lastNonZero, Number(day))
-        }
-      })
+    Object.entries(allUsersRow.retention).forEach(([day, value]) => {
+      const numeric = Number(value)
+      if (!Number.isNaN(numeric) && numeric > 0) {
+        lastNonZero = Math.max(lastNonZero, Number(day))
+      }
     })
 
-    setEffectiveMaxDay(Math.min(Number(maxDay), lastNonZero))
-  }, [data, maxDay, userModifiedMaxDay])
-
-  useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDay(Number(maxDay))
+    if (lastNonZero === 0) {
+      return
     }
-  }, [maxDay, userModifiedMaxDay])
+
+    const adjusted = Math.min(Number(maxDay), lastNonZero)
+    setEffectiveMaxDay(adjusted)
+
+    if (Number(maxDay) !== adjusted) {
+      setMaxDay(adjusted)
+    }
+  }, [data, maxDay, userModifiedMaxDay])
 
   const dayColumns = Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, index) => index)
 

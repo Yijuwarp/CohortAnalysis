@@ -88,6 +88,16 @@ export default function MonetizationTable({ refreshToken }) {
 
   useEffect(() => {
     if (userModifiedMaxDay) {
+      setEffectiveMaxDay(Number(maxDay))
+      return
+    }
+
+    if (!revenueRows.length) {
+      return
+    }
+
+    const allUsersRow = revenueRows.find((row) => row.cohort_name === 'All Users')
+    if (!allUsersRow || !allUsersRow.values) {
       return
     }
 
@@ -101,14 +111,17 @@ export default function MonetizationTable({ refreshToken }) {
       })
     })
 
-    setEffectiveMaxDay(Math.min(Number(maxDay), lastNonZero))
-  }, [displayRows, maxDay, userModifiedMaxDay])
-
-  useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDay(Number(maxDay))
+    if (lastNonZero === 0) {
+      return
     }
-  }, [maxDay, userModifiedMaxDay])
+
+    const adjusted = Math.min(Number(maxDay), lastNonZero)
+    setEffectiveMaxDay(adjusted)
+
+    if (Number(maxDay) !== adjusted) {
+      setMaxDay(adjusted)
+    }
+  }, [maxDay, revenueRows, userModifiedMaxDay])
 
   const visibleDayColumns = useMemo(
     () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),
