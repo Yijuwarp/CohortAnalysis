@@ -5,6 +5,7 @@ import FilterData from './components/FilterData'
 import CohortForm from './components/CohortForm'
 import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
+import MonetizationTable from './components/MonetizationTable'
 
 export default function App() {
   const [columns, setColumns] = useState([])
@@ -29,6 +30,7 @@ export default function App() {
         onRetentionEventChange={setSelectedRetentionEvent}
       />
       <UsageTable refreshToken={retentionRefreshToken} retentionEvent={selectedRetentionEvent} />
+      <MonetizationTable refreshToken={retentionRefreshToken} />
     </main>
   )
 }

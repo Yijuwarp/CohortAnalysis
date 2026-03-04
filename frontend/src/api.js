@@ -116,3 +116,20 @@ export async function getUsage(event, maxDay, retentionEvent) {
 
   return request(path, { method: 'GET' })
 }
+
+
+export async function getRevenueEvents() {
+  return request('/revenue-events', { method: 'GET' })
+}
+
+export async function updateRevenueEvents(events) {
+  return request('/revenue-events', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ events }),
+  })
+}
+
+export async function getMonetization(maxDay) {
+  return request(`/monetization?max_day=${maxDay}`, { method: 'GET' })
+}

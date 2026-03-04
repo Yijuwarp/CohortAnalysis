@@ -166,3 +166,71 @@ def test_mapping_normalizes_coarse_timestamps(client: TestClient, db_connection)
         ("u1", "2024-01-01 00:00:00"),
         ("u2", "2024-01-01 09:00:00"),
     ]
+
+
+def test_mapping_sets_revenue_default_to_zero_when_not_mapped(client: TestClient, db_connection) -> None:
+    csv_text = "uid,event,timestamp\nu1,signup,2024-01-01\n"
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    rows = db_connection.execute("SELECT revenue_amount FROM events_normalized").fetchall()
+    assert rows == [(0.0,)]
+
+
+def test_mapping_deduplicates_and_aggregates_revenue_amount(client: TestClient, db_connection) -> None:
+    csv_text = (
+        "uid,event,timestamp,count,revenue\n"
+        "u1,purchase,2024-01-01,2,10.5\n"
+        "u1,purchase,2024-01-01,3,-2.25\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "event_count_column": "count",
+            "revenue_column": "revenue",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP", "count": "NUMERIC", "revenue": "NUMERIC"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    rows = db_connection.execute(
+        "SELECT user_id, event_name, event_count, revenue_amount FROM events_normalized"
+    ).fetchall()
+    assert rows == [("u1", "purchase", 5, 8.25)]
+
+
+def test_revenue_events_empty_when_revenue_not_mapped(client: TestClient) -> None:
+    csv_text = "uid,event,timestamp\nu1,signup,2024-01-01\n"
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+    assert response.status_code == 200, response.text
+
+    events_response = client.get('/revenue-events')
+    assert events_response.status_code == 200, events_response.text
+    payload = events_response.json()
+    assert payload['has_revenue_mapping'] is False
+    assert payload['events'] == []
