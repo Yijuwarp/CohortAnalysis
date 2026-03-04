@@ -754,9 +754,19 @@ def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) ->
     connection.execute(
         """
         INSERT INTO revenue_event_selection (event_name, is_included, override_value)
-        SELECT DISTINCT event_name, TRUE, NULL
-        FROM events_normalized
-        WHERE event_name IS NOT NULL
+        SELECT
+            event_name,
+            TRUE,
+            NULL
+        FROM (
+            SELECT
+                event_name,
+                SUM(original_revenue) AS total_revenue
+            FROM events_normalized
+            WHERE event_name IS NOT NULL
+            GROUP BY event_name
+        ) revenue_by_event
+        WHERE total_revenue != 0
         ORDER BY event_name
         """
     )
@@ -766,7 +776,7 @@ def ensure_revenue_event_selection_coverage(connection: duckdb.DuckDBPyConnectio
     connection.execute(
         """
         INSERT INTO revenue_event_selection (event_name, is_included, override_value)
-        SELECT DISTINCT en.event_name, TRUE, NULL
+        SELECT DISTINCT en.event_name, FALSE, NULL
         FROM events_normalized en
         LEFT JOIN revenue_event_selection rc ON en.event_name = rc.event_name
         WHERE en.event_name IS NOT NULL
@@ -1301,7 +1311,6 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             set_has_revenue_mapping(connection, has_revenue)
         else:
             connection.execute("DELETE FROM revenue_event_selection")
-            set_has_revenue_mapping(connection, False)
         create_all_users_cohort(connection)
         refresh_cohort_activity(connection)
 
@@ -2041,19 +2050,18 @@ def get_revenue_config_events() -> dict[str, object]:
     connection = get_connection()
     try:
         ensure_revenue_event_selection_table(connection)
-        has_revenue_mapping = get_has_revenue_mapping(connection)
         normalized_exists = connection.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
         ).fetchone()[0]
         if not normalized_exists:
-            return {"has_revenue_mapping": has_revenue_mapping, "events": []}
+            return {"has_revenue_mapping": False, "events": []}
 
         ensure_revenue_event_selection_coverage(connection)
         rows = connection.execute(
             """
             SELECT
                 en.event_name,
-                COALESCE(rc.is_included, TRUE) AS included,
+                COALESCE(rc.is_included, FALSE) AS included,
                 rc.override_value
             FROM (
                 SELECT DISTINCT event_name
@@ -2066,7 +2074,7 @@ def get_revenue_config_events() -> dict[str, object]:
             """
         ).fetchall()
         return {
-            "has_revenue_mapping": has_revenue_mapping,
+            "has_revenue_mapping": True,
             "events": [
                 {"event_name": str(event_name), "included": bool(included), "override": override}
                 for event_name, included, override in rows

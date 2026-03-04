@@ -35,7 +35,7 @@ def _prepare_monetization_fixture(client: TestClient) -> None:
     assert mapped.status_code == 200, mapped.text
 
 
-def test_revenue_events_include_all_mapped_event_names(client: TestClient) -> None:
+def test_revenue_events_include_only_non_zero_revenue_events_by_default(client: TestClient) -> None:
     csv_text = (
         "user_id,event_name,event_time,revenue\n"
         "u1,signup,2026-01-01 09:00:00,0\n"
@@ -68,9 +68,24 @@ def test_revenue_events_include_all_mapped_event_names(client: TestClient) -> No
 
     assert 'purchase' in events
     assert 'refund' in events
-    assert 'signup' in events
-    assert 'session_start' in events
+    assert 'signup' not in events
+    assert 'session_start' not in events
 
+
+
+
+def test_revenue_config_events_show_all_events_and_default_zero_revenue_to_excluded(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    response = client.get('/revenue-config-events')
+    assert response.status_code == 200, response.text
+    payload = response.json()
+
+    assert payload['has_revenue_mapping'] is True
+    config_by_event = {event['event_name']: event for event in payload['events']}
+    assert config_by_event['purchase']['included'] is True
+    assert config_by_event['refund']['included'] is True
+    assert config_by_event['signup']['included'] is False
 
 def test_revenue_events_default_to_included_and_can_be_toggled(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
@@ -115,7 +130,7 @@ def test_monetization_respects_event_selection_and_scope(client: TestClient) -> 
 
     all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
     by_day = {row['day_number']: row['revenue'] for row in all_users}
-    assert by_day == {0: 0.0, 1: 5.0}
+    assert by_day == {1: 5.0}
 
 
 def test_monetization_negative_revenue_included(client: TestClient) -> None:
