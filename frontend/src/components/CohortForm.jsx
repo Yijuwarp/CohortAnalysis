@@ -621,7 +621,13 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     i
                   </button>
 
-                  <button className="button button-secondary" type="button" onClick={() => handleEdit(cohort)}>
+                  <button
+                    className="button button-secondary"
+                    type="button"
+                    onClick={() => handleEdit(cohort)}
+                    disabled={cohort.cohort_name === 'All Users'}
+                    title={cohort.cohort_name === 'All Users' ? 'System cohort cannot be modified' : ''}
+                  >
                     Edit
                   </button>
 
@@ -629,7 +635,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                     className="button button-danger"
                     type="button"
                     onClick={() => handleDelete(cohort.cohort_id)}
-                    disabled={deletingId === cohort.cohort_id}
+                    disabled={deletingId === cohort.cohort_id || cohort.cohort_name === 'All Users'}
+                    title={cohort.cohort_name === 'All Users' ? 'System cohort cannot be deleted' : ''}
                   >
                     {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
                   </button>

@@ -19,7 +19,7 @@ export default function App() {
 
   return (
     <main className="app-container">
-      <h1>Cohort Analysis Dashboard</h1>
+      <h1>Cohort Explorer</h1>
       <Upload onUploaded={(newColumns, types) => { setColumns(newColumns); setDetectedTypes(types) }} />
       <Mapping columns={columns} detectedTypes={detectedTypes} onMappingComplete={refreshRetention} />
       <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />

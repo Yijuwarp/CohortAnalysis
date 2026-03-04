@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { applyFilters, getColumns, getColumnValues, getDateRange, getScope } from '../api'
 import SearchableSelect from './SearchableSelect'
+import { formatPrettyDate } from '../utils/date'
 
 const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
 
@@ -329,10 +330,12 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
         <label>
           Start Date
           <input type="date" value={dateRange.start} onChange={(e) => setDateRange((prev) => ({ ...prev, start: e.target.value }))} />
+          {dateRange.start && <div className="secondary-text">{formatPrettyDate(dateRange.start)}</div>}
         </label>
         <label>
           End Date
           <input type="date" value={dateRange.end} onChange={(e) => setDateRange((prev) => ({ ...prev, end: e.target.value }))} />
+          {dateRange.end && <div className="secondary-text">{formatPrettyDate(dateRange.end)}</div>}
         </label>
       </div>
 
