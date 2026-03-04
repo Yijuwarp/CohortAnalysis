@@ -10,13 +10,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [includeCI, setIncludeCI] = useState(false)
+  const [confidence, setConfidence] = useState(0.95)
 
   const loadRetention = async () => {
     setLoading(true)
     setError('')
 
     try {
-      const response = await getRetention(Number(maxDay), retentionEvent)
+      const response = await getRetention(Number(maxDay), retentionEvent, includeCI, confidence)
       setData(response.retention_table)
     } catch (err) {
       setError(err.message)
@@ -42,7 +44,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   useEffect(() => {
     loadRetention()
-  }, [retentionEvent, maxDay])
+  }, [retentionEvent, maxDay, includeCI, confidence])
 
   useEffect(() => {
     if (userModifiedMaxDay) {
@@ -95,7 +97,28 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
             placeholder="Select retention event"
           />
         </label>
-        <button className="button button-primary" onClick={loadRetention} disabled={loading}>{loading ? 'Loading...' : 'Load Retention'}</button>
+        <div className="retention-controls-right">
+          <label>
+            Significance
+            <input
+              type="checkbox"
+              checked={includeCI}
+              onChange={(e) => setIncludeCI(e.target.checked)}
+            />
+          </label>
+          <label>
+            CI Level
+            <select
+              value={confidence}
+              onChange={(e) => setConfidence(Number(e.target.value))}
+              disabled={!includeCI}
+            >
+              <option value={0.9}>90%</option>
+              <option value={0.95}>95%</option>
+              <option value={0.99}>99%</option>
+            </select>
+          </label>
+        </div>
       </div>
 
       {error && <p className="error">{error}</p>}
@@ -116,9 +139,21 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               <tr key={row.cohort_id}>
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
-                {dayColumns.map((day) => (
-                  <td key={day}>{Number(row.retention[String(day)] ?? 0).toFixed(2)}%</td>
-                ))}
+                {dayColumns.map((day) => {
+                  const rawValue = row.retention[String(day)]
+                  const hasValue = rawValue !== null && rawValue !== undefined
+                  const value = hasValue ? Number(rawValue) : null
+                  const ci = row.retention_ci?.[String(day)]
+
+                  return (
+                    <td key={day}>
+                      <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
+                      {includeCI && ci && ci.lower !== null && ci.upper !== null && (
+                        <div className="retention-ci">({Number(ci.lower).toFixed(1)}–{Number(ci.upper).toFixed(1)})</div>
+                      )}
+                    </td>
+                  )
+                })}
               </tr>
             ))}
           </tbody>

@@ -86,8 +86,14 @@ export async function deleteCohort(cohortId) {
   })
 }
 
-export async function getRetention(maxDay, retentionEvent = 'any') {
-  let path = `/retention?max_day=${maxDay}`
+export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95) {
+  const query = new URLSearchParams({
+    max_day: String(maxDay),
+    include_ci: String(includeCI),
+    confidence: String(confidence),
+  })
+
+  let path = `/retention?${query.toString()}`
 
   if (retentionEvent !== 'any') {
     path += `&retention_event=${encodeURIComponent(retentionEvent)}`

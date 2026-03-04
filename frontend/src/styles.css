@@ -130,6 +130,27 @@ select:focus {
   margin-bottom: var(--space-4);
 }
 
+
+.retention-controls-right {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--space-2);
+}
+
+.retention-main {
+  font-weight: 600;
+  line-height: 1.2;
+  min-height: 18px;
+}
+
+.retention-ci {
+  font-size: 12px;
+  color: #666;
+  margin-top: 2px;
+  line-height: 1.2;
+  min-height: 14px;
+}
+
 .cohort-condition-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-md);

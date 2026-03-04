@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -128,6 +129,29 @@ TEXT_ALLOWED_OPERATORS = {"=", "!=", "IN", "NOT IN"}
 NUMERIC_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
 TIMESTAMP_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
 BOOLEAN_ALLOWED_OPERATORS = {"=", "!="}
+Z_SCORES = {
+    0.90: 1.645,
+    0.95: 1.96,
+    0.99: 2.576,
+}
+
+
+def wilson_ci(x: int, n: int, confidence: float = 0.95) -> tuple[float | None, float | None]:
+    if n == 0:
+        return None, None
+
+    z = Z_SCORES.get(confidence, 1.96)
+    p = x / n
+    z2 = z * z
+
+    denominator = 1 + z2 / n
+    center = (p + z2 / (2 * n)) / denominator
+    margin = (z * math.sqrt((p * (1 - p) / n) + (z2 / (4 * n * n)))) / denominator
+
+    lower = max(0.0, center - margin)
+    upper = min(1.0, center + margin)
+
+    return lower, upper
 
 
 def get_column_type_map(connection: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, str]:
@@ -1661,7 +1685,13 @@ def fetch_retention_active_rows(
 def get_retention(
     max_day: int = Query(7, ge=0),
     retention_event: str | None = Query(None),
+    include_ci: bool = Query(False),
+    confidence: float = Query(0.95),
 ) -> dict[str, int | str | list[dict[str, object]]]:
+    confidence = round(confidence, 2)
+    if confidence not in Z_SCORES:
+        raise HTTPException(status_code=400, detail="confidence must be one of: 0.90, 0.95, 0.99")
+
     connection = get_connection()
     try:
         ensure_cohort_tables(connection)
@@ -1684,19 +1714,30 @@ def get_retention(
             cohort_id = int(cohort_id)
             cohort_size = cohort_sizes.get(cohort_id, 0)
             retention = {}
+            retention_ci = {}
             for day_number in range(max_day + 1):
                 active_users = active_by_day.get((cohort_id, day_number), 0)
-                percent = (active_users / cohort_size * 100.0) if cohort_size > 0 else 0.0
-                retention[str(day_number)] = float(percent)
+                if cohort_size == 0:
+                    percent = None
+                else:
+                    percent = active_users / cohort_size * 100.0
+                retention[str(day_number)] = float(percent) if percent is not None else None
+                if include_ci:
+                    lower, upper = wilson_ci(active_users, cohort_size, confidence)
+                    retention_ci[str(day_number)] = {
+                        "lower": (float(lower) * 100.0) if lower is not None else None,
+                        "upper": (float(upper) * 100.0) if upper is not None else None,
+                    }
 
-            retention_table.append(
-                {
-                    "cohort_id": cohort_id,
-                    "cohort_name": str(cohort_name),
-                    "size": int(cohort_size),
-                    "retention": retention,
-                }
-            )
+            row = {
+                "cohort_id": cohort_id,
+                "cohort_name": str(cohort_name),
+                "size": int(cohort_size),
+                "retention": retention,
+            }
+            if include_ci:
+                row["retention_ci"] = retention_ci
+            retention_table.append(row)
 
         return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": retention_table}
     finally:
