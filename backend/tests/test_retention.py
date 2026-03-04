@@ -208,3 +208,22 @@ def test_retention_rebuilds_from_new_mapping_after_remap(client: TestClient) -> 
     by_name = {row["cohort_name"]: row for row in response.json()["retention_table"]}
     assert list(by_name.keys()) == ["All Users"]
     assert by_name["All Users"]["size"] == 1
+
+
+def test_retention_excludes_hidden_cohorts(client: TestClient) -> None:
+    _prepare_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={"name": "signup_once", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]},
+    )
+    assert created.status_code == 200, created.text
+
+    hidden = client.patch(f"/cohorts/{created.json()['cohort_id']}/hide")
+    assert hidden.status_code == 200, hidden.text
+
+    response = client.get('/retention?max_day=1')
+    assert response.status_code == 200, response.text
+
+    cohort_names = {row['cohort_name'] for row in response.json()['retention_table']}
+    assert 'signup_once' not in cohort_names

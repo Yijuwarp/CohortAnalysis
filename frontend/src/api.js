@@ -86,6 +86,12 @@ export async function deleteCohort(cohortId) {
   })
 }
 
+export async function toggleCohortHide(cohortId) {
+  return request(`/cohorts/${cohortId}/hide`, {
+    method: 'PATCH',
+  })
+}
+
 export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95) {
   const query = new URLSearchParams({
     max_day: String(maxDay),

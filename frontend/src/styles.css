@@ -95,6 +95,11 @@ select:focus {
   cursor: pointer;
 }
 
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .button-primary {
   background-color: var(--color-primary);
   color: #fff;
@@ -423,6 +428,7 @@ li .button {
   margin-left: var(--space-2);
 }
 
+
 .cohort-row {
   display: flex;
   justify-content: space-between;
@@ -441,6 +447,15 @@ li .button {
   background-color: #fef2f2;
   color: #991b1b;
   font-size: var(--font-size-xs);
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-weight: 500;
+}
+
+.badge-hidden {
+  background-color: #e0f2fe;
+  color: #0369a1;
+  font-size: 12px;
   padding: 2px 8px;
   border-radius: 999px;
   font-weight: 500;
