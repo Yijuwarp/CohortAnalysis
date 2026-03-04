@@ -27,7 +27,17 @@ class ColumnMappingRequest(BaseModel):
     event_name_column: str
     event_time_column: str
     event_count_column: str | None = None
+    revenue_column: str | None = None
     column_types: dict[str, str] = Field(default_factory=dict)
+
+
+class RevenueEventSelectionItem(BaseModel):
+    event_name: str
+    is_included: bool
+
+
+class RevenueEventSelectionRequest(BaseModel):
+    events: list[RevenueEventSelectionItem] = Field(default_factory=list)
 
 
 class ScopeFilter(BaseModel):
@@ -462,6 +472,61 @@ def ensure_scope_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
 
 
+
+
+
+def ensure_dataset_metadata_table(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS dataset_metadata (
+            id INTEGER PRIMARY KEY,
+            has_revenue_mapping BOOLEAN NOT NULL DEFAULT FALSE
+        )
+        """
+    )
+
+
+def set_has_revenue_mapping(connection: duckdb.DuckDBPyConnection, has_revenue_mapping: bool) -> None:
+    ensure_dataset_metadata_table(connection)
+    connection.execute(
+        """
+        INSERT INTO dataset_metadata (id, has_revenue_mapping)
+        VALUES (1, ?)
+        ON CONFLICT (id) DO UPDATE SET has_revenue_mapping = excluded.has_revenue_mapping
+        """,
+        [bool(has_revenue_mapping)],
+    )
+
+
+def get_has_revenue_mapping(connection: duckdb.DuckDBPyConnection) -> bool:
+    ensure_dataset_metadata_table(connection)
+    row = connection.execute("SELECT has_revenue_mapping FROM dataset_metadata WHERE id = 1").fetchone()
+    return bool(row[0]) if row else False
+
+def ensure_revenue_event_selection_table(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS revenue_event_selection (
+            event_name TEXT PRIMARY KEY,
+            is_included BOOLEAN NOT NULL
+        )
+        """
+    )
+
+
+def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) -> None:
+    ensure_revenue_event_selection_table(connection)
+    connection.execute("DELETE FROM revenue_event_selection")
+    connection.execute(
+        """
+        INSERT INTO revenue_event_selection (event_name, is_included)
+        SELECT DISTINCT event_name, TRUE
+        FROM events_normalized
+        WHERE event_name IS NOT NULL
+        ORDER BY event_name
+        """
+    )
+
 def create_scoped_indexes(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute("CREATE INDEX IF NOT EXISTS idx_events_scoped_user_id ON events_scoped(user_id)")
     connection.execute("CREATE INDEX IF NOT EXISTS idx_events_scoped_event_name ON events_scoped(event_name)")
@@ -830,6 +895,8 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         }
         if mapping.event_count_column:
             requested_columns.add(mapping.event_count_column)
+        if mapping.revenue_column:
+            requested_columns.add(mapping.revenue_column)
         missing_columns = sorted(requested_columns - set(existing_columns))
         if missing_columns:
             raise HTTPException(
@@ -865,6 +932,13 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                     status_code=400,
                     detail=f"Mapped field 'event_count' requires NUMERIC type, got {actual}",
                 )
+        if mapping.revenue_column:
+            actual = selected_types[mapping.revenue_column]
+            if actual != "NUMERIC":
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Mapped field 'revenue_column' requires NUMERIC type, got {actual}",
+                )
 
         parsed_rows: list[dict[str, object]] = []
         for _, row in events_df.iterrows():
@@ -881,9 +955,13 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                         parsed_row[column] = None
                     else:
                         try:
-                            parsed_row[column] = parse_int_value(value)
+                            if column == mapping.revenue_column:
+                                parsed_row[column] = float(value)
+                            else:
+                                parsed_row[column] = parse_int_value(value)
                         except ValueError as exc:
-                            raise HTTPException(status_code=400, detail=f"Invalid integer value in column '{column}': {value}") from exc
+                            error_prefix = "Invalid numeric value" if column == mapping.revenue_column else "Invalid integer value"
+                            raise HTTPException(status_code=400, detail=f"{error_prefix} in column '{column}': {value}") from exc
                 elif selected_type == "BOOLEAN":
                     if value is None or str(value).strip() == "":
                         parsed_row[column] = None
@@ -912,31 +990,46 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             parsed_row["user_id"] = parsed_row.pop(mapping.user_id_column)
             parsed_row["event_name"] = parsed_row.pop(mapping.event_name_column)
             parsed_row["event_time"] = parsed_row.pop(mapping.event_time_column)
+            revenue_amount = 0.0
+            if mapping.revenue_column:
+                revenue_candidate = parsed_row[mapping.revenue_column]
+                revenue_amount = 0.0 if revenue_candidate is None else float(revenue_candidate)
+                parsed_row.pop(mapping.revenue_column)
             if mapping.event_count_column:
                 parsed_row.pop(mapping.event_count_column)
             parsed_row["event_count"] = event_count
+            parsed_row["revenue_amount"] = revenue_amount
             parsed_rows.append(parsed_row)
 
         normalized_df = pd.DataFrame(parsed_rows)
-        group_columns = [column for column in normalized_df.columns if column != "event_count"]
-        normalized_df = (
-            normalized_df.groupby(group_columns, dropna=False, as_index=False)["event_count"]
-            .sum()
+        group_columns = [column for column in normalized_df.columns if column not in {"event_count", "revenue_amount"}]
+        normalized_df = normalized_df.groupby(group_columns, dropna=False, as_index=False).agg(
+            event_count=("event_count", "sum"),
+            revenue_amount=("revenue_amount", "sum"),
         )
 
         connection.execute("DROP TABLE IF EXISTS events_normalized")
         connection.register("temp_import", normalized_df)
         connection.execute("CREATE TABLE events_normalized AS SELECT * FROM temp_import")
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN event_count SET NOT NULL")
+        connection.execute("ALTER TABLE events_normalized ALTER COLUMN revenue_amount SET NOT NULL")
 
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
+        ensure_revenue_event_selection_table(connection)
+        ensure_dataset_metadata_table(connection)
 
         connection.execute("DELETE FROM cohort_membership")
         connection.execute("DELETE FROM cohort_activity_snapshot")
         connection.execute("DELETE FROM cohort_conditions")
         connection.execute("DELETE FROM cohorts")
         initialize_scoped_dataset(connection)
+        if mapping.revenue_column:
+            initialize_revenue_event_selection(connection)
+            set_has_revenue_mapping(connection, True)
+        else:
+            connection.execute("DELETE FROM revenue_event_selection")
+            set_has_revenue_mapping(connection, False)
         create_all_users_cohort(connection)
         refresh_cohort_activity(connection)
 
@@ -1608,6 +1701,141 @@ def list_events() -> dict[str, list[str]]:
 
         rows = connection.execute("SELECT DISTINCT event_name FROM events_scoped ORDER BY event_name").fetchall()
         return {"events": [str(row[0]) for row in rows]}
+    finally:
+        connection.close()
+
+
+
+
+@app.get("/revenue-events")
+def get_revenue_events() -> dict[str, object]:
+    connection = get_connection()
+    try:
+        ensure_revenue_event_selection_table(connection)
+        has_revenue_mapping = get_has_revenue_mapping(connection)
+        rows = connection.execute(
+            "SELECT event_name, is_included FROM revenue_event_selection ORDER BY event_name"
+        ).fetchall()
+        return {
+            "has_revenue_mapping": has_revenue_mapping,
+            "events": [
+                {"event_name": str(event_name), "is_included": bool(is_included)}
+                for event_name, is_included in rows
+            ],
+        }
+    finally:
+        connection.close()
+
+
+@app.put("/revenue-events")
+def update_revenue_events(payload: RevenueEventSelectionRequest) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        ensure_revenue_event_selection_table(connection)
+        known_events = {
+            str(row[0])
+            for row in connection.execute("SELECT event_name FROM revenue_event_selection").fetchall()
+        }
+
+        for item in payload.events:
+            if item.event_name not in known_events:
+                raise HTTPException(status_code=400, detail=f"Unknown event_name: {item.event_name}")
+            connection.execute(
+                "UPDATE revenue_event_selection SET is_included = ? WHERE event_name = ?",
+                [bool(item.is_included), item.event_name],
+            )
+
+        has_revenue_mapping = get_has_revenue_mapping(connection)
+        rows = connection.execute(
+            "SELECT event_name, is_included FROM revenue_event_selection ORDER BY event_name"
+        ).fetchall()
+        return {
+            "has_revenue_mapping": has_revenue_mapping,
+            "events": [
+                {"event_name": str(event_name), "is_included": bool(is_included)}
+                for event_name, is_included in rows
+            ],
+        }
+    finally:
+        connection.close()
+
+
+@app.get("/monetization")
+def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+        ensure_revenue_event_selection_table(connection)
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        ).fetchone()[0]
+
+        empty_response = {
+            "max_day": int(max_day),
+            "revenue_table": [],
+            "cohort_sizes": [],
+            "retained_users_table": [],
+        }
+        if not scoped_exists:
+            return empty_response
+
+        cohorts, cohort_sizes = build_active_cohort_base(connection)
+        if not cohorts:
+            return empty_response
+
+        revenue_rows = connection.execute(
+            """
+            WITH revenue_events AS (
+                SELECT event_name
+                FROM revenue_event_selection
+                WHERE is_included = TRUE
+            ),
+            revenue_by_day AS (
+                SELECT
+                    cm.cohort_id,
+                    DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number,
+                    SUM(es.revenue_amount) AS revenue
+                FROM cohort_membership cm
+                JOIN events_scoped es
+                  ON cm.user_id = es.user_id
+                WHERE es.event_name IN (SELECT event_name FROM revenue_events)
+                GROUP BY cm.cohort_id, day_number
+            )
+            SELECT cohort_id, day_number, revenue
+            FROM revenue_by_day
+            WHERE day_number BETWEEN 0 AND ?
+            ORDER BY cohort_id, day_number
+            """,
+            [max_day],
+        ).fetchall()
+
+        retained_rows = fetch_retention_active_rows(connection, max_day, None)
+
+        cohort_name_by_id = {int(cohort_id): str(cohort_name) for cohort_id, cohort_name in cohorts}
+        revenue_table = [
+            {
+                "cohort_id": int(cohort_id),
+                "cohort_name": cohort_name_by_id[int(cohort_id)],
+                "day_number": int(day_number),
+                "revenue": float(revenue),
+            }
+            for cohort_id, day_number, revenue in revenue_rows
+        ]
+        cohort_size_table = [
+            {"cohort_id": int(cohort_id), "cohort_name": str(cohort_name), "size": int(cohort_sizes.get(int(cohort_id), 0))}
+            for cohort_id, cohort_name in cohorts
+        ]
+        retained_users_table = [
+            {"cohort_id": int(cohort_id), "day_number": int(day_number), "retained_users": int(active_users)}
+            for cohort_id, day_number, active_users in retained_rows
+        ]
+
+        return {
+            "max_day": int(max_day),
+            "revenue_table": revenue_table,
+            "cohort_sizes": cohort_size_table,
+            "retained_users_table": retained_users_table,
+        }
     finally:
         connection.close()
 
