@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
+import RetentionGraph from './RetentionGraph'
 
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange }) {
   const [maxDay, setMaxDay] = useState(7)
@@ -12,6 +13,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [error, setError] = useState('')
   const [includeCI, setIncludeCI] = useState(false)
   const [confidence, setConfidence] = useState(0.95)
+  const [viewMode, setViewMode] = useState('table')
 
   const loadRetention = async () => {
     setLoading(true)
@@ -122,12 +124,28 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               <option value={0.99}>99%</option>
             </select>
           </label>
+          <div className="view-toggle">
+            <button
+              type="button"
+              className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
+              onClick={() => setViewMode('table')}
+            >
+              Table
+            </button>
+            <button
+              type="button"
+              className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
+              onClick={() => setViewMode('graph')}
+            >
+              Graph
+            </button>
+          </div>
         </div>
       </div>
 
       {error && <p className="error">{error}</p>}
 
-      {data.length > 0 && (
+      {viewMode === 'table' && data.length > 0 && (
         <table>
           <thead>
             <tr>
@@ -164,6 +182,10 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
             ))}
           </tbody>
         </table>
+      )}
+
+      {viewMode === 'graph' && (
+        <RetentionGraph data={data} maxDay={effectiveMaxDay} includeCI={includeCI} />
       )}
     </section>
   )
