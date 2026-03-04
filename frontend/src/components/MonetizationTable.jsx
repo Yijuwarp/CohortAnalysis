@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getMonetization, getRevenueEvents } from '../api'
 import { buildMonetizationRows } from '../monetization'
+import { formatCurrency } from '../utils/formatters'
+import { fitSaturatingExponential, generateProjection } from '../utils/ltvPrediction'
 import MonetizationGraph from './MonetizationGraph'
 
 const METRIC_OPTIONS = [
@@ -25,6 +27,10 @@ export default function MonetizationTable({ refreshToken }) {
   const [error, setError] = useState('')
   const [hasRevenueMapping, setHasRevenueMapping] = useState(false)
   const [hasNoSelectedRevenueEvents, setHasNoSelectedRevenueEvents] = useState(false)
+  const [predictions, setPredictions] = useState(null)
+  const [predictionHorizon, setPredictionHorizon] = useState(90)
+
+  const predictionEnabled = metricType === 'cumulative_revenue' || metricType === 'cumulative_revenue_per_acquired_user'
 
   const loadRevenueConfig = async () => {
     try {
@@ -46,6 +52,7 @@ export default function MonetizationTable({ refreshToken }) {
       setRevenueRows(response.revenue_table || [])
       setCohortSizes(response.cohort_sizes || [])
       setRetainedRows(response.retained_users_table || [])
+      setPredictions(null)
     } catch (err) {
       setError(err.message)
       setRevenueRows([])
@@ -108,6 +115,50 @@ export default function MonetizationTable({ refreshToken }) {
     [effectiveMaxDay]
   )
 
+  const handleProjectRevenue = () => {
+    if (!predictionEnabled) {
+      return
+    }
+
+    const nextPredictions = {}
+
+    displayRows.forEach((row) => {
+      const days = []
+      const values = []
+
+      for (let day = 0; day <= Number(effectiveMaxDay); day += 1) {
+        const value = Number(row.numericValues?.[String(day)])
+        if (Number.isFinite(value)) {
+          days.push(day)
+          values.push(value)
+        }
+      }
+
+      if (days.length < 2) {
+        return
+      }
+
+      const fit = fitSaturatingExponential(days, values)
+      const projection = generateProjection({
+        L: fit.L,
+        k: fit.k,
+        lastObservedDay: Number(effectiveMaxDay),
+        horizonDays: 365,
+        residualVariance: fit.residualVariance,
+      })
+
+      nextPredictions[row.cohort_id] = {
+        L: fit.L,
+        k: fit.k,
+        projectedCurve: projection.projectedCurve,
+        upperCI: projection.upperCI,
+        lowerCI: projection.lowerCI,
+      }
+    })
+
+    setPredictions(nextPredictions)
+  }
+
   if (!hasRevenueMapping) {
     return null
   }
@@ -131,12 +182,33 @@ export default function MonetizationTable({ refreshToken }) {
           </label>
           <label>
             Metric
-            <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
+            <select
+              value={metricType}
+              onChange={(e) => {
+                setMetricType(e.target.value)
+                setPredictions(null)
+              }}
+            >
               {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+            </select>
+          </label>
+          <label>
+            Prediction Horizon
+            <select value={predictionHorizon} onChange={(e) => setPredictionHorizon(Number(e.target.value))}>
+              {[30, 60, 90, 180, 365].map((day) => <option key={day} value={day}>{day}D</option>)}
             </select>
           </label>
           <button className="button button-primary" onClick={loadData} disabled={loading}>
             {loading ? 'Loading...' : 'Load Monetization'}
+          </button>
+          <button
+            className="button"
+            type="button"
+            onClick={handleProjectRevenue}
+            disabled={!predictionEnabled || displayRows.length === 0}
+            title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
+          >
+            Project Revenue
           </button>
         </div>
 
@@ -170,6 +242,7 @@ export default function MonetizationTable({ refreshToken }) {
               <th>Cohort</th>
               <th>Size</th>
               {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
+              <th>Predicted Revenue ({predictionHorizon}D)</th>
             </tr>
           </thead>
           <tbody>
@@ -178,6 +251,7 @@ export default function MonetizationTable({ refreshToken }) {
                 <td>{row.cohort_name}</td>
                 <td>{row.size}</td>
                 {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)]}</td>)}
+                <td>{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
               </tr>
             ))}
           </tbody>
@@ -189,6 +263,9 @@ export default function MonetizationTable({ refreshToken }) {
           rows={displayRows}
           maxDay={effectiveMaxDay}
           metricType={metricType}
+          predictions={predictions}
+          predictionHorizon={predictionHorizon}
+          effectiveMaxDay={effectiveMaxDay}
         />
       )}
     </section>
