@@ -3,6 +3,7 @@ import {
   ResponsiveContainer,
   LineChart,
   Line,
+  Area,
   XAxis,
   YAxis,
   Tooltip,
@@ -16,17 +17,32 @@ export default function MonetizationGraph({
   rows,
   maxDay,
   metricType,
+  predictions,
+  predictionHorizon,
+  effectiveMaxDay,
 }) {
   if (!rows || rows.length === 0) return null
 
-  const days = Array.from({ length: maxDay + 1 }, (_, i) => i)
+  const hasPredictions = Boolean(predictions) && Object.keys(predictions).length > 0
+  const maxProjectionDay = hasPredictions
+    ? Math.max(effectiveMaxDay, predictionHorizon)
+    : maxDay
+  const days = Array.from({ length: maxProjectionDay + 1 }, (_, i) => i)
 
   const chartData = days.map((day) => {
     const row = { day: `D${day}` }
 
     rows.forEach((cohort) => {
-      const value = cohort.numericValues?.[String(day)]
-      row[`cohort_${cohort.cohort_id}`] = typeof value === 'number' ? value : null
+      const actualValue = Number(cohort.numericValues?.[String(day)])
+      const cohortPrediction = predictions?.[cohort.cohort_id]
+      const projectedValue = Number(cohortPrediction?.projectedCurve?.[day])
+      const upper = Number(cohortPrediction?.upperCI?.[day])
+      const lower = Number(cohortPrediction?.lowerCI?.[day])
+
+      row[`cohort_${cohort.cohort_id}_actual`] = day <= effectiveMaxDay && Number.isFinite(actualValue) ? actualValue : null
+      row[`cohort_${cohort.cohort_id}_projection`] = day > effectiveMaxDay && Number.isFinite(projectedValue) ? projectedValue : null
+      row[`cohort_${cohort.cohort_id}_upper`] = day > effectiveMaxDay && Number.isFinite(upper) ? upper : null
+      row[`cohort_${cohort.cohort_id}_lower`] = day > effectiveMaxDay && Number.isFinite(lower) ? lower : null
     })
 
     return row
@@ -43,18 +59,41 @@ export default function MonetizationGraph({
           <Tooltip formatter={(value) => formatCurrency(value)} />
           <Legend />
 
-          {rows.map((cohort, index) => (
-            <Line
-              key={cohort.cohort_id}
-              type="linear"
-              dataKey={`cohort_${cohort.cohort_id}`}
-              name={cohort.cohort_name}
-              stroke={getCohortColor(cohort.cohort_id, index)}
-              strokeWidth={2}
-              dot={{ r: 3 }}
-              isAnimationActive
-            />
-          ))}
+          {rows.map((cohort, index) => {
+            const cohortColor = getCohortColor(cohort.cohort_id, index)
+            return (
+              <React.Fragment key={cohort.cohort_id}>
+                <Area
+                  type="linear"
+                  dataKey={`cohort_${cohort.cohort_id}_upper`}
+                  baseLine={`cohort_${cohort.cohort_id}_lower`}
+                  fill={cohortColor}
+                  fillOpacity={0.12}
+                  stroke="none"
+                  isAnimationActive
+                />
+                <Line
+                  type="linear"
+                  dataKey={`cohort_${cohort.cohort_id}_actual`}
+                  name={cohort.cohort_name}
+                  stroke={cohortColor}
+                  strokeWidth={2}
+                  dot={{ r: 3 }}
+                  isAnimationActive
+                />
+                <Line
+                  type="linear"
+                  dataKey={`cohort_${cohort.cohort_id}_projection`}
+                  name={`${cohort.cohort_name} Projection`}
+                  stroke={cohortColor}
+                  strokeDasharray="5 5"
+                  strokeWidth={2}
+                  dot={false}
+                  isAnimationActive
+                />
+              </React.Fragment>
+            )
+          })}
         </LineChart>
       </ResponsiveContainer>
     </div>
