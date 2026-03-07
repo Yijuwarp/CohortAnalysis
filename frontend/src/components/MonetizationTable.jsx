@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { getMonetization } from '../api'
 import { buildMonetizationRows } from '../monetization'
 import { formatCurrency } from '../utils/formatters'
-import { fitSaturatingExponential, generateProjection } from '../utils/ltvPrediction'
+import { fitPowerLaw, generateProjection } from '../utils/ltvPrediction'
 import MonetizationGraph from './MonetizationGraph'
+import TunePredictionPane from './TunePredictionPane'
 
 const METRIC_OPTIONS = [
   { value: 'total_revenue', label: 'Total Revenue' },
@@ -26,6 +27,7 @@ export default function MonetizationTable({ refreshToken }) {
   const [error, setError] = useState('')
   const [predictions, setPredictions] = useState(null)
   const [predictionHorizon, setPredictionHorizon] = useState(90)
+  const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
 
   const predictionEnabled = metricType === 'cumulative_revenue' || metricType === 'cumulative_revenue_per_acquired_user'
 
@@ -37,7 +39,6 @@ export default function MonetizationTable({ refreshToken }) {
       setRevenueRows(response.revenue_table || [])
       setCohortSizes(response.cohort_sizes || [])
       setRetainedRows(response.retained_users_table || [])
-      setPredictions(null)
     } catch (err) {
       setError(err.message)
       setRevenueRows([])
@@ -122,18 +123,20 @@ export default function MonetizationTable({ refreshToken }) {
         return
       }
 
-      const fit = fitSaturatingExponential(days, values)
+      const fit = fitPowerLaw(days, values)
       const projection = generateProjection({
-        L: fit.L,
-        k: fit.k,
+        A: fit.A,
+        B: fit.B,
         lastObservedDay: Number(effectiveMaxDay),
         horizonDays: 365,
         residualVariance: fit.residualVariance,
       })
 
       nextPredictions[row.cohort_id] = {
-        L: fit.L,
-        k: fit.k,
+        A: fit.A,
+        B: fit.B,
+        residualVariance: fit.residualVariance,
+        lastObservedDay: Number(effectiveMaxDay),
         projectedCurve: projection.projectedCurve,
         upperCI: projection.upperCI,
         lowerCI: projection.lowerCI,
@@ -190,6 +193,15 @@ export default function MonetizationTable({ refreshToken }) {
           >
             Project Revenue
           </button>
+          <button
+            className="button button-secondary"
+            type="button"
+            onClick={() => setIsTuningPaneOpen(true)}
+            disabled={!predictions || Object.keys(predictions).length === 0}
+            title="Tune the A and B parameters of current predictions"
+          >
+            Tune Prediction
+          </button>
         </div>
 
         <div className="retention-controls-right">
@@ -215,26 +227,35 @@ export default function MonetizationTable({ refreshToken }) {
       {error && <p className="error">{error}</p>}
 
       {displayRows.length > 0 && viewMode === 'table' && (
-        <table>
-          <thead>
-            <tr>
-              <th>Cohort</th>
-              <th>Size</th>
-              {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
-              <th>Predicted Revenue ({predictionHorizon}D)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {displayRows.map((row) => (
-              <tr key={row.cohort_id}>
-                <td>{row.cohort_name}</td>
-                <td>{row.size}</td>
-                {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)]}</td>)}
-                <td>{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
+        <div className="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>Cohort</th>
+                <th>Size</th>
+                {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
+                <th>Predicted Revenue ({predictionHorizon}D)</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {displayRows.map((row) => (
+                <tr key={row.cohort_id}>
+                  <td>{row.cohort_name}</td>
+                  <td>{row.size}</td>
+                  {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)]}</td>)}
+                  <td>
+                    {formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}
+                    {predictions?.[row.cohort_id]?.lastObservedDay && predictions?.[row.cohort_id]?.lastObservedDay !== effectiveMaxDay && (
+                      <span className="muted-text" style={{ display: 'block', fontSize: '10px' }}>
+                        Based on D{predictions[row.cohort_id].lastObservedDay}
+                      </span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {viewMode === 'graph' && (
@@ -247,6 +268,16 @@ export default function MonetizationTable({ refreshToken }) {
           effectiveMaxDay={effectiveMaxDay}
         />
       )}
+
+      <TunePredictionPane
+        isOpen={isTuningPaneOpen}
+        onClose={() => setIsTuningPaneOpen(false)}
+        predictions={predictions}
+        displayRows={displayRows}
+        effectiveMaxDay={effectiveMaxDay}
+        predictionHorizon={predictionHorizon}
+        onUpdate={(newPredictions) => setPredictions(newPredictions)}
+      />
     </section>
   )
 }

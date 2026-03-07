@@ -35,14 +35,16 @@ export default function MonetizationGraph({
     rows.forEach((cohort) => {
       const actualValue = Number(cohort.numericValues?.[String(day)])
       const cohortPrediction = predictions?.[cohort.cohort_id]
+      const predictionStartDay = cohortPrediction?.lastObservedDay ?? effectiveMaxDay
+
       const projectedValue = Number(cohortPrediction?.projectedCurve?.[day])
       const upper = Number(cohortPrediction?.upperCI?.[day])
       const lower = Number(cohortPrediction?.lowerCI?.[day])
 
       row[`cohort_${cohort.cohort_id}_actual`] = day <= effectiveMaxDay && Number.isFinite(actualValue) ? actualValue : null
-      row[`cohort_${cohort.cohort_id}_projection`] = day > effectiveMaxDay && Number.isFinite(projectedValue) ? projectedValue : null
-      row[`cohort_${cohort.cohort_id}_upper`] = day > effectiveMaxDay && Number.isFinite(upper) ? upper : null
-      row[`cohort_${cohort.cohort_id}_lower`] = day > effectiveMaxDay && Number.isFinite(lower) ? lower : null
+      row[`cohort_${cohort.cohort_id}_projection`] = day > predictionStartDay && Number.isFinite(projectedValue) ? projectedValue : null
+      row[`cohort_${cohort.cohort_id}_upper`] = day > predictionStartDay && Number.isFinite(upper) ? upper : null
+      row[`cohort_${cohort.cohort_id}_lower`] = day > predictionStartDay && Number.isFinite(lower) ? lower : null
     })
 
     return row

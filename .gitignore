@@ -1,2 +1,5 @@
 __pycache__/
 *.py[cod]
+backend/cohort_analysis.duckdb
+frontend/node_modules/
+frontend/package-lock.json
