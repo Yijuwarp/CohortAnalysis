@@ -6,12 +6,13 @@ function formatRatioValue(value) {
   return Number(value).toFixed(2)
 }
 
-export default function UsageTable({ refreshToken, retentionEvent }) {
+const MAX_DAY_DETECTION_WINDOW = 365
+
+export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [event, setEvent] = useState('')
-  const [maxDay, setMaxDay] = useState(7)
-  const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(7)
-  const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(7)
-  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
+  const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(maxDay))
+  const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(maxDay))
+  const [isPinned, setIsPinned] = useState(true)
   const [modeUsers, setModeUsers] = useState('count')
   const [metricType, setMetricType] = useState('count')
   const [events, setEvents] = useState([])
@@ -21,19 +22,8 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const loadEvents = async () => {
-    try {
-      const response = await listEvents()
-      const nextEvents = response.events || []
-      setEvents(nextEvents)
-      setEvent((current) => (current && nextEvents.includes(current) ? current : nextEvents[0] || ''))
-    } catch {
-      setEvents([])
-      setEvent('')
-    }
-  }
 
-  const loadUsage = async (selectedEvent = event) => {
+  const loadUsage = async (selectedEvent = event, overrideMaxDay) => {
     if (!selectedEvent) {
       setVolumeRows([])
       setUserRows([])
@@ -52,7 +42,7 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
     setLoading(true)
     setError('')
     try {
-      const response = await getUsage(selectedEvent, Number(maxDay), retentionEvent)
+      const response = await getUsage(selectedEvent, Number(overrideMaxDay ?? maxDay), retentionEvent)
       setVolumeRows(response.usage_volume_table || [])
       setUserRows(response.usage_users_table || [])
       setRetainedRows(response.retained_users_table || [])
@@ -68,10 +58,24 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
 
   useEffect(() => {
     const refresh = async () => {
-      await loadEvents()
+      try {
+        const response = await listEvents()
+        const nextEvents = response.events || []
+        setEvents(nextEvents)
+        const initialEvent = nextEvents[0] || ''
+        setEvent((current) => (current && nextEvents.includes(current) ? current : initialEvent))
+
+        // Trigger an initial fetch with a larger window to detect the appropriate maxDay
+        if (initialEvent && (retentionEvent !== undefined && retentionEvent !== null && retentionEvent !== '')) {
+          loadUsage(initialEvent, MAX_DAY_DETECTION_WINDOW)
+        }
+      } catch (err) {
+        setEvents([])
+        setEvent('')
+      }
     }
     refresh()
-  }, [refreshToken])
+  }, [refreshToken, retentionEvent])
 
   useEffect(() => {
     if (event) {
@@ -137,46 +141,13 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
     metricType === 'count'
       ? 'Event Count'
       : metricType === 'per_event_firer'
-      ? 'Events per Event Firer'
-      : 'Events per Active User'
+        ? 'Events per Event Firer'
+        : 'Events per Active User'
 
   useEffect(() => {
-    if (userModifiedMaxDay) {
-      const manualMaxDay = Number(maxDay)
-      setEffectiveMaxDayVolume(manualMaxDay)
-      setEffectiveMaxDayUsers(manualMaxDay)
-      return
-    }
-
-    if (!volumeDisplayRows.length) {
-      return
-    }
-
-    const allUsers = volumeDisplayRows.find((row) => row.cohort_name === 'All Users')
-    if (!allUsers || !allUsers.values) {
-      return
-    }
-
-    let lastNonZero = 0
-    Object.entries(allUsers.values).forEach(([day, value]) => {
-      const numeric = Number(value)
-      if (!Number.isNaN(numeric) && numeric > 0) {
-        lastNonZero = Math.max(lastNonZero, Number(day))
-      }
-    })
-
-    if (lastNonZero === 0) {
-      return
-    }
-
-    const adjusted = Math.min(Number(maxDay), lastNonZero)
-    setEffectiveMaxDayVolume(adjusted)
-    setEffectiveMaxDayUsers(adjusted)
-
-    if (Number(maxDay) !== adjusted) {
-      setMaxDay(adjusted)
-    }
-  }, [maxDay, userModifiedMaxDay, volumeDisplayRows])
+    setEffectiveMaxDayVolume(Number(maxDay))
+    setEffectiveMaxDayUsers(Number(maxDay))
+  }, [maxDay])
 
   const dayColumnsVolume = useMemo(
     () => Array.from({ length: Number(effectiveMaxDayVolume) + 1 }, (_, index) => index),
@@ -227,6 +198,13 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
             <option value="per_event_firer">Per Event Firer</option>
           </select>
         </label>
+        <button
+          className={`view-button ${isPinned ? 'active' : ''}`}
+          onClick={() => setIsPinned((prev) => !prev)}
+          title="Pin Cohort Columns"
+        >
+          {isPinned ? "📌" : "📍"}
+        </button>
         <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}>
           {loading ? 'Loading...' : 'Load Usage'}
         </button>
@@ -240,55 +218,69 @@ export default function UsageTable({ refreshToken, retentionEvent }) {
 
       <h3>Event Volume ({volumeLabel})</h3>
       {volumeDisplayRows.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Cohort</th>
-              <th>Size</th>
-              {dayColumnsVolume.map((day) => (
-                <th key={day}>D{day}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {volumeDisplayRows.map((row) => (
-              <tr key={row.cohort_id}>
-                <td>{row.cohort_name}</td>
-                <td>{row.size}</td>
+        <div className="analytics-table table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
                 {dayColumnsVolume.map((day) => (
-                  <td key={day}>{row.values?.[String(day)] ?? 0}</td>
+                  <th key={day}>D{day}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {volumeDisplayRows.map((row) => (
+                <tr key={row.cohort_id}>
+                  <td
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    title={row.cohort_name}
+                  >
+                    {row.cohort_name}
+                  </td>
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                  {dayColumnsVolume.map((day) => (
+                    <td key={day}>{row.values?.[String(day)] ?? '—'}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       <h3>Unique Users</h3>
       {userDisplayRows.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Cohort</th>
-              <th>Size</th>
-              {dayColumnsUsers.map((day) => (
-                <th key={day}>D{day}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {userDisplayRows.map((row) => (
-              <tr key={row.cohort_id}>
-                <td>{row.cohort_name}</td>
-                <td>{row.size}</td>
-                {dayColumnsUsers.map((day) => {
-                  const value = row.values?.[String(day)] ?? 0
-                  return <td key={day}>{modeUsers === 'percent' ? `${value}%` : value}</td>
-                })}
+        <div className="analytics-table table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                {dayColumnsUsers.map((day) => (
+                  <th key={day}>D{day}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {userDisplayRows.map((row) => (
+                <tr key={row.cohort_id}>
+                  <td
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    title={row.cohort_name}
+                  >
+                    {row.cohort_name}
+                  </td>
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                  {dayColumnsUsers.map((day) => {
+                    const value = row.values?.[String(day)] ?? null
+                    return <td key={day}>{value === null ? '—' : (modeUsers === 'percent' ? `${value}%` : value)}</td>
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </section>
   )

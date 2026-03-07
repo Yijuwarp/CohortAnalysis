@@ -14,10 +14,11 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-export default function MonetizationTable({ refreshToken }) {
-  const [maxDay, setMaxDay] = useState(7)
-  const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
-  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
+const MAX_DAY_DETECTION_WINDOW = 365
+
+export default function MonetizationTable({ refreshToken, maxDay }) {
+  const [effectiveMaxDay, setEffectiveMaxDay] = useState(maxDay)
+  const [isPinned, setIsPinned] = useState(true)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState('table')
   const [revenueRows, setRevenueRows] = useState([])
@@ -31,11 +32,11 @@ export default function MonetizationTable({ refreshToken }) {
 
   const predictionEnabled = metricType === 'cumulative_revenue' || metricType === 'cumulative_revenue_per_acquired_user'
 
-  const loadData = async () => {
+  const loadData = async (overrideMaxDay) => {
     setLoading(true)
     setError('')
     try {
-      const response = await getMonetization(Number(maxDay))
+      const response = await getMonetization(Number(overrideMaxDay ?? maxDay))
       setRevenueRows(response.revenue_table || [])
       setCohortSizes(response.cohort_sizes || [])
       setRetainedRows(response.retained_users_table || [])
@@ -50,8 +51,8 @@ export default function MonetizationTable({ refreshToken }) {
   }
 
   useEffect(() => {
-    loadData()
-  }, [maxDay, refreshToken])
+    loadData(maxDay)
+  }, [refreshToken, maxDay])
 
   const dayColumns = useMemo(() => Array.from({ length: Number(maxDay) + 1 }, (_, idx) => idx), [maxDay])
 
@@ -64,36 +65,8 @@ export default function MonetizationTable({ refreshToken }) {
   }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
 
   useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDay(Number(maxDay))
-      return
-    }
-
-    if (!revenueRows.length) {
-      return
-    }
-
-    let lastNonZero = 0
-    displayRows.forEach((row) => {
-      Object.entries(row.numericValues || {}).forEach(([day, value]) => {
-        const numeric = Number(value)
-        if (!Number.isNaN(numeric) && numeric !== 0) {
-          lastNonZero = Math.max(lastNonZero, Number(day))
-        }
-      })
-    })
-
-    if (lastNonZero === 0) {
-      return
-    }
-
-    const adjusted = Math.min(Number(maxDay), lastNonZero)
-    setEffectiveMaxDay(adjusted)
-
-    if (Number(maxDay) !== adjusted) {
-      setMaxDay(adjusted)
-    }
-  }, [maxDay, revenueRows, userModifiedMaxDay])
+    setEffectiveMaxDay(Number(maxDay))
+  }, [maxDay])
 
   const visibleDayColumns = useMemo(
     () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),
@@ -208,6 +181,14 @@ export default function MonetizationTable({ refreshToken }) {
           <div className="view-toggle">
             <button
               type="button"
+              className={`view-button ${isPinned ? 'active' : ''}`}
+              onClick={() => setIsPinned((prev) => !prev)}
+              title="Pin Cohort Columns"
+            >
+              {isPinned ? "📌" : "📍"}
+            </button>
+            <button
+              type="button"
               className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
             >
@@ -227,23 +208,28 @@ export default function MonetizationTable({ refreshToken }) {
       {error && <p className="error">{error}</p>}
 
       {displayRows.length > 0 && viewMode === 'table' && (
-        <div className="table-responsive">
+        <div className="analytics-table table-responsive">
           <table>
             <thead>
               <tr>
-                <th>Cohort</th>
-                <th>Size</th>
+                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
                 {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
-                <th>Predicted Revenue ({predictionHorizon}D)</th>
+                <th className="col-prediction">Predicted Revenue ({predictionHorizon}D)</th>
               </tr>
             </thead>
             <tbody>
               {displayRows.map((row) => (
                 <tr key={row.cohort_id}>
-                  <td>{row.cohort_name}</td>
-                  <td>{row.size}</td>
-                  {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)]}</td>)}
-                  <td>
+                  <td
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    title={row.cohort_name}
+                  >
+                    {row.cohort_name}
+                  </td>
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                  {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)] ?? '—'}</td>)}
+                  <td className="col-prediction">
                     {formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}
                     {predictions?.[row.cohort_id]?.lastObservedDay && predictions?.[row.cohort_id]?.lastObservedDay !== effectiveMaxDay && (
                       <span className="muted-text" style={{ display: 'block', fontSize: '10px' }}>
