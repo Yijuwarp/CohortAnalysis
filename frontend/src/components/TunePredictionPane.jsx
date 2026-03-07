@@ -29,7 +29,7 @@ export default function TunePredictionPane({
     const handleUpdate = () => {
         if (!predictions) return
 
-        const updatedPredictions = { ...predictions }
+        const updatedPredictions = structuredClone(predictions)
 
         // Recompute generated curves for each cohort using localParams
         Object.entries(localParams).forEach(([cohortId, params]) => {
@@ -42,7 +42,7 @@ export default function TunePredictionPane({
             const projection = generateProjection({
                 A,
                 B,
-                lastObservedDay: Number(effectiveMaxDay),
+                lastObservedDay: originalPrediction.lastObservedDay,
                 horizonDays: 365,
                 residualVariance: originalPrediction.residualVariance || 0,
             })
@@ -71,11 +71,7 @@ export default function TunePredictionPane({
         }))
     }
 
-    if (!isOpen) {
-        return (
-            <div className="tuning-pane-overlay" onClick={onClose} aria-hidden="true" />
-        )
-    }
+    if (!isOpen) return null
 
     return (
         <>
@@ -119,7 +115,7 @@ export default function TunePredictionPane({
                                             type="number"
                                             step="0.01"
                                             min="0.01"
-                                            max="2.0"
+                                            max="1.5"
                                             value={params.B}
                                             onChange={(e) => handleParamChange(cohortId, 'B', e.target.value)}
                                         />

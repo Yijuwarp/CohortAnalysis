@@ -135,6 +135,7 @@ export default function MonetizationTable({ refreshToken }) {
       nextPredictions[row.cohort_id] = {
         A: fit.A,
         B: fit.B,
+        residualVariance: fit.residualVariance,
         lastObservedDay: Number(effectiveMaxDay),
         projectedCurve: projection.projectedCurve,
         upperCI: projection.upperCI,
