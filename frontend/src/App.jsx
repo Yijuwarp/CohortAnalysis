@@ -14,6 +14,7 @@ export default function App() {
   const [suggestedMappings, setSuggestedMappings] = useState(null)
   const [retentionRefreshToken, setRetentionRefreshToken] = useState(0)
   const [selectedRetentionEvent, setSelectedRetentionEvent] = useState('any')
+  const [globalMaxDay, setGlobalMaxDay] = useState(7)
 
   const refreshRetention = () => {
     setRetentionRefreshToken((current) => current + 1)
@@ -36,9 +37,18 @@ export default function App() {
         refreshToken={retentionRefreshToken}
         retentionEvent={selectedRetentionEvent}
         onRetentionEventChange={setSelectedRetentionEvent}
+        maxDay={globalMaxDay}
+        setMaxDay={setGlobalMaxDay}
       />
-      <UsageTable refreshToken={retentionRefreshToken} retentionEvent={selectedRetentionEvent} />
-      <MonetizationTable refreshToken={retentionRefreshToken} />
+      <UsageTable
+        refreshToken={retentionRefreshToken}
+        retentionEvent={selectedRetentionEvent}
+        maxDay={globalMaxDay}
+      />
+      <MonetizationTable
+        refreshToken={retentionRefreshToken}
+        maxDay={globalMaxDay}
+      />
     </main>
   )
 }

@@ -3,10 +3,11 @@ import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
 
-export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange }) {
-  const [maxDay, setMaxDay] = useState(7)
-  const [effectiveMaxDay, setEffectiveMaxDay] = useState(7)
-  const [userModifiedMaxDay, setUserModifiedMaxDay] = useState(false)
+const MAX_DAY_DETECTION_WINDOW = 365
+
+export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay }) {
+  const [hasInitializedMaxDay, setHasInitializedMaxDay] = useState(false)
+  const [isPinned, setIsPinned] = useState(true)
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
@@ -15,12 +16,12 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [confidence, setConfidence] = useState(0.95)
   const [viewMode, setViewMode] = useState('table')
 
-  const loadRetention = async () => {
+  const loadRetention = async (overrideMaxDay) => {
     setLoading(true)
     setError('')
 
     try {
-      const response = await getRetention(Number(maxDay), retentionEvent, includeCI, confidence)
+      const response = await getRetention(Number(overrideMaxDay ?? maxDay), retentionEvent, includeCI, confidence)
       setData(response.retention_table)
     } catch (err) {
       setError(err.message)
@@ -41,19 +42,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   useEffect(() => {
     loadEvents()
-    loadRetention()
-  }, [refreshToken])
+    loadRetention(MAX_DAY_DETECTION_WINDOW) // Fetch more initially to detect the true maxDay
+    setHasInitializedMaxDay(false)
+  }, [refreshToken, retentionEvent])
 
   useEffect(() => {
     loadRetention()
   }, [retentionEvent, maxDay, includeCI, confidence])
 
   useEffect(() => {
-    if (userModifiedMaxDay) {
-      setEffectiveMaxDay(Number(maxDay))
-      return
-    }
-
     if (!data.length) {
       return
     }
@@ -71,19 +68,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       }
     })
 
-    if (lastNonZero === 0) {
-      return
+    const computedMaxDay = Math.max(1, lastNonZero)
+
+    if (!hasInitializedMaxDay && computedMaxDay > 0) {
+      setMaxDay(computedMaxDay)
+      setHasInitializedMaxDay(true)
     }
+  }, [data, maxDay, hasInitializedMaxDay])
 
-    const adjusted = Math.min(Number(maxDay), lastNonZero)
-    setEffectiveMaxDay(adjusted)
-
-    if (Number(maxDay) !== adjusted) {
-      setMaxDay(adjusted)
-    }
-  }, [data, maxDay, userModifiedMaxDay])
-
-  const dayColumns = Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, index) => index)
+  const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
 
   return (
     <section className="card">
@@ -97,7 +90,6 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               min="0"
               value={maxDay}
               onChange={(e) => {
-                setUserModifiedMaxDay(true)
                 setMaxDay(e.target.value)
               }}
             />
@@ -138,6 +130,14 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
           <div className="view-toggle">
             <button
               type="button"
+              className={`view-button ${isPinned ? 'active' : ''}`}
+              onClick={() => setIsPinned((prev) => !prev)}
+              title="Pin Cohort Columns"
+            >
+              {isPinned ? "📌" : "📍"}
+            </button>
+            <button
+              type="button"
               className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
               onClick={() => setViewMode('table')}
             >
@@ -157,46 +157,53 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       {error && <p className="error">{error}</p>}
 
       {viewMode === 'table' && data.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Cohort</th>
-              <th>Size</th>
-              {dayColumns.map((day) => (
-                <th key={day}>D{day}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {data.map((row) => (
-              <tr key={row.cohort_id}>
-                <td>{row.cohort_name}</td>
-                <td>{row.size}</td>
-                {dayColumns.map((day) => {
-                  const rawValue = row.retention[String(day)]
-                  const hasValue = rawValue !== null && rawValue !== undefined
-                  const value = hasValue ? Number(rawValue) : null
-                  const ci = row.retention_ci?.[String(day)]
-
-                  return (
-                    <td key={day}>
-                      <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
-                      {includeCI && ci && ci.lower !== null && ci.upper !== null && (
-                        <div className="retention-ci">
-                          {Number(ci.lower).toFixed(2)}% - {Number(ci.upper).toFixed(2)}%
-                        </div>
-                      )}
-                    </td>
-                  )
-                })}
+        <div className="analytics-table table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                {dayColumns.map((day) => (
+                  <th key={day}>D{day}</th>
+                ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {data.map((row) => (
+                <tr key={row.cohort_id}>
+                  <td
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    title={row.cohort_name}
+                  >
+                    {row.cohort_name}
+                  </td>
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                  {dayColumns.map((day) => {
+                    const rawValue = row.retention[String(day)]
+                    const hasValue = rawValue !== null && rawValue !== undefined
+                    const value = hasValue ? Number(rawValue) : null
+                    const ci = row.retention_ci?.[String(day)]
+
+                    return (
+                      <td key={day}>
+                        <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
+                        {includeCI && ci && ci.lower !== null && ci.upper !== null && (
+                          <div className="retention-ci">
+                            {Number(ci.lower).toFixed(2)}% - {Number(ci.upper).toFixed(2)}%
+                          </div>
+                        )}
+                      </td>
+                    )
+                  })}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
 
       {viewMode === 'graph' && (
-        <RetentionGraph data={data} maxDay={effectiveMaxDay} includeCI={includeCI} />
+        <RetentionGraph data={data} maxDay={maxDay} includeCI={includeCI} />
       )}
     </section>
   )
