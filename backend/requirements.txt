@@ -4,6 +4,5 @@ uvicorn
 python-dotenv
 python-multipart
 duckdb
-
 pandas
 pytest
