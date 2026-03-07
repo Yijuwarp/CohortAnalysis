@@ -442,6 +442,12 @@ table {
   font-size: var(--font-size-sm);
 }
 
+.table-responsive {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 th,
 td {
   border-top: 1px solid var(--color-border);
@@ -728,4 +734,115 @@ li .button {
   font-size: 11px;
   color: #16a34a;
   margin-left: 6px;
+}
+
+/* Prediction Tuning Pane */
+.tuning-pane-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 1000;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.tuning-pane-overlay.open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.tuning-pane {
+  position: fixed;
+  top: 0;
+  right: -400px;
+  width: 400px;
+  height: 100vh;
+  background: var(--color-surface);
+  box-shadow: -4px 0 16px rgba(0, 0, 0, 0.1);
+  z-index: 1001;
+  padding: var(--space-5);
+  overflow-y: auto;
+  transition: right 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  flex-direction: column;
+}
+
+.tuning-pane.open {
+  right: 0;
+}
+
+.tuning-pane-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-4);
+  padding-bottom: var(--space-3);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.tuning-pane-header h3 {
+  margin: 0;
+}
+
+.tuning-close {
+  background: transparent;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 0;
+}
+
+.tuning-close:hover {
+  color: var(--color-text-primary);
+}
+
+.tuning-cohort-block {
+  margin-bottom: var(--space-4);
+  padding: var(--space-3);
+  background: #f9fafb;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+}
+
+.tuning-cohort-block h4 {
+  margin-top: 0;
+  margin-bottom: var(--space-2);
+}
+
+.tuning-input-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+}
+
+.tuning-input-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.tuning-input-row label {
+  flex: 0 0 30px;
+  font-weight: 500;
+}
+
+.tuning-input-row input[type="number"] {
+  flex: 1;
+}
+
+.tuning-actions {
+  margin-top: auto;
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
 }

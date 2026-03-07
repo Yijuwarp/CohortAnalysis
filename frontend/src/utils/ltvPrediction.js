@@ -1,40 +1,43 @@
-const MIN_K = 1e-6
-const MAX_K = 20
+const MIN_B = 0.01
+const MAX_B = 1.5
 
 function clamp(value, min, max) {
   return Math.min(max, Math.max(min, value))
 }
 
-function modelValue(day, L, k) {
-  return L * (1 - Math.exp(-k * day))
+function modelValue(day, A, B) {
+  if (day <= 0) return 0
+  return A * Math.pow(day, B)
 }
 
-function fitAtK(days, values, k, maxObserved) {
+function fitAtB(days, values, B) {
   let numerator = 0
   let denominator = 0
 
   for (let index = 0; index < days.length; index += 1) {
     const day = days[index]
-    const basis = 1 - Math.exp(-k * day)
+    if (day <= 0) continue
+    const basis = Math.pow(day, B)
     numerator += values[index] * basis
     denominator += basis * basis
   }
 
-  const estimatedL = denominator > 0 ? numerator / denominator : maxObserved
-  const rawL = Math.max(maxObserved, Number.isFinite(estimatedL) ? estimatedL : maxObserved)
-  const L = clamp(rawL, maxObserved, Math.max(maxObserved, maxObserved * 10))
+  const estimatedA = denominator > 0 ? numerator / denominator : 0
+  const rawA = Math.max(0, Number.isFinite(estimatedA) ? estimatedA : 0)
+  const A = rawA
 
   let sse = 0
   for (let index = 0; index < days.length; index += 1) {
-    const prediction = modelValue(days[index], L, k)
+    const day = days[index]
+    const prediction = modelValue(day, A, B)
     const residual = values[index] - prediction
     sse += residual * residual
   }
 
-  return { L, sse }
+  return { A, sse }
 }
 
-export function fitSaturatingExponential(days, values) {
+export function fitPowerLaw(days, values) {
   const safeDays = []
   const safeValues = []
 
@@ -50,55 +53,52 @@ export function fitSaturatingExponential(days, values) {
 
   if (safeDays.length === 0) {
     return {
-      L: 0,
-      k: 0.01,
+      A: 0,
+      B: 0.5,
       fittedValues: [],
       residualVariance: 0,
     }
   }
 
-  const maxObserved = Math.max(0, ...safeValues)
-  let bestK = 0.05
-  let bestL = Math.max(maxObserved, 0)
+  let bestB = 0.5
+  let bestA = 0
   let bestSse = Number.POSITIVE_INFINITY
-  let lowK = 1e-4
-  let highK = 2
+  let lowB = MIN_B
+  let highB = MAX_B
 
   for (let round = 0; round < 7; round += 1) {
     const steps = 64
-    const logLow = Math.log(lowK)
-    const logHigh = Math.log(highK)
-
     for (let step = 0; step < steps; step += 1) {
       const ratio = step / (steps - 1)
-      const candidateK = Math.exp(logLow + (logHigh - logLow) * ratio)
-      const { L, sse } = fitAtK(safeDays, safeValues, candidateK, maxObserved)
+      const candidateB = lowB + (highB - lowB) * ratio
+      const { A, sse } = fitAtB(safeDays, safeValues, candidateB)
       if (sse < bestSse) {
         bestSse = sse
-        bestK = candidateK
-        bestL = L
+        bestB = candidateB
+        bestA = A
       }
     }
 
-    lowK = clamp(bestK / 3, MIN_K, MAX_K)
-    highK = clamp(bestK * 3, MIN_K, MAX_K)
+    const margin = (highB - lowB) / 4
+    lowB = clamp(bestB - margin, MIN_B, MAX_B)
+    highB = clamp(bestB + margin, MIN_B, MAX_B)
   }
 
-  const fittedValues = safeDays.map((day) => modelValue(day, bestL, bestK))
+  const fittedValues = safeDays.map((day) => modelValue(day, bestA, bestB))
   const degreesOfFreedom = safeDays.length - 2
   const residualVariance = degreesOfFreedom > 0 ? bestSse / degreesOfFreedom : 0
 
   return {
-    L: bestL,
-    k: bestK,
+    A: bestA,
+    B: bestB,
     fittedValues,
     residualVariance,
   }
 }
 
 export function generateProjection({
-  L,
-  k,
+  A,
+  B,
   lastObservedDay,
   horizonDays,
   residualVariance = 0,
@@ -106,14 +106,14 @@ export function generateProjection({
   const projectedCurve = {}
   const upperCI = {}
   const lowerCI = {}
-  const safeL = Number.isFinite(Number(L)) ? Number(L) : 0
-  const safeK = Math.max(MIN_K, Number.isFinite(Number(k)) ? Number(k) : MIN_K)
+  const safeA = Number.isFinite(Number(A)) ? Number(A) : 0
+  const safeB = clamp(Number.isFinite(Number(B)) ? Number(B) : MIN_B, MIN_B, MAX_B)
   const safeLastObservedDay = Math.max(0, Number(lastObservedDay) || 0)
   const safeHorizonDays = Math.max(safeLastObservedDay, Number(horizonDays) || safeLastObservedDay)
   const baseMargin = 1.96 * Math.sqrt(Math.max(0, Number(residualVariance) || 0))
 
   for (let day = safeLastObservedDay + 1; day <= safeHorizonDays; day += 1) {
-    const prediction = modelValue(day, safeL, safeK)
+    const prediction = modelValue(day, safeA, safeB)
     const distance = day - safeLastObservedDay
     const scaledMargin = baseMargin * Math.sqrt(1 + distance / 10)
     projectedCurve[day] = Number.isFinite(prediction) ? prediction : 0
