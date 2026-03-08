@@ -94,7 +94,7 @@ def test_mapping_rejects_empty_event_timestamp(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
-    assert "Timestamp value cannot be null" in response.json()["detail"]
+    assert "event_time must not be empty" in response.json()["detail"]
 
 
 def test_mapping_deduplicates_and_aggregates_event_count(client: TestClient, db_connection) -> None:
@@ -138,7 +138,7 @@ def test_mapping_rejects_float_event_count(client: TestClient) -> None:
         },
     )
     assert response.status_code == 400
-    assert "Invalid integer value" in response.json()["detail"]
+    assert "event_count must be integer >= 1" in response.json()["detail"]
 
 
 def test_mapping_normalizes_coarse_timestamps(client: TestClient, db_connection) -> None:
@@ -292,3 +292,86 @@ def test_revenue_config_events_available_when_revenue_not_mapped(client: TestCli
     config_by_event = {event['event_name']: event for event in payload['events']}
     assert config_by_event == {}
     assert payload['addable_events'] == ['session_start', 'signup']
+
+def test_mapping_handles_quoted_timestamps(client: TestClient, db_connection):
+    csv_text = (
+        'uid,event,timestamp\n'
+        'u1,signup,"2024-01-01 09:30:10"\n'
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_mapping_handles_iso_timestamps(client: TestClient, db_connection):
+    csv_text = (
+        "uid,event,timestamp\n"
+        "u1,signup,2024-01-01T09:30:10\n"
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_mapping_handles_millisecond_timestamps(client: TestClient, db_connection):
+    csv_text = (
+        "uid,event,timestamp\n"
+        "u1,signup,2024-01-01 09:30:10.123\n"
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_mapping_handles_hour_precision_timestamp(client: TestClient, db_connection):
+    csv_text = (
+        "uid,event,timestamp\n"
+        "u1,signup,2024-01-01 09\n"
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    response = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP"},
+        },
+    )
+
+    assert response.status_code == 200

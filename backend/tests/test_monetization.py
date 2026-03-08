@@ -252,3 +252,75 @@ def test_update_revenue_config_rejects_empty_payload(client: TestClient) -> None
     response = client.post('/update-revenue-config', json={'revenue_config': {}})
     assert response.status_code == 400
     assert response.json()['detail'] == 'revenue_config cannot be empty'
+
+
+def test_revenue_override_handles_large_values(client: TestClient) -> None:
+    csv_text = (
+        "uid,event,timestamp,count\n"
+        "u1,search,2024-01-01 10:00:00,3\n"
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "event_count_column": "count",
+            "column_types": {
+                "uid": "TEXT",
+                "event": "TEXT",
+                "timestamp": "TIMESTAMP",
+                "count": "NUMERIC",
+            },
+        },
+    )
+
+    response = client.post(
+        "/update-revenue-config",
+        json={
+            "events": [
+                {"event_name": "search", "include": True, "override": 5}
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_revenue_override_handles_high_override_values(client: TestClient) -> None:
+    csv_text = (
+        "uid,event,timestamp,count\n"
+        "u1,search,2024-01-01 10:00:00,2\n"
+    )
+
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+
+    client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "uid",
+            "event_name_column": "event",
+            "event_time_column": "timestamp",
+            "event_count_column": "count",
+            "column_types": {
+                "uid": "TEXT",
+                "event": "TEXT",
+                "timestamp": "TIMESTAMP",
+                "count": "NUMERIC",
+            },
+        },
+    )
+
+    response = client.post(
+        "/update-revenue-config",
+        json={
+            "events": [
+                {"event_name": "search", "include": True, "override": 100}
+            ]
+        },
+    )
+
+    assert response.status_code == 200
