@@ -1,7 +1,9 @@
 import json
 import logging
 import math
+import os
 import re
+import tempfile
 from datetime import date, datetime, timezone
 from pathlib import Path
 
@@ -58,8 +60,16 @@ class RevenueConfigItem(BaseModel):
     override: float | None = None
 
 
+class RevenueEventSelectionPayloadItem(BaseModel):
+    """Item format used in the events-list variant of UpdateRevenueConfigRequest."""
+    event_name: str
+    include: bool
+    override: float | None = None
+
+
 class UpdateRevenueConfigRequest(BaseModel):
     revenue_config: dict[str, RevenueConfigItem] = Field(default_factory=dict)
+    events: list[RevenueEventSelectionPayloadItem] = Field(default_factory=list)
 
 
 class ScopeFilter(BaseModel):
@@ -710,6 +720,13 @@ def ensure_normalized_events_revenue_columns(connection: duckdb.DuckDBPyConnecti
     if "modified_revenue" not in existing_columns:
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_revenue DOUBLE")
 
+    # Ensure any pre-existing revenue columns with DECIMAL precision are widened to DOUBLE
+    column_types = get_column_type_map(connection, table_name)
+    for col in ("original_revenue", "modified_revenue"):
+        col_type = column_types.get(col, "").upper()
+        if col_type and col_type != "DOUBLE" and not col_type.startswith("FLOAT"):
+            connection.execute(f"ALTER TABLE {table_name} ALTER COLUMN {col} TYPE DOUBLE")
+
     connection.execute(
         f"""
         UPDATE {table_name}
@@ -740,7 +757,7 @@ def recompute_modified_revenue_columns(connection: duckdb.DuckDBPyConnection, ta
             END,
             modified_revenue = CASE
                 WHEN rc.event_name IS NULL OR rc.is_included = FALSE THEN 0
-                WHEN rc.override_value IS NOT NULL THEN en.original_event_count * rc.override_value
+                WHEN rc.override_value IS NOT NULL THEN CAST(en.original_event_count AS DOUBLE) * CAST(rc.override_value AS DOUBLE)
                 ELSE en.original_revenue
             END
         FROM revenue_event_selection rc
@@ -1097,52 +1114,73 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
     end_timer = time_block("csv_upload")
+    tmp_path = None
     try:
-        try:
-            dataframe = pd.read_csv(file.file, keep_default_na=False, na_values=[""])
-        except Exception as exc:
-            end_timer(error=str(exc))
-            raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
-        finally:
-            await file.close()
+        contents = await file.read()
+        file_size = len(contents)
 
-        if len(dataframe.columns) < 3:
-            end_timer(error="insufficient_columns")
-            raise HTTPException(status_code=400, detail="CSV must contain at least 3 columns")
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
+            tmp.write(contents)
+            tmp_path = tmp.name
 
         connection = get_connection()
         try:
-            connection.register("uploaded_events", dataframe)
             connection.execute("DROP TABLE IF EXISTS events")
-            connection.execute("CREATE TABLE events AS SELECT * FROM uploaded_events")
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE events AS
+                    SELECT *
+                    FROM read_csv_auto(?)
+                    """,
+                    [tmp_path],
+                )
+            except Exception as exc:
+                end_timer(error=str(exc))
+                raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(exc)}") from exc
+
             reset_application_state(connection)
+
+            row_count = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+            column_info = connection.execute("PRAGMA table_info('events')").fetchall()
+            column_names = [row[1] for row in column_info]
+
+            if len(column_names) < 3:
+                end_timer(error="insufficient_columns")
+                raise HTTPException(status_code=400, detail="CSV must contain at least 3 columns")
+
+            # Get a sample for type detection to avoid materializing the entire dataset in Pandas
+            sample_df = connection.execute("SELECT * FROM events LIMIT 10000").df()
+            detected_types = {
+                str(column): detect_column_type(sample_df[column])
+                for column in column_names
+            }
+            mapping_suggestions = suggest_column_mapping(column_names)
+
+            end_timer(
+                row_count=row_count,
+                column_count=len(column_names),
+                file_size=file_size
+            )
+
+            return {
+                "rows_imported": row_count,
+                "columns": column_names,
+                "detected_types": detected_types,
+                "mapping_suggestions": mapping_suggestions,
+            }
         finally:
             connection.close()
-
-        column_names = [str(column) for column in dataframe.columns.tolist()]
-        detected_types = {
-            str(column): detect_column_type(dataframe[column])
-            for column in dataframe.columns
-        }
-        mapping_suggestions = suggest_column_mapping(column_names)
-
-        end_timer(
-            row_count=len(dataframe),
-            column_count=len(dataframe.columns),
-            file_size=file.size
-        )
-
-        return {
-            "rows_imported": int(len(dataframe)),
-            "columns": column_names,
-            "detected_types": detected_types,
-            "mapping_suggestions": mapping_suggestions,
-        }
     except HTTPException:
         raise
     except Exception as exc:
         end_timer(error=str(exc))
         raise
+    finally:
+        await file.close()
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
 
 
 @app.post("/map-columns")
@@ -1183,9 +1221,11 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                 detail=f"Mapped columns not found in uploaded CSV: {', '.join(missing_columns)}",
             )
         end_timer = time_block("csv_normalization")
-        events_df = connection.execute("SELECT * FROM events").df()
+
+        # Get a sample for type detection if column_types are not fully provided
+        sample_df = connection.execute("SELECT * FROM events LIMIT 10000").df()
         selected_types = {
-            column: str(mapping.column_types.get(column, detect_column_type(events_df[column]))).upper()
+            column: str(mapping.column_types.get(column, detect_column_type(sample_df[column]))).upper()
             for column in existing_columns
         }
         allowed_types = {"TEXT", "NUMERIC", "TIMESTAMP", "BOOLEAN"}
@@ -1205,6 +1245,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                     status_code=400,
                     detail=f"Mapped field '{field_name}' requires {expected_type} type, got {actual}",
                 )
+
         if mapping.event_count_column:
             actual = selected_types[mapping.event_count_column]
             if actual != "NUMERIC":
@@ -1222,82 +1263,137 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                     detail=f"Mapped field 'revenue_column' requires NUMERIC type, got {actual}",
                 )
 
-        parsed_rows: list[dict[str, object]] = []
-        for _, row in events_df.iterrows():
-            parsed_row: dict[str, object] = {}
-            for column in existing_columns:
-                value = row[column]
-                if pd.isna(value):
-                    value = None
-                selected_type = selected_types[column]
-                if selected_type == "TEXT":
-                    parsed_row[column] = None if value is None or str(value).strip() == "" else str(value)
-                elif selected_type == "NUMERIC":
-                    if value is None or str(value).strip() == "":
-                        parsed_row[column] = None
-                    else:
-                        try:
-                            if column == mapping.event_count_column:
-                                parsed_row[column] = parse_int_value(value)
-                            else:
-                                parsed_row[column] = float(value)
-                        except ValueError as exc:
-                            error_prefix = "Invalid integer value" if column == mapping.event_count_column else "Invalid numeric value"
-                            raise HTTPException(status_code=400, detail=f"{error_prefix} in column '{column}': {value}") from exc
-                elif selected_type == "BOOLEAN":
-                    if value is None or str(value).strip() == "":
-                        parsed_row[column] = None
-                    else:
-                        try:
-                            parsed_row[column] = parse_bool_value(value)
-                        except ValueError as exc:
-                            raise HTTPException(status_code=400, detail=f"Invalid boolean value in column '{column}': {value}") from exc
-                else:
-                    parsed_row[column] = normalize_event_timestamp_value(
-                        value,
-                        allow_empty=column != mapping.event_time_column,
-                    )
+        # Validation 1: Reject empty event_time values
+        time_col_q = quote_identifier(str(mapping.event_time_column))
 
-            event_count = 1
-            if mapping.event_count_column:
-                candidate_count = parsed_row[mapping.event_count_column]
-                if candidate_count is None:
-                    raise HTTPException(status_code=400, detail="event_count must not be null")
-                if not isinstance(candidate_count, int):
-                    raise HTTPException(status_code=400, detail="event_count must be an integer")
-                if candidate_count < 1:
-                    raise HTTPException(status_code=400, detail="event_count must be >= 1")
-                event_count = candidate_count
+        empty_time_count = connection.execute(f"""
+            SELECT COUNT(*)
+            FROM events
+            WHERE {time_col_q} IS NULL
+            OR TRIM(CAST({time_col_q} AS VARCHAR)) = ''
+        """).fetchone()[0]
+        if empty_time_count > 0:
+            end_timer(error="empty_event_time")
+            raise HTTPException(status_code=400, detail="event_time must not be empty")
 
-            parsed_row["user_id"] = parsed_row.pop(mapping.user_id_column)
-            parsed_row["event_name"] = parsed_row.pop(mapping.event_name_column)
-            parsed_row["event_time"] = parsed_row.pop(mapping.event_time_column)
-            revenue_amount = 0.0
-            if mapping.revenue_column:
-                revenue_candidate = parsed_row[mapping.revenue_column]
-                revenue_amount = 0.0 if revenue_candidate is None else float(revenue_candidate)
-                parsed_row.pop(mapping.revenue_column)
-            if mapping.event_count_column:
-                parsed_row.pop(mapping.event_count_column)
-            parsed_row["original_event_count"] = event_count
-            parsed_row["original_revenue"] = revenue_amount
-            parsed_row["modified_event_count"] = event_count
-            parsed_row["modified_revenue"] = revenue_amount
-            parsed_rows.append(parsed_row)
+        # Validation 2: Reject non-integer event_count values
+        if mapping.event_count_column:
+            count_col_q = quote_identifier(mapping.event_count_column)
+            invalid_count_check = connection.execute(f"""
+                SELECT COUNT(*)
+                FROM events
+                WHERE {count_col_q} IS NULL
+                OR TRY_CAST({count_col_q} AS INTEGER) IS NULL
+                OR CAST({count_col_q} AS DOUBLE) != CAST({count_col_q} AS INTEGER)
+                OR CAST({count_col_q} AS INTEGER) < 1
+            """).fetchone()[0]
+            if invalid_count_check > 0:
+                end_timer(error="invalid_event_count")
+                raise HTTPException(status_code=400, detail="event_count must be integer >= 1")
 
-        normalized_df = pd.DataFrame(parsed_rows)
-        group_columns = [column for column in normalized_df.columns if column not in {"original_event_count", "original_revenue", "modified_event_count", "modified_revenue"}]
-        normalized_df = normalized_df.groupby(group_columns, dropna=False, as_index=False).agg(
-            original_event_count=("original_event_count", "sum"),
-            original_revenue=("original_revenue", "sum"),
-            modified_event_count=("modified_event_count", "sum"),
-            modified_revenue=("modified_revenue", "sum"),
-        )
-        end_timer(row_count=len(normalized_df))
+        # Build SQL for normalization and aggregation
+        # We need to distinguish between core mapped columns, value columns (count/revenue), and metadata columns
+        core_map = {
+            mapping.user_id_column: "user_id",
+            mapping.event_name_column: "event_name",
+            mapping.event_time_column: "event_time",
+        }
+        value_cols = {mapping.event_count_column, mapping.revenue_column} - {None}
+        metadata_cols = [c for c in existing_columns if c not in core_map and c not in value_cols]
+
+        # Get actual DuckDB types to determine if we can fast-path TIMESTAMP parsing
+        actual_types = {
+            row[1]: str(row[2]).upper()
+            for row in connection.execute("PRAGMA table_info('events')").fetchall()
+        }
+
+        def get_cast_expr(col_name: str, target_name: str | None = None) -> str:
+            ctype = selected_types[col_name]
+            q_col = quote_identifier(col_name)
+            alias = f" AS {quote_identifier(target_name)}" if target_name else ""
+            
+            if ctype == "TEXT":
+                return f"NULLIF(TRIM(CAST({q_col} AS VARCHAR)), ''){alias}"
+            elif ctype == "NUMERIC":
+                return f"CAST({q_col} AS DOUBLE){alias}"
+            elif ctype == "BOOLEAN":
+                return f"CAST({q_col} AS BOOLEAN){alias}"
+            elif ctype == "TIMESTAMP":
+                # If DuckDB already inferred TIMESTAMP, use column directly
+                if actual_types.get(col_name) == "TIMESTAMP":
+                    return f"{q_col}{alias}"
+
+                # Otherwise rely on DuckDB parser
+                v_col = f"CAST({q_col} AS VARCHAR)"
+
+                # Remove surrounding CSV quotes and normalize ISO timestamps
+                cleaned = f"REPLACE(TRIM(BOTH '\"' FROM {v_col}), 'T', ' ')"
+
+                # DuckDB parses most formats natively; the only exception is
+                # coarse hour-precision strings like "2024-01-01 09" (length 13)
+                # which need ":00:00" appended before casting.
+                return (
+                    f"COALESCE("
+                    f"TRY_CAST({cleaned} AS TIMESTAMP), "
+                    f"TRY_CAST({cleaned} || ':00:00' AS TIMESTAMP)"
+                    f"){alias}"
+                )
+
+
+
+
+
+
+
+
+
+
+            return f"{q_col}{alias}"
+
+
+        # Expressions for grouping (core + metadata)
+        grouped_expressions = []
+        for col, target in core_map.items():
+            grouped_expressions.append(get_cast_expr(col, target))
+        for col in metadata_cols:
+            grouped_expressions.append(get_cast_expr(col, col))
+        
+        group_by_indices = ", ".join([str(i + 1) for i in range(len(grouped_expressions))])
+
+        # Expressions for values
+        if mapping.event_count_column:
+            count_col_str = str(mapping.event_count_column)
+            count_expr = f"SUM(CAST({quote_identifier(count_col_str)} AS INTEGER))"
+        else:
+            count_expr = "COUNT(*)"
+        
+        if mapping.revenue_column:
+            rev_col_str = str(mapping.revenue_column)
+            rev_expr = f"SUM(COALESCE(CAST({quote_identifier(rev_col_str)} AS DOUBLE), 0.0))"
+        else:
+            rev_expr = "0.0"
+
 
         connection.execute("DROP TABLE IF EXISTS events_normalized")
-        connection.register("temp_import", normalized_df)
-        connection.execute("CREATE TABLE events_normalized AS SELECT * FROM temp_import")
+        sql = f"""
+            CREATE TABLE events_normalized AS
+            SELECT
+                {", ".join(grouped_expressions)},
+                {count_expr} AS original_event_count,
+                {rev_expr} AS original_revenue,
+                {count_expr} AS modified_event_count,
+                {rev_expr} AS modified_revenue
+            FROM events
+            GROUP BY {group_by_indices}
+        """
+        connection.execute(sql)
+
+        row_count = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
+        end_timer(row_count=row_count)
+
+
+
+
         ensure_normalized_events_revenue_columns(connection)
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN original_event_count SET NOT NULL")
         connection.execute(
@@ -1308,6 +1404,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_event_count SET NOT NULL")
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET DEFAULT 0")
         connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET NOT NULL")
+
 
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
@@ -2148,9 +2245,22 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
         ).fetchone()[0]
         if not normalized_exists:
             raise HTTPException(status_code=400, detail="No normalized events found. Upload and map columns first.")
-        if not payload.revenue_config:
+        if not payload.revenue_config and not payload.events:
             raise HTTPException(status_code=400, detail="revenue_config cannot be empty")
 
+        if payload.events:
+            for item in payload.events:
+                connection.execute(
+                    """
+                    INSERT INTO revenue_event_selection (event_name, is_included, override_value)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT (event_name)
+                    DO UPDATE SET
+                        is_included = excluded.is_included,
+                        override_value = excluded.override_value
+                    """,
+                    [item.event_name, bool(item.include), item.override],
+                )
         for event_name, config in payload.revenue_config.items():
             connection.execute(
                 """
