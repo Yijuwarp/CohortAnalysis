@@ -1096,38 +1096,53 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Only CSV files are supported")
 
+    end_timer = time_block("csv_upload")
     try:
-        dataframe = pd.read_csv(file.file, keep_default_na=False, na_values=[""])
+        try:
+            dataframe = pd.read_csv(file.file, keep_default_na=False, na_values=[""])
+        except Exception as exc:
+            end_timer(error=str(exc))
+            raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
+        finally:
+            await file.close()
+
+        if len(dataframe.columns) < 3:
+            end_timer(error="insufficient_columns")
+            raise HTTPException(status_code=400, detail="CSV must contain at least 3 columns")
+
+        connection = get_connection()
+        try:
+            connection.register("uploaded_events", dataframe)
+            connection.execute("DROP TABLE IF EXISTS events")
+            connection.execute("CREATE TABLE events AS SELECT * FROM uploaded_events")
+            reset_application_state(connection)
+        finally:
+            connection.close()
+
+        column_names = [str(column) for column in dataframe.columns.tolist()]
+        detected_types = {
+            str(column): detect_column_type(dataframe[column])
+            for column in dataframe.columns
+        }
+        mapping_suggestions = suggest_column_mapping(column_names)
+
+        end_timer(
+            row_count=len(dataframe),
+            column_count=len(dataframe.columns),
+            file_size=file.size
+        )
+
+        return {
+            "rows_imported": int(len(dataframe)),
+            "columns": column_names,
+            "detected_types": detected_types,
+            "mapping_suggestions": mapping_suggestions,
+        }
+    except HTTPException:
+        raise
     except Exception as exc:
-        raise HTTPException(status_code=400, detail="Invalid CSV file") from exc
-    finally:
-        await file.close()
-
-    if len(dataframe.columns) < 3:
-        raise HTTPException(status_code=400, detail="CSV must contain at least 3 columns")
-
-    connection = get_connection()
-    try:
-        connection.register("uploaded_events", dataframe)
-        connection.execute("DROP TABLE IF EXISTS events")
-        connection.execute("CREATE TABLE events AS SELECT * FROM uploaded_events")
-        reset_application_state(connection)
-    finally:
-        connection.close()
-
-    column_names = [str(column) for column in dataframe.columns.tolist()]
-    detected_types = {
-        str(column): detect_column_type(dataframe[column])
-        for column in dataframe.columns
-    }
-    mapping_suggestions = suggest_column_mapping(column_names)
-
-    return {
-        "rows_imported": int(len(dataframe)),
-        "columns": column_names,
-        "detected_types": detected_types,
-        "mapping_suggestions": mapping_suggestions,
-    }
+        end_timer(error=str(exc))
+        raise
 
 
 @app.post("/map-columns")
