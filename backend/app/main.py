@@ -1,4 +1,5 @@
 import json
+import logging
 import math
 import re
 from datetime import date, datetime, timezone
@@ -9,6 +10,16 @@ import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
+
+from app.utils.perf import time_block
+
+if not logging.getLogger().handlers:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+    )
+
+# Logger is configured globally, perf.py uses it internally.
 
 app = FastAPI(title="Behavioral Cohort Analysis API")
 
@@ -1001,6 +1012,7 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
         return
 
     cohort_ids = [int(row[0]) for row in connection.execute("SELECT cohort_id FROM cohorts ORDER BY cohort_id").fetchall()]
+    end_timer = time_block("cohort_rebuild")
     for cohort_id in cohort_ids:
         connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
         connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
@@ -1016,6 +1028,7 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
             "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
             [bool(cohort_size > 0), cohort_id],
         )
+    end_timer(cohort_count=len(cohort_ids))
 
 
 def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
@@ -1154,7 +1167,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                 status_code=400,
                 detail=f"Mapped columns not found in uploaded CSV: {', '.join(missing_columns)}",
             )
-
+        end_timer = time_block("csv_normalization")
         events_df = connection.execute("SELECT * FROM events").df()
         selected_types = {
             column: str(mapping.column_types.get(column, detect_column_type(events_df[column]))).upper()
@@ -1172,6 +1185,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         ]:
             actual = selected_types[column_name]
             if actual != expected_type:
+                end_timer(error="type_mismatch")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Mapped field '{field_name}' requires {expected_type} type, got {actual}",
@@ -1179,6 +1193,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         if mapping.event_count_column:
             actual = selected_types[mapping.event_count_column]
             if actual != "NUMERIC":
+                end_timer(error="type_mismatch_event_count")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Mapped field 'event_count' requires NUMERIC type, got {actual}",
@@ -1186,6 +1201,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         if mapping.revenue_column:
             actual = selected_types[mapping.revenue_column]
             if actual != "NUMERIC":
+                end_timer(error="type_mismatch_revenue")
                 raise HTTPException(
                     status_code=400,
                     detail=f"Mapped field 'revenue_column' requires NUMERIC type, got {actual}",
@@ -1262,6 +1278,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             modified_event_count=("modified_event_count", "sum"),
             modified_revenue=("modified_revenue", "sum"),
         )
+        end_timer(row_count=len(normalized_df))
 
         connection.execute("DROP TABLE IF EXISTS events_normalized")
         connection.register("temp_import", normalized_df)
@@ -1397,6 +1414,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
                 )
 
         where_clause, params = build_where_clause(payload)
+        end_timer = time_block("scope_rebuild")
         connection.execute("DROP TABLE IF EXISTS events_scoped")
         connection.execute(
             f"CREATE TABLE events_scoped AS SELECT * FROM events_normalized {where_clause}",
@@ -1415,6 +1433,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
         )
         rebuild_all_cohort_memberships(connection)
         refresh_cohort_activity(connection)
+        end_timer(filtered_rows=counts["filtered_rows"])
 
         return {
             "status": "ok",
@@ -1970,8 +1989,10 @@ def get_retention(
         if not scoped_exists:
             return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
 
+        end_timer = time_block("retention_query")
         cohorts, cohort_sizes = build_active_cohort_base(connection)
         if not cohorts:
+            end_timer(max_day=max_day, retention_event=retention_event, cohort_count=0)
             return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
 
         active_rows = fetch_retention_active_rows(connection, max_day, retention_event)
@@ -2007,6 +2028,12 @@ def get_retention(
             if include_ci:
                 row["retention_ci"] = retention_ci
             retention_table.append(row)
+
+        end_timer(
+            max_day=max_day,
+            retention_event=retention_event,
+            cohort_count=len(cohorts)
+        )
 
         return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": retention_table}
     finally:
@@ -2189,8 +2216,10 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
         if not scoped_exists:
             return empty_response
 
+        end_timer = time_block("monetization_query")
         cohorts, cohort_sizes = build_active_cohort_base(connection)
         if not cohorts:
+            end_timer(metric="cumulative_revenue_per_acquired_user", max_day=max_day, cohort_count=0)
             return empty_response
 
         revenue_rows = connection.execute(
@@ -2244,6 +2273,12 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
             for cohort_id, day_number, active_users in retained_rows
         ]
 
+        end_timer(
+            metric="cumulative_revenue_per_acquired_user",
+            max_day=max_day,
+            cohort_count=len(cohorts)
+        )
+
         return {
             "max_day": int(max_day),
             "revenue_table": revenue_table,
@@ -2278,12 +2313,15 @@ def get_usage(
         if not scoped_exists:
             return empty_response
 
+        end_timer = time_block("usage_query")
         cohorts, cohort_sizes = build_active_cohort_base(connection)
         if not cohorts:
+            end_timer(event=event, max_day=max_day, retention_event=retention_event, cohort_count=0)
             return empty_response
 
         event_exists = connection.execute("SELECT 1 FROM events_scoped WHERE event_name = ? LIMIT 1", [event]).fetchone()
         if event_exists is None:
+            end_timer(event=event, max_day=max_day, retention_event=retention_event, error="event_not_found")
             return empty_response
 
         usage_rows = connection.execute(
@@ -2334,6 +2372,13 @@ def get_usage(
             usage_volume_table.append({**common_metadata, "values": volume_values})
             usage_users_table.append({**common_metadata, "values": user_values})
             retained_users_table.append({**common_metadata, "values": retained_values})
+
+        end_timer(
+            event=event,
+            max_day=max_day,
+            retention_event=retention_event,
+            cohort_count=len(cohorts)
+        )
 
         return {
             "max_day": int(max_day),
