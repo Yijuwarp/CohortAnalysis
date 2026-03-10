@@ -14,8 +14,6 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-const MAX_DAY_DETECTION_WINDOW = 365
-
 export default function MonetizationTable({ refreshToken, maxDay }) {
   const [isPinned, setIsPinned] = useState(true)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
@@ -132,18 +130,6 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
       <h2>7. Monetization</h2>
       <div className="retention-header">
         <div className="retention-controls-left">
-          <label>
-            Max Day
-            <input
-              type="number"
-              min="0"
-              value={maxDay}
-              onChange={(e) => {
-                setUserModifiedMaxDay(true)
-                setMaxDay(e.target.value)
-              }}
-            />
-          </label>
           <label>
             Metric
             <select

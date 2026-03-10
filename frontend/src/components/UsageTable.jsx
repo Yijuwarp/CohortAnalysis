@@ -172,18 +172,6 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           />
         </label>
         <label>
-          Max Day
-          <input
-            type="number"
-            min="0"
-            value={maxDay}
-            onChange={(e) => {
-              setUserModifiedMaxDay(true)
-              setMaxDay(e.target.value)
-            }}
-          />
-        </label>
-        <label>
           Unique Users
           <select value={modeUsers} onChange={(e) => setModeUsers(e.target.value)}>
             <option value="count">Count</option>

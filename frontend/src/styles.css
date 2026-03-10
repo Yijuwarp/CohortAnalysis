@@ -899,3 +899,140 @@ li .button {
   justify-content: flex-end;
   gap: var(--space-3);
 }
+.workspace-root {
+  max-width: 100%;
+  padding: 16px;
+}
+
+.onboarding-card {
+  max-width: 760px;
+  margin: 40px auto;
+}
+
+.sample-dataset {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  padding: 12px;
+  border-radius: 8px;
+}
+
+.mapping-progress-overlay {
+  display: flex;
+  gap: 20px;
+  background: #eef2ff;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 12px;
+}
+
+.mapping-progress-overlay .active {
+  font-weight: 700;
+}
+
+.workspace-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.top-bar {
+  position: relative;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.top-bar.collapsed {
+  min-height: 44px;
+}
+
+.collapse-control {
+  position: absolute;
+  right: 10px;
+  top: 8px;
+  border: 1px solid var(--color-border);
+  background: #f8fafc;
+  border-radius: 6px;
+}
+
+.warning-text {
+  color: #92400e;
+  margin-top: 8px;
+}
+
+.workspace-banner {
+  background: #ecfdf3;
+  border: 1px solid #86efac;
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
+.dataset-row {
+  background: #f8fafc;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+.workspace-body {
+  display: flex;
+  gap: 12px;
+}
+
+.left-pane {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: white;
+  padding: 8px;
+  overflow: auto;
+}
+
+.left-pane.collapsed {
+  padding: 6px;
+}
+
+.left-pane .card {
+  padding: 12px;
+  margin-bottom: 10px;
+}
+
+.left-pane-header {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.icon-rail {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.analytics-area {
+  flex: 1;
+  min-width: 0;
+}
+
+.analytics-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.analytics-tabs button {
+  border: 1px solid var(--color-border);
+  background: #f8fafc;
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.analytics-tabs button.active {
+  background: #2563eb;
+  color: #fff;
+}
+
+.pane-section > h3 {
+  cursor: pointer;
+}
