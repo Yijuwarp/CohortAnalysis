@@ -901,6 +901,7 @@ li .button {
 }
 .workspace-root {
   max-width: 100%;
+  min-height: 100vh;
   padding: 16px;
 }
 
@@ -980,6 +981,7 @@ li .button {
 .workspace-body {
   display: flex;
   gap: 12px;
+  align-items: stretch;
 }
 
 .left-pane {
@@ -988,6 +990,7 @@ li .button {
   background: white;
   padding: 0;
   overflow: auto;
+  height: 100%;
 }
 
 .left-pane.collapsed {
@@ -1018,7 +1021,13 @@ li .button {
 .icon-rail {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
+}
+
+.icon-rail button {
+  width: 32px;
+  height: 32px;
 }
 
 .analytics-area {
@@ -1064,12 +1073,24 @@ li .button {
   display: flex;
   align-items: center;
   gap: 6px;
+  padding: 4px;
+}
+
+.pane-section-header:hover {
+  background: #f1f5f9;
+  border-radius: 6px;
 }
 
 .pane-toggle {
-  width: 14px;
+  width: 18px;
   display: inline-block;
+  text-align: center;
   font-weight: 700;
+}
+
+.pane-icon {
+  width: 18px;
+  text-align: center;
 }
 
 .pane-section-hint {
