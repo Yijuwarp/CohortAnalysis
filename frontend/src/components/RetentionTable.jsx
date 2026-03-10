@@ -5,7 +5,7 @@ import RetentionGraph from './RetentionGraph'
 
 const MAX_DAY_DETECTION_WINDOW = 365
 
-export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay }) {
+export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true }) {
   const [hasInitializedMaxDay, setHasInitializedMaxDay] = useState(false)
   const [isPinned, setIsPinned] = useState(true)
   const [events, setEvents] = useState([])
@@ -83,26 +83,30 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       <h2>5. Retention</h2>
       <div className="retention-header">
         <div className="retention-controls-left">
-          <label>
-            Max Day
-            <input
-              type="number"
-              min="0"
-              value={maxDay}
-              onChange={(e) => {
-                setMaxDay(e.target.value)
-              }}
-            />
-          </label>
-          <label>
-            Retention Event
-            <SearchableSelect
-              options={[{ label: 'Any Event', value: 'any' }, ...events]}
-              value={retentionEvent}
-              onChange={onRetentionEventChange}
-              placeholder="Select retention event"
-            />
-          </label>
+          {showGlobalControls && (
+            <>
+              <label>
+                Max Day
+                <input
+                  type="number"
+                  min="0"
+                  value={maxDay}
+                  onChange={(e) => {
+                    setMaxDay(Number(e.target.value))
+                  }}
+                />
+              </label>
+              <label>
+                Retention Event
+                <SearchableSelect
+                  options={[{ label: 'Any Event', value: 'any' }, ...events]}
+                  value={retentionEvent}
+                  onChange={onRetentionEventChange}
+                  placeholder="Select retention event"
+                />
+              </label>
+            </>
+          )}
         </div>
 
         <div className="retention-controls-right">

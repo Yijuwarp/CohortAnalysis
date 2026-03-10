@@ -622,10 +622,26 @@ def ensure_scope_tables(connection: duckdb.DuckDBPyConnection) -> None:
             filters_json TEXT,
             total_rows INTEGER,
             filtered_rows INTEGER,
+            total_events BIGINT,
             updated_at TIMESTAMP
         )
         """
     )
+
+    existing_columns = {
+        row[0]
+        for row in connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'dataset_scope' AND table_schema = 'main'
+            """
+        ).fetchall()
+    }
+    if "total_events" not in existing_columns:
+        connection.execute("ALTER TABLE dataset_scope ADD COLUMN total_events BIGINT")
+
+    connection.execute("UPDATE dataset_scope SET total_events = 0 WHERE total_events IS NULL")
 
 
 
@@ -808,7 +824,7 @@ def create_scoped_indexes(connection: duckdb.DuckDBPyConnection) -> None:
 
 def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
     normalized_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
     ).fetchone()[0]
     if not normalized_exists:
         return
@@ -825,31 +841,34 @@ def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[st
     ensure_scope_tables(connection)
     total_rows = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
     filtered_rows = int(connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0])
+    total_events = int(connection.execute("SELECT COALESCE(SUM(COALESCE(modified_event_count, original_event_count, 0)), 0) FROM events_scoped").fetchone()[0] or 0)
 
     connection.execute(
         """
-        INSERT INTO dataset_scope (id, filters_json, total_rows, filtered_rows, updated_at)
-        VALUES (1, ?, ?, ?, ?)
+        INSERT INTO dataset_scope (id, filters_json, total_rows, filtered_rows, total_events, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             filters_json = excluded.filters_json,
             total_rows = excluded.total_rows,
             filtered_rows = excluded.filtered_rows,
+            total_events = excluded.total_events,
             updated_at = excluded.updated_at
         """,
         [
             json.dumps(payload),
             total_rows,
             filtered_rows,
+            total_events,
             datetime.now(timezone.utc),
         ],
     )
-    return {"total_rows": total_rows, "filtered_rows": filtered_rows}
+    return {"total_rows": total_rows, "filtered_rows": filtered_rows, "total_events": total_events}
 
 
 def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection) -> None:
     ensure_cohort_tables(connection)
     scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
     if not scoped_exists:
         return
@@ -1025,7 +1044,7 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
     ensure_cohort_tables(connection)
 
     scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
     if not scoped_exists:
         return
@@ -1058,7 +1077,7 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
         return
 
     scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
     source_table = "events_scoped" if scoped_exists else "events_normalized"
 
@@ -1445,7 +1464,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             raise HTTPException(status_code=400, detail="No normalized events found. Upload and map columns first.")
@@ -1566,13 +1585,14 @@ def get_scope() -> dict[str, object]:
     try:
         ensure_scope_tables(connection)
         row = connection.execute(
-            "SELECT filters_json, total_rows, filtered_rows, updated_at FROM dataset_scope WHERE id = 1"
+            "SELECT filters_json, total_rows, filtered_rows, total_events, updated_at FROM dataset_scope WHERE id = 1"
         ).fetchone()
         if row is None:
             return {
                 "filters_json": {"date_range": None, "filters": []},
                 "total_rows": 0,
                 "filtered_rows": 0,
+                "total_events": 0,
                 "updated_at": None,
             }
 
@@ -1580,7 +1600,8 @@ def get_scope() -> dict[str, object]:
             "filters_json": json.loads(row[0]) if row[0] else {"date_range": None, "filters": []},
             "total_rows": int(row[1] or 0),
             "filtered_rows": int(row[2] or 0),
-            "updated_at": row[3].isoformat() if row[3] else None,
+            "total_events": int(row[3] or 0),
+            "updated_at": row[4].isoformat() if row[4] else None,
         }
     finally:
         connection.close()
@@ -1591,7 +1612,7 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
     connection = get_connection()
     try:
         exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not exists:
             return {"columns": []}
@@ -1631,7 +1652,7 @@ def get_column_values(
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             return {"values": [], "total_distinct": 0}
@@ -1709,7 +1730,7 @@ def get_date_range() -> dict[str, str | None]:
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             return {"min_date": None, "max_date": None}
@@ -1731,7 +1752,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
     connection = get_connection()
     try:
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             raise HTTPException(
@@ -1870,7 +1891,7 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
     try:
         ensure_cohort_tables(connection)
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
         source_table = "events_scoped" if scoped_exists else "events_normalized"
 
@@ -2098,7 +2119,7 @@ def get_retention(
     try:
         ensure_cohort_tables(connection)
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
         if not scoped_exists:
             return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
@@ -2159,7 +2180,7 @@ def list_events() -> dict[str, list[str]]:
     connection = get_connection()
     try:
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
         if not scoped_exists:
             return {"events": []}
@@ -2178,7 +2199,7 @@ def get_revenue_config_events() -> dict[str, object]:
     try:
         ensure_revenue_event_selection_table(connection)
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             return {"has_revenue_mapping": False, "events": [], "addable_events": []}
@@ -2243,7 +2264,7 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
         ensure_revenue_event_selection_table(connection)
 
         normalized_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
         if not normalized_exists:
             raise HTTPException(status_code=400, detail="No normalized events found. Upload and map columns first.")
@@ -2284,11 +2305,18 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
         recompute_modified_revenue_columns(connection, "events_normalized")
 
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
         if scoped_exists:
             recompute_modified_revenue_columns(connection, "events_scoped")
             create_scoped_indexes(connection)
+
+            ensure_scope_tables(connection)
+            scope_row = connection.execute(
+                "SELECT filters_json FROM dataset_scope WHERE id = 1"
+            ).fetchone()
+            filters_payload = json.loads(scope_row[0]) if scope_row and scope_row[0] else {"date_range": None, "filters": []}
+            upsert_dataset_scope(connection, filters_payload)
 
         rows = connection.execute(
         """
@@ -2331,7 +2359,7 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
         ensure_cohort_tables(connection)
         ensure_revenue_event_selection_table(connection)
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
 
         empty_response = {
@@ -2425,7 +2453,7 @@ def get_usage(
     connection = get_connection()
     try:
         scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped'"
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
         ).fetchone()[0]
         ensure_cohort_tables(connection)
 
