@@ -247,40 +247,59 @@ export default function App() {
 
               {isLeftPaneCollapsed ? (
                 <div className="icon-rail">
-                  <button onClick={() => openPaneSection('filters')}>⏳</button>
-                  <button onClick={() => openPaneSection('settings')}>⚙</button>
-                  <button onClick={() => openPaneSection('cohorts')}>👥</button>
+                  <button onClick={() => openPaneSection('filters')} title="Filters">🔎</button>
+                  <button onClick={() => openPaneSection('settings')} title="Analytics Settings">⚙</button>
+                  <button onClick={() => openPaneSection('cohorts')} title="Cohorts">👥</button>
                 </div>
               ) : (
                 <>
-                  <section className="pane-section">
-                    <h3 onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>Filters</h3>
-                    {sections.filters && <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />}
-                  </section>
-                  <section className="pane-section">
-                    <h3 onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>Analytics Settings</h3>
-                    {sections.settings && (
-                      <div className="card">
-                        <label>
-                          Max Analysis Day
-                          <input type="number" min="0" value={globalMaxDay} onChange={(e) => setGlobalMaxDay(Number(e.target.value))} />
-                        </label>
-                        <label>
-                          Retention Event
-                          <SearchableSelect
-                            options={[{ label: 'Any Event', value: 'any' }, ...events]}
-                            value={selectedRetentionEvent}
-                            onChange={setSelectedRetentionEvent}
-                            placeholder="Select retention event"
-                          />
-                        </label>
-                        <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
-                      </div>
+                  <section className={`pane-section ${sections.filters ? 'pane-section-expanded' : ''}`}>
+                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>
+                      <span className="pane-toggle">{sections.filters ? '−' : '+'}</span> <span className="pane-icon">🔎</span> Filters
+                    </h3>
+                    {sections.filters && (
+                      <>
+                        <p className="pane-section-hint">Date range • Property filters</p>
+                        <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
+                      </>
                     )}
                   </section>
-                  <section className="pane-section">
-                    <h3 onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>Cohorts</h3>
-                    {sections.cohorts && <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />}
+                  <section className={`pane-section ${sections.settings ? 'pane-section-expanded' : ''}`}>
+                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>
+                      <span className="pane-toggle">{sections.settings ? '−' : '+'}</span> <span className="pane-icon">⚙</span> Analytics Settings
+                    </h3>
+                    {sections.settings && (
+                      <>
+                        <p className="pane-section-hint">Max day • Retention event • Revenue configuration</p>
+                        <div className="card">
+                          <label>
+                            Max Analysis Day
+                            <input type="number" min="0" value={globalMaxDay} onChange={(e) => setGlobalMaxDay(Number(e.target.value))} />
+                          </label>
+                          <label>
+                            Retention Event
+                            <SearchableSelect
+                              options={[{ label: 'Any Event', value: 'any' }, ...events]}
+                              value={selectedRetentionEvent}
+                              onChange={setSelectedRetentionEvent}
+                              placeholder="Select retention event"
+                            />
+                          </label>
+                          <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
+                        </div>
+                      </>
+                    )}
+                  </section>
+                  <section className={`pane-section ${sections.cohorts ? 'pane-section-expanded' : ''}`}>
+                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>
+                      <span className="pane-toggle">{sections.cohorts ? '−' : '+'}</span> <span className="pane-icon">👥</span> Cohorts
+                    </h3>
+                    {sections.cohorts && (
+                      <>
+                        <p className="pane-section-hint">Create and manage cohorts</p>
+                        <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
+                      </>
+                    )}
                   </section>
                 </>
               )}

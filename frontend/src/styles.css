@@ -986,7 +986,7 @@ li .button {
   border: 1px solid var(--color-border);
   border-radius: 8px;
   background: white;
-  padding: 8px;
+  padding: 0;
   overflow: auto;
 }
 
@@ -996,12 +996,23 @@ li .button {
 
 .left-pane .card {
   padding: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .left-pane-header {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  background: white;
+  border-bottom: 1px solid var(--color-border);
   display: flex;
   justify-content: flex-end;
+  padding: 8px;
+}
+
+.left-pane label {
+  display: block;
+  margin-bottom: 10px;
 }
 
 .icon-rail {
@@ -1033,6 +1044,36 @@ li .button {
   color: #fff;
 }
 
-.pane-section > h3 {
+.pane-section {
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  padding: 10px;
+  margin: 10px;
+  background: #ffffff;
+}
+
+.pane-section-expanded {
+  border-color: #2563eb;
+  box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+}
+
+.pane-section-header {
   cursor: pointer;
+  margin: 0;
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.pane-toggle {
+  width: 14px;
+  display: inline-block;
+  font-weight: 700;
+}
+
+.pane-section-hint {
+  font-size: 12px;
+  color: #64748b;
+  margin: 8px 0;
 }
