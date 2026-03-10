@@ -142,6 +142,17 @@ def test_monetization_negative_revenue_included(client: TestClient) -> None:
     assert day_one['revenue'] == 2.75
 
 
+def test_monetization_invalid_max_day_defaults_to_seven(client: TestClient) -> None:
+    _prepare_monetization_fixture(client)
+
+    for raw_value in ('NaN', '0', 'abc', '-2', '', '3.9'):
+        response = client.get(f'/monetization?max_day={raw_value}')
+        assert response.status_code == 200, response.text
+
+        expected = 3 if raw_value == '3.9' else 7
+        assert response.json()['max_day'] == expected
+
+
 def test_monetization_excludes_hidden_cohorts(client: TestClient) -> None:
     _prepare_monetization_fixture(client)
 
