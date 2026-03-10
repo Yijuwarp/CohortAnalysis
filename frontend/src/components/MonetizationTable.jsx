@@ -17,7 +17,6 @@ const METRIC_OPTIONS = [
 const MAX_DAY_DETECTION_WINDOW = 365
 
 export default function MonetizationTable({ refreshToken, maxDay }) {
-  const [effectiveMaxDay, setEffectiveMaxDay] = useState(maxDay)
   const [isPinned, setIsPinned] = useState(true)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState('table')
@@ -30,13 +29,24 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   const [predictionHorizon, setPredictionHorizon] = useState(90)
   const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
 
+  const safeMaxDay = useMemo(() => {
+    const numericMaxDay = Number(maxDay)
+    if (!Number.isFinite(numericMaxDay) || numericMaxDay < 0) {
+      return 7
+    }
+
+    return Math.floor(numericMaxDay)
+  }, [maxDay])
+
   const predictionEnabled = metricType === 'cumulative_revenue' || metricType === 'cumulative_revenue_per_acquired_user'
 
   const loadData = async (overrideMaxDay) => {
+    const nextMaxDay = typeof overrideMaxDay === 'number' ? overrideMaxDay : safeMaxDay
+
     setLoading(true)
     setError('')
     try {
-      const response = await getMonetization(Number(overrideMaxDay ?? maxDay))
+      const response = await getMonetization(nextMaxDay)
       setRevenueRows(response.revenue_table || [])
       setCohortSizes(response.cohort_sizes || [])
       setRetainedRows(response.retained_users_table || [])
@@ -51,10 +61,10 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   }
 
   useEffect(() => {
-    loadData(maxDay)
-  }, [refreshToken, maxDay])
+    loadData(safeMaxDay)
+  }, [refreshToken, safeMaxDay])
 
-  const dayColumns = useMemo(() => Array.from({ length: Number(maxDay) + 1 }, (_, idx) => idx), [maxDay])
+  const dayColumns = useMemo(() => Array.from({ length: safeMaxDay + 1 }, (_, idx) => idx), [safeMaxDay])
 
   const displayRows = useMemo(() => buildMonetizationRows({
     cohortSizes,
@@ -64,12 +74,10 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
     metricType,
   }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
 
-  useEffect(() => {
-    setEffectiveMaxDay(Number(maxDay))
-  }, [maxDay])
+  const effectiveMaxDay = safeMaxDay
 
   const visibleDayColumns = useMemo(
-    () => Array.from({ length: Number(effectiveMaxDay) + 1 }, (_, idx) => idx),
+    () => Array.from({ length: effectiveMaxDay + 1 }, (_, idx) => idx),
     [effectiveMaxDay],
   )
 

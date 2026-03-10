@@ -13,6 +13,15 @@ async function request(path, options = {}) {
   return data
 }
 
+function normalizeMaxDay(value) {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) {
+    return 7
+  }
+
+  return Math.floor(n)
+}
+
 export async function uploadCSV(file) {
   const formData = new FormData()
   formData.append('file', file)
@@ -147,5 +156,6 @@ export async function updateRevenueConfig(revenueConfig) {
 }
 
 export async function getMonetization(maxDay) {
-  return request(`/monetization?max_day=${maxDay}`, { method: 'GET' })
+  const safeMaxDay = normalizeMaxDay(maxDay)
+  return request(`/monetization?max_day=${safeMaxDay}`, { method: 'GET' })
 }
