@@ -125,139 +125,164 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
     setPredictions(nextPredictions)
   }
 
+  const predictionSummary = useMemo(() => {
+    if (!predictions) return []
+    return displayRows
+      .filter((row) => predictions[row.cohort_id])
+      .map((row) => ({
+        id: row.cohort_id,
+        name: row.cohort_name,
+        value: predictions[row.cohort_id]?.projectedCurve?.[predictionHorizon],
+      }))
+  }, [displayRows, predictionHorizon, predictions])
+
   return (
     <section className="card">
-      <h2>7. Monetization</h2>
-      <div className="retention-header">
-        <div className="retention-controls-left">
-          <label>
-            Metric
-            <select
-              value={metricType}
-              onChange={(e) => {
-                setMetricType(e.target.value)
-                setPredictions(null)
-              }}
-            >
-              {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>
-          <label>
-            Prediction Horizon
-            <select value={predictionHorizon} onChange={(e) => setPredictionHorizon(Number(e.target.value))}>
-              {[30, 60, 90, 180, 365].map((day) => <option key={day} value={day}>{day}D</option>)}
-            </select>
-          </label>
-          <button className="button button-primary" onClick={loadData} disabled={loading}>
-            {loading ? 'Loading...' : 'Load Monetization'}
-          </button>
-          <button
-            className="button"
-            type="button"
-            onClick={handleProjectRevenue}
-            disabled={!predictionEnabled || displayRows.length === 0}
-            title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
-          >
-            Project Revenue
-          </button>
-          <button
-            className="button button-secondary"
-            type="button"
-            onClick={() => setIsTuningPaneOpen(true)}
-            disabled={!predictions || Object.keys(predictions).length === 0}
-            title="Tune the A and B parameters of current predictions"
-          >
-            Tune Prediction
-          </button>
-        </div>
+      <h2>Monetization</h2>
+      <div className={`monetization-layout ${isTuningPaneOpen ? 'with-tuning-pane' : ''}`}>
+        <div className="monetization-main">
+          <div className="retention-header">
+            <div className="retention-controls-left">
+              <label>
+                Metric
+                <select
+                  value={metricType}
+                  onChange={(e) => {
+                    setMetricType(e.target.value)
+                    setPredictions(null)
+                  }}
+                >
+                  {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </label>
+              <label>
+                Prediction Horizon
+                <select value={predictionHorizon} onChange={(e) => setPredictionHorizon(Number(e.target.value))}>
+                  {[30, 60, 90, 180, 365].map((day) => <option key={day} value={day}>{day}D</option>)}
+                </select>
+              </label>
+              <button className="button button-primary" onClick={loadData} disabled={loading}>
+                {loading ? 'Loading...' : 'Load Monetization'}
+              </button>
+              <button
+                className="button button-secondary"
+                type="button"
+                onClick={handleProjectRevenue}
+                disabled={!predictionEnabled || displayRows.length === 0}
+                title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
+              >
+                Predict Revenue
+              </button>
+              <button
+                className="button button-ghost"
+                type="button"
+                onClick={() => setIsTuningPaneOpen(true)}
+                disabled={!predictions || Object.keys(predictions).length === 0}
+                title="Tune the A and B parameters of current predictions"
+              >
+                Tune Monetization
+              </button>
+            </div>
 
-        <div className="retention-controls-right">
-          <div className="view-toggle">
-            <button
-              type="button"
-              className={`view-button ${isPinned ? 'active' : ''}`}
-              onClick={() => setIsPinned((prev) => !prev)}
-              title="Pin Cohort Columns"
-            >
-              {isPinned ? "📌" : "📍"}
-            </button>
-            <button
-              type="button"
-              className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
-              onClick={() => setViewMode('table')}
-            >
-              Table
-            </button>
-            <button
-              type="button"
-              className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
-              onClick={() => setViewMode('graph')}
-            >
-              Graph
-            </button>
+            <div className="retention-controls-right">
+              <div className="view-toggle">
+                <button
+                  type="button"
+                  className={`view-button ${isPinned ? 'active' : ''}`}
+                  onClick={() => setIsPinned((prev) => !prev)}
+                  title="Pin Cohort Columns"
+                >
+                  {isPinned ? '📌' : '📍'}
+                </button>
+                <button
+                  type="button"
+                  className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
+                  onClick={() => setViewMode('table')}
+                >
+                  Table
+                </button>
+                <button
+                  type="button"
+                  className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
+                  onClick={() => setViewMode('graph')}
+                >
+                  Graph
+                </button>
+              </div>
+            </div>
           </div>
+
+          {error && <p className="error">{error}</p>}
+
+          {displayRows.length > 0 && viewMode === 'table' && (
+            <div className="analytics-table table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                    <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                    {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
+                    <th className="col-prediction">Predicted Revenue ({predictionHorizon}D)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {displayRows.map((row) => (
+                    <tr key={row.cohort_id}>
+                      <td
+                        className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                        title={row.cohort_name}
+                      >
+                        {row.cohort_name}
+                      </td>
+                      <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                      {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)] ?? '—'}</td>)}
+                      <td className="col-prediction">
+                        {formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {viewMode === 'graph' && (
+            <MonetizationGraph
+              rows={displayRows}
+              maxDay={effectiveMaxDay}
+              metricType={metricType}
+              predictions={predictions}
+              predictionHorizon={predictionHorizon}
+              effectiveMaxDay={effectiveMaxDay}
+            />
+          )}
         </div>
-      </div>
 
-      {error && <p className="error">{error}</p>}
+        {predictionSummary.length > 0 && (
+          <aside className="prediction-sticky-card">
+            <h4>Prediction ({predictionHorizon}D)</h4>
+            {predictionSummary.map((item) => (
+              <div key={item.id} className="prediction-row">
+                <span>{item.name}</span>
+                <strong>{formatCurrency(item.value)}</strong>
+              </div>
+            ))}
+          </aside>
+        )}
 
-      {displayRows.length > 0 && viewMode === 'table' && (
-        <div className="analytics-table table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
-                {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
-                <th className="col-prediction">Predicted Revenue ({predictionHorizon}D)</th>
-              </tr>
-            </thead>
-            <tbody>
-              {displayRows.map((row) => (
-                <tr key={row.cohort_id}>
-                  <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
-                    title={row.cohort_name}
-                  >
-                    {row.cohort_name}
-                  </td>
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
-                  {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)] ?? '—'}</td>)}
-                  <td className="col-prediction">
-                    {formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}
-                    {predictions?.[row.cohort_id]?.lastObservedDay && predictions?.[row.cohort_id]?.lastObservedDay !== effectiveMaxDay && (
-                      <span className="muted-text" style={{ display: 'block', fontSize: '10px' }}>
-                        Based on D{predictions[row.cohort_id].lastObservedDay}
-                      </span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {viewMode === 'graph' && (
-        <MonetizationGraph
-          rows={displayRows}
-          maxDay={effectiveMaxDay}
-          metricType={metricType}
+        <TunePredictionPane
+          isOpen={isTuningPaneOpen}
+          onClose={() => setIsTuningPaneOpen(false)}
           predictions={predictions}
-          predictionHorizon={predictionHorizon}
+          displayRows={displayRows}
           effectiveMaxDay={effectiveMaxDay}
+          predictionHorizon={predictionHorizon}
+          onUpdate={(newPredictions) => {
+            setPredictions(newPredictions)
+            setIsTuningPaneOpen(false)
+          }}
         />
-      )}
-
-      <TunePredictionPane
-        isOpen={isTuningPaneOpen}
-        onClose={() => setIsTuningPaneOpen(false)}
-        predictions={predictions}
-        displayRows={displayRows}
-        effectiveMaxDay={effectiveMaxDay}
-        predictionHorizon={predictionHorizon}
-        onUpdate={(newPredictions) => setPredictions(newPredictions)}
-      />
+      </div>
     </section>
   )
 }
