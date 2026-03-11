@@ -31,7 +31,7 @@ body {
 }
 
 .left-pane {
-  width: 320px;
+  width: 600px;
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -988,10 +988,22 @@ li .button {
 .collapse-control {
   position: absolute;
   right: 10px;
-  top: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+
+  width: 36px;
+  height: 36px;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
   border: 1px solid var(--color-border);
   background: #f8fafc;
-  border-radius: 6px;
+  border-radius: 10px;
+
+  font-size: 16px;
+  cursor: pointer;
 }
 
 .warning-text {
@@ -1030,10 +1042,17 @@ li .button {
   z-index: 5;
   background: white;
   border-bottom: 1px solid var(--color-border);
+
   display: flex;
-  justify-content: flex-end;
+  justify-content: flex-end;   /* keep button on the right */
+  align-items: center;
+
   padding: 8px;
   margin-bottom: 4px;
+}
+
+.left-pane.collapsed .left-pane-header {
+  justify-content: center;
 }
 
 .left-pane label {

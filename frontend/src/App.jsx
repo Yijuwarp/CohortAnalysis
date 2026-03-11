@@ -11,7 +11,7 @@ import SearchableSelect from './components/SearchableSelect'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
-const LEFT_PANE_WIDTH = 320
+const LEFT_PANE_WIDTH = 600
 
 function readPersistedState() {
   try {
@@ -255,7 +255,7 @@ export default function App() {
                 <>
                   <section className={`pane-section ${sections.filters ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>
-                      <span className="pane-toggle">{sections.filters ? '▾' : '▸'}</span> <span className="pane-icon">🔎</span> Filters
+                      <span className="pane-toggle">{sections.filters ? '◂' : '▾'}</span> <span className="pane-icon">🔎</span> Filters
                     </h3>
                     {sections.filters && (
                       <>
@@ -266,7 +266,7 @@ export default function App() {
                   </section>
                   <section className={`pane-section ${sections.settings ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>
-                      <span className="pane-toggle">{sections.settings ? '▾' : '▸'}</span> <span className="pane-icon">⚙</span> Analytics Settings
+                      <span className="pane-toggle">{sections.settings ? '◂' : '▾'}</span> <span className="pane-icon">⚙</span> Analytics Settings
                     </h3>
                     {sections.settings && (
                       <>
@@ -292,7 +292,7 @@ export default function App() {
                   </section>
                   <section className={`pane-section ${sections.cohorts ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>
-                      <span className="pane-toggle">{sections.cohorts ? '▾' : '▸'}</span> <span className="pane-icon">👥</span> Cohorts
+                      <span className="pane-toggle">{sections.cohorts ? '◂' : '▾'}</span> <span className="pane-icon">👥</span> Cohorts
                     </h3>
                     {sections.cohorts && (
                       <>
