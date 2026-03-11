@@ -2105,7 +2105,7 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                 bucketed AS (
                     SELECT
                         user_id,
-                        FLOOR(rn * 4.0 / total) AS grp
+                        CAST(FLOOR(rn * 4.0 / total) AS INTEGER) AS grp
                     FROM shuffled
                 )
                 INSERT INTO cohort_membership (cohort_id, user_id, join_time)
@@ -2121,7 +2121,7 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                 FROM bucketed b
                 JOIN cohort_membership cm
                   ON b.user_id = cm.user_id
-                WHERE cm.cohort_id = ?
+                 AND cm.cohort_id = ?
                 """,
                 [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3], cohort_id],
             )
