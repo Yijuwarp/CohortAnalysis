@@ -116,33 +116,53 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
     }
   }
 
+  const handleAddRevenueEvent = () => {
+    if (!eventToAdd) {
+      return
+    }
+
+    setPendingRevenueConfig((previous) => ({
+      ...previous,
+      [eventToAdd]: { included: true, override: null },
+    }))
+    setPendingOverrideInputs((previous) => ({ ...previous, [eventToAdd]: '' }))
+    setEventToAdd('')
+  }
+
+  const handleRemoveRevenueEvent = (eventName) => {
+    setPendingRevenueConfig((previous) => {
+      const next = { ...previous }
+      delete next[eventName]
+      return next
+    })
+
+    setPendingOverrideInputs((previous) => {
+      const next = { ...previous }
+      delete next[eventName]
+      return next
+    })
+
+    setAvailableRevenueEvents((previous) => (
+      previous.includes(eventName) ? previous : [...previous, eventName]
+    ))
+  }
+
   return (
     <div className="revenue-config-panel">
-        <div className="revenue-config-add">
-          <label>
-            Add Revenue Event
-            <select value={eventToAdd} onChange={(e) => setEventToAdd(e.target.value)}>
-              <option value="">Select event</option>
-              {addableRevenueEvents.map((eventName) => (
-                <option key={eventName} value={eventName}>{eventName}</option>
-              ))}
-            </select>
-          </label>
+        <div className="revenue-config-add-toolbar">
+          <select value={eventToAdd} onChange={(e) => setEventToAdd(e.target.value)}>
+            <option value="">Select Revenue Event</option>
+            {addableRevenueEvents.map((eventName) => (
+              <option key={eventName} value={eventName}>{eventName}</option>
+            ))}
+          </select>
           <button
             type="button"
             className="button button-secondary"
-            onClick={() => {
-              if (!eventToAdd) return
-              setPendingRevenueConfig((previous) => ({
-                ...previous,
-                [eventToAdd]: { included: true, override: null },
-              }))
-              setPendingOverrideInputs((previous) => ({ ...previous, [eventToAdd]: '' }))
-              setEventToAdd('')
-            }}
+            onClick={handleAddRevenueEvent}
             disabled={!eventToAdd}
           >
-            Add Revenue Event +
+            + Add
           </button>
         </div>
 
@@ -152,10 +172,13 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
               <th>Event Name</th>
               <th>Include</th>
               <th>Override ($)</th>
+              <th aria-label="Actions"></th>
             </tr>
           </thead>
           <tbody>
-            {Object.entries(pendingRevenueConfig).map(([eventName, config]) => {
+            {Object.entries(pendingRevenueConfig)
+              .sort(([left], [right]) => left.localeCompare(right))
+              .map(([eventName, config]) => {
               const isInvalid = invalidOverrideEvents.includes(eventName)
               return (
                 <tr key={eventName}>
@@ -183,13 +206,24 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
                       className={isInvalid ? 'invalid-number-input' : ''}
                     />
                   </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="revenue-config-remove"
+                      onClick={() => handleRemoveRevenueEvent(eventName)}
+                      aria-label={`Remove ${eventName}`}
+                      title="Remove revenue event"
+                    >
+                      🗑
+                    </button>
+                  </td>
                 </tr>
               )
             })}
           </tbody>
         </table>
 
-        <p className="muted-text">(Blank override sends null and reverts to original revenue)</p>
+        <p className="muted-text">Leave blank to use the event's original revenue value</p>
         <button type="button" className="button button-primary" onClick={handleApply} disabled={!canApplyRevenueChanges}>
           {saving ? 'Updating...' : 'Update Monetization'}
         </button>
