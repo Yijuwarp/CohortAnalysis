@@ -352,9 +352,26 @@ def suggest_event_name(columns: list[str]) -> str | None:
 
 
 def suggest_event_time(columns: list[str]) -> str | None:
-    strong_keywords = ["event_time", "timestamp", "created_at", "time", "date"]
+    primary_keywords = ["timestamp", "event_time", "time"]
+    secondary_keywords = ["date", "day", "hour"]
 
-    for keyword in strong_keywords:
+    for keyword in primary_keywords:
+        for col in columns:
+            if keyword in col.lower():
+                return col
+
+    for keyword in secondary_keywords:
+        for col in columns:
+            if keyword in col.lower():
+                return col
+
+    return None
+
+
+def suggest_revenue(columns: list[str]) -> str | None:
+    revenue_keywords = ["revenue", "price", "amount", "value"]
+
+    for keyword in revenue_keywords:
         for col in columns:
             if keyword in col.lower():
                 return col
@@ -379,6 +396,7 @@ def suggest_column_mapping(columns: list[str]) -> dict[str, str | None]:
         "event_name": suggest_event_name(columns),
         "event_time": suggest_event_time(columns),
         "event_count": suggest_event_count(columns),
+        "revenue": suggest_revenue(columns) or None,
     }
 
 
