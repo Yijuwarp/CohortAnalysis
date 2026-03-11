@@ -1,50 +1,39 @@
 # UI Architecture
 
-## Layout system
+## App structure
+The SPA entrypoint is `frontend/src/App.jsx`.
 
-The application uses a three-region workspace layout:
+State transitions:
+- `empty` -> upload screen
+- `mapping` -> column mapping screen
+- `workspace` -> analytics workspace
 
-- **Top bar** for dataset actions (upload/remap/open sections).
-- **Left pane** for Filters, Analytics Settings, and Cohorts.
-- **Analytics area** for Retention, Usage, and Monetization views.
+## Workspace layout
+- Top bar: dataset summary + navigation actions
+- Left pane (collapsible):
+  - Filters
+  - Analytics Settings
+  - Cohorts
+- Main area tabs:
+  - Retention
+  - Usage
+  - Monetization
 
-Core reusable layout classes:
+## Data dependencies
+Frontend API wrapper: `frontend/src/api.js`.
 
-- `ui-section`: vertical section grouping with consistent spacing.
-- `ui-card`: card container for subsection blocks.
-- `ui-panel`: panel shell for embedded sidebar/pane experiences.
-- `ui-tabs`: OneNote-style attached tabs for analytics views.
+Core fetch flow in workspace:
+- Refresh scope + retention metadata for dataset counters
+- Load event list for selectors
+- Load tab-specific analytics data
 
-## Component hierarchy
+## Persistence
+Workspace state is persisted in `localStorage` under `cohort-analysis-workspace-v2`.
+Persisted values include app state, mapping context, active tab, settings, and pane section visibility.
 
-- `App.jsx`
-  - workspace chrome and tab switching
-  - left pane section expand/collapse state
-  - global settings state (`maxDay`, retention event)
-- `RetentionTable.jsx`
-  - retention controls, table/graph toggle
-- `UsageTable.jsx`
-  - usage event controls and two data tables
-- `MonetizationTable.jsx`
-  - monetization controls, table/graph, sticky prediction summary
-  - temporary inline tuning pane via `TunePredictionPane.jsx`
-
-## Sidebar design
-
-- Left pane keeps clear hierarchy:
-  - section headers with icon + toggle
-  - hints under each section title
-  - cardized content for settings and forms
-- Collapse button behavior:
-  - expanded: right aligned
-  - collapsed: centered
-  - control remains compact (not full width)
-
-## Monetization tuning layout
-
-The monetization view supports an ephemeral right-side tuning panel:
-
-- Base layout: `| monetization content | sticky prediction summary |`
-- Open tuning: `| monetization content | sticky prediction summary | tuning panel |`
-- Cancel or update prediction closes panel and restores base layout.
-- Tuning state is not persisted across sessions.
+## Monetization prediction UI
+Monetization tab includes:
+- Metric selector
+- Prediction horizon selector (30/60/90/180/365 days)
+- Projection trigger
+- Optional tuning pane for per-cohort power-law params (A/B)

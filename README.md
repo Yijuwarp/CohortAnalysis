@@ -1,70 +1,70 @@
 # Cohort Analysis
 
-A full-stack cohort analysis app backed by FastAPI + DuckDB, with a React/Vite UI for CSV ingestion, schema mapping, cohort definition, retention, and usage analytics.
+Cohort Analysis is a FastAPI + DuckDB backend with a React/Vite frontend for CSV-based product analytics.
 
-## Tech Stack
+It supports:
+- CSV upload and schema mapping
+- Event normalization into canonical tables
+- Dataset scoping (date + property filters)
+- Cohort creation with condition logic
+- Retention, usage, and monetization analytics
+- Revenue event include/exclude + per-event override config
 
-- **Backend:** FastAPI, Pydantic, DuckDB, pandas
-- **Frontend:** React, Vite
-- **Tests:** pytest + FastAPI TestClient
+## Stack
+- Backend: FastAPI, DuckDB, pandas, Pydantic
+- Frontend: React + Vite
+- Tests: pytest, vitest
 
-## What It Actually Does
+## End-to-end flow
+1. `POST /upload` creates raw `events` from CSV and returns detected types + mapping suggestions.
+2. `POST /map-columns` creates `events_normalized`, resets cohort/scoping state, initializes `events_scoped`, and creates the default **All Users** cohort.
+3. `POST /apply-filters` rebuilds `events_scoped` and refreshes cohort membership/snapshots.
+4. Cohorts are created/updated through `/cohorts*` APIs.
+5. Analytics endpoints (`/retention`, `/usage`, `/monetization`) read from scoped data + cohort tables.
 
-1. Upload a CSV (`/upload`).
-2. Map source columns to canonical fields (`/map-columns`):
-   - `user_id` (TEXT)
-   - `event_name` (TEXT)
-   - `event_time` (TIMESTAMP)
-   - optional `event_count` (NUMERIC)
-3. Normalize + deduplicate events into `events_normalized` (duplicate keys are merged by summing `event_count`).
-4. Apply dataset scope filters (`/apply-filters`) to produce `events_scoped`.
-5. Create/edit/delete cohorts (`/cohorts`) with:
-   - up to 5 conditions
-   - AND/OR logic
-   - join type: `condition_met` or `first_event`
-   - optional typed property filters
-6. Query retention (`/retention`) and usage (`/usage`) from scoped cohort snapshots.
-
-## API Surface
-
-- `GET /` health/status
+## FastAPI endpoints
+- `GET /`
 - `POST /upload`
 - `POST /map-columns`
 - `POST /apply-filters`
 - `GET /scope`
 - `GET /columns`
-- `GET /column-values?column=...`
+- `GET /column-values`
 - `GET /date-range`
 - `POST /cohorts`
 - `GET /cohorts`
 - `PUT /cohorts/{cohort_id}`
 - `DELETE /cohorts/{cohort_id}`
+- `PATCH /cohorts/{cohort_id}/hide`
+- `POST /cohorts/{cohort_id}/random_split`
+- `GET /retention`
+- `GET /usage`
 - `GET /events`
-- `GET /retention?max_day=...&retention_event=...`
-- `GET /usage?event=...&max_day=...&retention_event=...`
+- `GET /revenue-config-events`
+- `GET /revenue-events`
+- `POST /update-revenue-config`
+- `GET /monetization`
 
-## Key Behavioral Details
+## Key constraints from implementation
+- Upload accepts `.csv` only.
+- CSV must have at least 3 columns.
+- Required mappings:
+  - `user_id` => TEXT
+  - `event_name` => TEXT
+  - `event_time` => TIMESTAMP
+- Optional mappings:
+  - `event_count` => NUMERIC; values must be integer `>= 1`
+  - `revenue_column` => NUMERIC
+- Cohorts:
+  - `conditions` max length is 5
+  - `min_event_count >= 1`
+  - `logic_operator` is `AND` or `OR`
+  - `join_type` is `condition_met` or `first_event`
+- `column-values` returns up to 100 values and `total_distinct`.
+- `max_day` defaults to 7 for retention/usage/monetization.
 
-- Cohort thresholding uses cumulative `SUM(event_count)` over time per user.
-- `first_event` join type rewrites cohort join time to each user’s first event in current source table.
-- Analytics are scoped through `events_scoped` overlay joins, so filters can hide/inactivate cohorts.
-- `/column-values` returns at most 100 sample distinct values plus `total_distinct`.
-
-## Real Constraints and Defaults
-
-- CSV only.
-- Upload requires at least 3 columns.
-- Cohort conditions: max 5.
-- `min_event_count >= 1`.
-- `max_day` default is 7 for retention and usage.
-- All Users cohort is auto-created on mapping and cannot be edited/deleted.
-- No authentication/authorization.
-- Single DuckDB file (single-node architecture).
-
-## Local Run
-
+## Run locally
 ### Backend
-
 ```bash
 cd backend
 python -m venv venv
@@ -73,25 +73,11 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload
 ```
 
-Default backend URL: `http://127.0.0.1:8000`
-
 ### Frontend
-
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Default frontend URL: `http://localhost:5173`
-
-Frontend API base URL:
-- `VITE_API_BASE_URL` if set
-- otherwise `http://127.0.0.1:8000`
-
-## Tests
-
-```bash
-cd backend
-pytest
-```
+Default API base URL is `http://127.0.0.1:8000` unless `VITE_API_BASE_URL` is set.
