@@ -2086,11 +2086,18 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                     FROM cohort_membership
                     WHERE cohort_id = ?
                 ),
-                randomized AS (
+                shuffled AS (
                     SELECT
                         user_id,
-                        ABS(hash(CAST(user_id AS VARCHAR) || ?)) % 4 AS grp
+                        ROW_NUMBER() OVER (ORDER BY hash(CAST(user_id AS VARCHAR) || ?)) - 1 AS rn,
+                        COUNT(*) OVER () AS total
                     FROM base
+                ),
+                bucketed AS (
+                    SELECT
+                        user_id,
+                        FLOOR(rn * 4.0 / total) AS grp
+                    FROM shuffled
                 )
                 INSERT INTO cohort_membership (cohort_id, user_id, join_time)
                 SELECT
@@ -2102,9 +2109,24 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                     END,
                     user_id,
                     CURRENT_TIMESTAMP
-                FROM randomized
+                FROM bucketed
                 """,
                 [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
+            )
+            connection.execute(
+                """
+                INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
+                SELECT
+                    cm.cohort_id,
+                    e.user_id,
+                    e.event_time,
+                    e.event_name
+                FROM cohort_membership cm
+                JOIN events_normalized e
+                    ON cm.user_id = e.user_id
+                WHERE cm.cohort_id IN (?, ?, ?, ?)
+                """,
+                [new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
             )
             refresh_cohort_activity(connection)
             connection.execute("COMMIT")

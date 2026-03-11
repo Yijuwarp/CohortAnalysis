@@ -1137,6 +1137,20 @@ def test_random_split_creates_four_child_cohorts_and_assigns_members(client: Tes
     assert len(assigned) == 12
     assert all(row[1] == 1 for row in assigned)
 
+    size_rows = db_connection.execute(
+        """
+        SELECT cohort_id, COUNT(*) AS cohort_size
+        FROM cohort_membership
+        WHERE cohort_id IN (?, ?, ?, ?)
+        GROUP BY cohort_id
+        ORDER BY cohort_id
+        """,
+        child_ids,
+    ).fetchall()
+    sizes = [int(row[1]) for row in size_rows]
+    assert len(sizes) == 4
+    assert max(sizes) - min(sizes) <= 1
+
     join_times = db_connection.execute(
         """
         SELECT COUNT(*)
@@ -1147,6 +1161,16 @@ def test_random_split_creates_four_child_cohorts_and_assigns_members(client: Tes
         child_ids,
     ).fetchone()[0]
     assert join_times == 0
+
+    snapshot_count = db_connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM cohort_activity_snapshot
+        WHERE cohort_id IN (?, ?, ?, ?)
+        """,
+        child_ids,
+    ).fetchone()[0]
+    assert snapshot_count == 12
 
 
 def test_random_split_requires_minimum_parent_size(client: TestClient) -> None:
