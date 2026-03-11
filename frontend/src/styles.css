@@ -17,6 +17,54 @@ body {
   padding: var(--space-6) var(--space-4);
 }
 
+/* ============================
+   Layout System
+   ============================ */
+
+.workspace-root {
+  max-width: 100%;
+  height: 100vh;
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.left-pane {
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: white;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.workspace-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  min-height: 0;
+}
+
+.workspace-body {
+  display: flex;
+  flex: 1;
+  gap: 16px;
+  min-height: 0;
+}
+
+.analytics-area {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: auto;
+}
+
 h1 {
   font-size: 28px;
   font-weight: 600;
@@ -899,14 +947,6 @@ li .button {
   justify-content: flex-end;
   gap: var(--space-3);
 }
-.workspace-root {
-  max-width: 100%;
-  height: 100vh;
-  padding: 16px;
-  display: flex;
-  flex-direction: column;
-}
-
 .onboarding-card {
   max-width: 760px;
   margin: 40px auto;
@@ -931,14 +971,6 @@ li .button {
 
 .mapping-progress-overlay .active {
   font-weight: 700;
-}
-
-.workspace-layout {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  flex: 1;
-  min-height: 0;
 }
 
 .top-bar {
@@ -983,24 +1015,6 @@ li .button {
   margin: 8px 0 16px;
 }
 
-.workspace-body {
-  display: flex;
-  flex: 1;
-  gap: 16px;
-  min-height: 0;
-}
-
-.left-pane {
-  width: 320px;
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--color-border);
-  border-radius: 8px;
-  background: white;
-  padding: 0;
-  overflow-y: auto;
-}
-
 .left-pane.collapsed {
   padding: 6px;
 }
@@ -1019,6 +1033,7 @@ li .button {
   display: flex;
   justify-content: flex-end;
   padding: 8px;
+  margin-bottom: 4px;
 }
 
 .left-pane label {
@@ -1038,18 +1053,11 @@ li .button {
   height: 32px;
 }
 
-.analytics-area {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  overflow: auto;
-}
-
 .analytics-tabs {
   display: flex;
   gap: 8px;
   margin-bottom: 8px;
+  flex-shrink: 0;
 }
 
 .analytics-tabs button {
@@ -1076,6 +1084,10 @@ li .button {
   border-color: #2563eb;
   background: #f8fafc;
   box-shadow: 0 0 0 1px rgba(37, 99, 235, 0.15);
+}
+
+.pane-section-expanded .pane-section-header {
+  font-weight: 600;
 }
 
 .pane-section:not(.pane-section-expanded) {
