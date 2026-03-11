@@ -1079,3 +1079,260 @@ def test_toggle_hide_updates_cohort_visibility_flag(client: TestClient, db_conne
     unhide_response = client.patch(f"/cohorts/{cohort_id}/hide")
     assert unhide_response.status_code == 200, unhide_response.text
     assert unhide_response.json() == {"cohort_id": cohort_id, "hidden": False}
+
+def test_random_split_creates_four_child_cohorts_and_assigns_members(client: TestClient, db_connection) -> None:
+    csv_text = "user_id,event_name,event_time\n" + "".join(
+        f"u{i},signup,2024-01-01 00:00:{i:02d}\n" for i in range(1, 13)
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    mapping = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert mapping.status_code == 200, mapping.text
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "signup cohort",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    parent_id = created.json()["cohort_id"]
+
+    split = client.post(f"/cohorts/{parent_id}/random_split")
+    assert split.status_code == 200, split.text
+    assert split.json() == {"created": 4}
+
+    children = db_connection.execute(
+        """
+        SELECT cohort_id, split_group_index, split_group_total
+        FROM cohorts
+        WHERE split_parent_cohort_id = ?
+        ORDER BY split_group_index
+        """,
+        [parent_id],
+    ).fetchall()
+    assert len(children) == 4
+    assert [row[1] for row in children] == [0, 1, 2, 3]
+    assert all(row[2] == 4 for row in children)
+
+    child_ids = [row[0] for row in children]
+    assigned = db_connection.execute(
+        """
+        SELECT user_id, COUNT(*)
+        FROM cohort_membership
+        WHERE cohort_id IN (?, ?, ?, ?)
+        GROUP BY user_id
+        ORDER BY user_id
+        """,
+        child_ids,
+    ).fetchall()
+    assert len(assigned) == 12
+    assert all(row[1] == 1 for row in assigned)
+
+    size_rows = db_connection.execute(
+        """
+        SELECT cohort_id, COUNT(*) AS cohort_size
+        FROM cohort_membership
+        WHERE cohort_id IN (?, ?, ?, ?)
+        GROUP BY cohort_id
+        ORDER BY cohort_id
+        """,
+        child_ids,
+    ).fetchall()
+    sizes = [int(row[1]) for row in size_rows]
+    assert len(sizes) == 4
+    assert max(sizes) - min(sizes) <= 1
+
+    join_times = db_connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM cohort_membership
+        WHERE cohort_id IN (?, ?, ?, ?)
+          AND join_time IS NULL
+        """,
+        child_ids,
+    ).fetchone()[0]
+    assert join_times == 0
+
+    parent_join_times = {
+        str(user_id): join_time
+        for user_id, join_time in db_connection.execute(
+            "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?",
+            [parent_id],
+        ).fetchall()
+    }
+    child_join_rows = db_connection.execute(
+        """
+        SELECT cm.user_id, cm.join_time
+        FROM cohort_membership cm
+        WHERE cm.cohort_id IN (?, ?, ?, ?)
+        ORDER BY cm.user_id
+        """,
+        child_ids,
+    ).fetchall()
+    assert len(child_join_rows) == len(parent_join_times)
+    assert all(parent_join_times[str(user_id)] == join_time for user_id, join_time in child_join_rows)
+
+    snapshot_count = db_connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM cohort_activity_snapshot
+        WHERE cohort_id IN (?, ?, ?, ?)
+        """,
+        child_ids,
+    ).fetchone()[0]
+    assert snapshot_count == 12
+
+
+def test_random_split_requires_minimum_parent_size(client: TestClient) -> None:
+    _prepare_normalized_events(client)
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "small cohort",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+
+    split = client.post(f"/cohorts/{created.json()['cohort_id']}/random_split")
+    assert split.status_code == 400
+    assert split.json()["detail"] == "Minimum 8 users required"
+
+
+
+def test_random_split_rejects_sub_cohort(client: TestClient, db_connection) -> None:
+    csv_text = "user_id,event_name,event_time\n" + "".join(
+        f"u{i},signup,2024-01-01 00:00:{i:02d}\n" for i in range(1, 13)
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    assert client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    ).status_code == 200
+
+    parent_created = client.post(
+        "/cohorts",
+        json={
+            "name": "signup cohort",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+    assert parent_created.status_code == 200, parent_created.text
+    parent_id = parent_created.json()["cohort_id"]
+
+    first_split = client.post(f"/cohorts/{parent_id}/random_split")
+    assert first_split.status_code == 200, first_split.text
+
+    child_id = db_connection.execute(
+        """
+        SELECT cohort_id
+        FROM cohorts
+        WHERE split_parent_cohort_id = ?
+        ORDER BY split_group_index
+        LIMIT 1
+        """,
+        [parent_id],
+    ).fetchone()[0]
+
+    split_child = client.post(f"/cohorts/{child_id}/random_split")
+    assert split_child.status_code == 400
+    assert split_child.json()["detail"] == "Cannot split sub-cohort"
+
+
+def test_random_split_rejects_hidden_cohort(client: TestClient) -> None:
+    csv_text = "user_id,event_name,event_time\n" + "".join(
+        f"u{i},signup,2024-01-01 00:00:{i:02d}\n" for i in range(1, 13)
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    assert client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    ).status_code == 200
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "signup cohort",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    cohort_id = created.json()["cohort_id"]
+
+    hide_response = client.patch(f"/cohorts/{cohort_id}/hide")
+    assert hide_response.status_code == 200, hide_response.text
+
+    split = client.post(f"/cohorts/{cohort_id}/random_split")
+    assert split.status_code == 400
+    assert split.json()["detail"] == "Cannot split hidden cohort"
+
+
+def test_delete_parent_cohort_cascades_split_children(client: TestClient, db_connection) -> None:
+    csv_text = "user_id,event_name,event_time\n" + "".join(
+        f"u{i},signup,2024-01-01 00:00:{i:02d}\n" for i in range(1, 13)
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    assert client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    ).status_code == 200
+
+    created = client.post(
+        "/cohorts",
+        json={
+            "name": "signup cohort",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "signup", "min_event_count": 1}],
+        },
+    )
+    assert created.status_code == 200, created.text
+    parent_id = created.json()["cohort_id"]
+
+    split = client.post(f"/cohorts/{parent_id}/random_split")
+    assert split.status_code == 200, split.text
+
+    children_before = db_connection.execute(
+        "SELECT COUNT(*) FROM cohorts WHERE split_parent_cohort_id = ?",
+        [parent_id],
+    ).fetchone()[0]
+    assert children_before == 4
+
+    deleted = client.delete(f"/cohorts/{parent_id}")
+    assert deleted.status_code == 200, deleted.text
+
+    children_after = db_connection.execute(
+        "SELECT COUNT(*) FROM cohorts WHERE split_parent_cohort_id = ?",
+        [parent_id],
+    ).fetchone()[0]
+    assert children_after == 0
+
+    child_memberships_after = db_connection.execute(
+        "SELECT COUNT(*) FROM cohort_membership cm JOIN cohorts c ON cm.cohort_id = c.cohort_id WHERE c.split_parent_cohort_id = ?",
+        [parent_id],
+    ).fetchone()[0]
+    assert child_memberships_after == 0

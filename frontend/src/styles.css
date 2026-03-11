@@ -603,6 +603,12 @@ li .button {
   font-size: var(--font-size-sm);
 }
 
+
+.cohort-row.child {
+  padding-left: 22px;
+  opacity: 0.9;
+}
+
 .cohort-left {
   display: flex;
   align-items: center;
