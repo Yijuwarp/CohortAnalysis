@@ -101,6 +101,12 @@ export async function toggleCohortHide(cohortId) {
   })
 }
 
+export async function randomSplitCohort(cohortId) {
+  return request(`/cohorts/${cohortId}/random_split`, {
+    method: 'POST',
+  })
+}
+
 export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95) {
   const query = new URLSearchParams({
     max_day: String(maxDay),

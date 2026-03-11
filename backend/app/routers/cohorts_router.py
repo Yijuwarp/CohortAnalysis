@@ -32,3 +32,8 @@ def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
 @router.patch("/cohorts/{cohort_id}/hide")
 def toggle_cohort_hide(cohort_id: int) -> dict[str, object]:
     return legacy_api.toggle_cohort_hide(cohort_id)
+
+
+@router.post("/cohorts/{cohort_id}/random_split")
+def random_split_cohort(cohort_id: int) -> dict[str, int]:
+    return legacy_api.random_split_cohort(cohort_id)

@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, toggleCohortHide, updateCohort } from '../api'
+import { Fragment, useEffect, useMemo, useState } from 'react'
+import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, randomSplitCohort, toggleCohortHide, updateCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
@@ -114,6 +114,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [valueCache, setValueCache] = useState({})
   const [infoCohortId, setInfoCohortId] = useState(null)
   const [editingCohortId, setEditingCohortId] = useState(null)
+  const [splittingId, setSplittingId] = useState(null)
 
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
 
@@ -297,6 +298,46 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       setDeletingId(null)
     }
   }
+
+  const handleRandomSplit = async (cohort) => {
+    setError('')
+    setResult(null)
+    setSplittingId(cohort.cohort_id)
+
+    try {
+      await randomSplitCohort(cohort.cohort_id)
+      await loadCohorts()
+      onCohortsChanged()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setSplittingId(null)
+    }
+  }
+
+  const parentCohorts = useMemo(
+    () => cohorts.filter((cohort) => !cohort.split_parent_cohort_id),
+    [cohorts]
+  )
+
+  const childCohortsByParent = useMemo(() => {
+    const childrenMap = {}
+    cohorts.forEach((cohort) => {
+      if (!cohort.split_parent_cohort_id) {
+        return
+      }
+      if (!childrenMap[cohort.split_parent_cohort_id]) {
+        childrenMap[cohort.split_parent_cohort_id] = []
+      }
+      childrenMap[cohort.split_parent_cohort_id].push(cohort)
+    })
+
+    Object.keys(childrenMap).forEach((parentId) => {
+      childrenMap[parentId].sort((a, b) => (a.split_group_index ?? 0) - (b.split_group_index ?? 0))
+    })
+
+    return childrenMap
+  }, [cohorts])
 
   const handleEdit = (cohort) => {
     setEditingCohortId(cohort.cohort_id)
@@ -626,76 +667,115 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
           <p className="secondary-text">No cohorts created yet.</p>
         ) : (
           <ul>
-          {cohorts.map((cohort) => {
-            const isSystemCohort = cohort.cohort_name === 'All Users'
+            {parentCohorts.map((cohort) => {
+              const isSystemCohort = cohort.cohort_name === 'All Users'
+              const childCohorts = cohort.hidden ? [] : (childCohortsByParent[cohort.cohort_id] || [])
+              const minSizeForSplit = Number(cohort.size || 0) >= 8
 
-            return (
-            <li
-              key={cohort.cohort_id}
-              title={cohort.is_active ? '' : 'No matching members under current filters'}
-            >
-              <div className="cohort-row">
-                <div className="cohort-left">
-                  <span>{cohort.cohort_name}</span>
-                  {cohort.hidden && <span className="badge-hidden">Hidden</span>}
-                  {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
-                </div>
+              return (
+                <Fragment key={cohort.cohort_id}>
+                  <li title={cohort.is_active ? '' : 'No matching members under current filters'}>
+                    <div className="cohort-row">
+                      <div className="cohort-left">
+                        <span>{cohort.cohort_name}</span>
+                        {cohort.hidden && <span className="badge-hidden">Hidden</span>}
+                        {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
+                      </div>
 
-                <div className="cohort-actions">
-                  <button
-                    className="button button-secondary button-icon"
-                    type="button"
-                    onClick={() => setInfoCohortId(infoCohortId === cohort.cohort_id ? null : cohort.cohort_id)}
-                  >
-                    i
-                  </button>
+                      <div className="cohort-actions">
+                        <button
+                          className="button button-secondary button-icon"
+                          type="button"
+                          onClick={() => handleRandomSplit(cohort)}
+                          disabled={!minSizeForSplit || splittingId === cohort.cohort_id}
+                          title={minSizeForSplit ? 'Create randomized sub-cohorts' : 'Minimum 8 users required'}
+                        >
+                          {splittingId === cohort.cohort_id ? '⏳' : '🎲'}
+                        </button>
 
-                  <button className="button button-small" type="button" onClick={() => handleToggleHide(cohort.cohort_id)}>
-                    {cohort.hidden ? 'Unhide' : 'Hide'}
-                  </button>
+                        <button
+                          className="button button-secondary button-icon"
+                          type="button"
+                          onClick={() => setInfoCohortId(infoCohortId === cohort.cohort_id ? null : cohort.cohort_id)}
+                        >
+                          i
+                        </button>
 
-                  <button
-                    className="button button-secondary"
-                    type="button"
-                    onClick={() => handleEdit(cohort)}
-                    disabled={isSystemCohort}
-                    title={isSystemCohort ? 'System cohort cannot be modified' : ''}
-                  >
-                    Edit
-                  </button>
+                        <button className="button button-small" type="button" onClick={() => handleToggleHide(cohort.cohort_id)}>
+                          {cohort.hidden ? 'Unhide' : 'Hide'}
+                        </button>
 
-                  <button
-                    className="button button-danger"
-                    type="button"
-                    onClick={() => handleDelete(cohort.cohort_id)}
-                    disabled={deletingId === cohort.cohort_id || isSystemCohort}
-                    title={isSystemCohort ? 'System cohort cannot be deleted' : ''}
-                  >
-                    {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
-                  </button>
-                </div>
-              </div>
-              {infoCohortId === cohort.cohort_id && (
-                <div className="cohort-info">
-                  <div>
-                    <strong>Logic:</strong> {cohort.logic_operator}
-                  </div>
-                  <div>
-                    <strong>Join:</strong> {cohort.join_type || 'condition_met'}
-                  </div>
-                  {(cohort.conditions || []).map((c, infoIndex) => (
-                    <div key={infoIndex}>
-                      {c.event_name}
-                      {c.property_filter
-                        ? formatPropertyFilter(c.property_filter)
-                        : ''}{' '}
-                      ≥ {c.min_event_count}
+                        <button
+                          className="button button-secondary"
+                          type="button"
+                          onClick={() => handleEdit(cohort)}
+                          disabled={isSystemCohort}
+                          title={isSystemCohort ? 'System cohort cannot be modified' : ''}
+                        >
+                          Edit
+                        </button>
+
+                        <button
+                          className="button button-danger"
+                          type="button"
+                          onClick={() => handleDelete(cohort.cohort_id)}
+                          disabled={deletingId === cohort.cohort_id || isSystemCohort}
+                          title={isSystemCohort ? 'System cohort cannot be deleted' : ''}
+                        >
+                          {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
+                        </button>
+                      </div>
                     </div>
-                  ))}
-                </div>
-              )}
-            </li>
-          )})}
+                    {infoCohortId === cohort.cohort_id && (
+                      <div className="cohort-info">
+                        <div>
+                          <strong>Logic:</strong> {cohort.logic_operator}
+                        </div>
+                        <div>
+                          <strong>Join:</strong> {cohort.join_type || 'condition_met'}
+                        </div>
+                        {(cohort.conditions || []).map((c, infoIndex) => (
+                          <div key={infoIndex}>
+                            {c.event_name}
+                            {c.property_filter
+                              ? formatPropertyFilter(c.property_filter)
+                              : ''}{' '}
+                            ≥ {c.min_event_count}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </li>
+
+                  {childCohorts.map((child) => {
+                    const isChildSystemCohort = child.cohort_name === 'All Users'
+                    return (
+                      <li key={child.cohort_id} title={child.is_active ? '' : 'No matching members under current filters'}>
+                        <div className="cohort-row child">
+                          <div className="cohort-left">
+                            <span>{child.cohort_name}</span>
+                            {child.hidden && <span className="badge-hidden">Hidden</span>}
+                            {!child.is_active && <span className="badge-inactive">Inactive</span>}
+                          </div>
+
+                          <div className="cohort-actions">
+                            <button
+                              className="button button-danger"
+                              type="button"
+                              onClick={() => handleDelete(child.cohort_id)}
+                              disabled={deletingId === child.cohort_id || isChildSystemCohort}
+                              title={isChildSystemCohort ? 'System cohort cannot be deleted' : ''}
+                            >
+                              {deletingId === child.cohort_id ? 'Deleting...' : 'Delete'}
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </Fragment>
+              )
+            })}
           </ul>
         )}
       </div>

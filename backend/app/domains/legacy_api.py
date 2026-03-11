@@ -503,7 +503,10 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             logic_operator TEXT,
             join_type TEXT DEFAULT 'condition_met',
             is_active BOOLEAN DEFAULT TRUE,
-            hidden BOOLEAN DEFAULT FALSE
+            hidden BOOLEAN DEFAULT FALSE,
+            split_parent_cohort_id INTEGER,
+            split_group_index INTEGER,
+            split_group_total INTEGER
         )
         """
     )
@@ -607,6 +610,12 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute("ALTER TABLE cohorts ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
     if "hidden" not in existing_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN hidden BOOLEAN DEFAULT FALSE")
+    if "split_parent_cohort_id" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_parent_cohort_id INTEGER")
+    if "split_group_index" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_index INTEGER")
+    if "split_group_total" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_total INTEGER")
 
     snapshot_columns = {
         row[0]
@@ -1855,6 +1864,9 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                 c.logic_operator,
                 c.join_type,
                 c.hidden,
+                c.split_parent_cohort_id,
+                c.split_group_index,
+                c.split_group_total,
                 cc.event_name,
                 cc.min_event_count,
                 cc.property_column,
@@ -1867,7 +1879,7 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         ).fetchall()
 
         cohorts: dict[int, dict[str, object]] = {}
-        for cohort_id, name, is_active, logic_operator, join_type, hidden, event_name, min_event_count, property_column, property_operator, property_values in rows:
+        for cohort_id, name, is_active, logic_operator, join_type, hidden, split_parent_cohort_id, split_group_index, split_group_total, event_name, min_event_count, property_column, property_operator, property_values in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
                 cohorts[cohort_id] = {
@@ -1877,6 +1889,9 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                     "logic_operator": str(logic_operator or "AND"),
                     "join_type": str(join_type or "condition_met"),
                     "hidden": bool(hidden),
+                    "split_parent_cohort_id": int(split_parent_cohort_id) if split_parent_cohort_id is not None else None,
+                    "split_group_index": int(split_group_index) if split_group_index is not None else None,
+                    "split_group_total": int(split_group_total) if split_group_total is not None else None,
                     "conditions": [],
                 }
 
@@ -1895,6 +1910,17 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
                         "property_filter": property_filter,
                     }
                 )
+
+        size_rows = connection.execute(
+            """
+            SELECT cohort_id, COUNT(*)
+            FROM cohort_membership
+            GROUP BY cohort_id
+            """
+        ).fetchall()
+        size_by_id = {int(row[0]): int(row[1]) for row in size_rows}
+        for cohort in cohorts.values():
+            cohort["size"] = size_by_id.get(int(cohort["cohort_id"]), 0)
 
         return {
             "cohorts": sorted(cohorts.values(), key=lambda cohort: cohort["cohort_id"])
@@ -1980,6 +2006,117 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
     return {"cohort_id": int(cohort_id), "users_joined": users_joined}
 
 
+@app.post("/cohorts/{cohort_id}/random_split")
+def random_split_cohort(cohort_id: int) -> dict[str, int]:
+    connection = get_connection()
+    try:
+        ensure_cohort_tables(connection)
+        parent_row = connection.execute(
+            """
+            SELECT name, split_parent_cohort_id, hidden
+            FROM cohorts
+            WHERE cohort_id = ?
+            """,
+            [cohort_id],
+        ).fetchone()
+        if parent_row is None:
+            raise HTTPException(status_code=404, detail="Cohort not found")
+
+        parent_name = str(parent_row[0])
+        if parent_row[1] is not None:
+            raise HTTPException(status_code=400, detail="Cannot split sub-cohort")
+        if bool(parent_row[2]):
+            raise HTTPException(status_code=400, detail="Cannot split hidden cohort")
+
+        parent_size = int(
+            connection.execute(
+                "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
+                [cohort_id],
+            ).fetchone()[0]
+        )
+        if parent_size < 8:
+            raise HTTPException(status_code=400, detail="Minimum 8 users required")
+
+        connection.execute("BEGIN")
+        try:
+            connection.execute(
+                """
+                DELETE FROM cohort_membership
+                WHERE cohort_id IN (
+                    SELECT cohort_id
+                    FROM cohorts
+                    WHERE split_parent_cohort_id = ?
+                )
+                """,
+                [cohort_id],
+            )
+            connection.execute(
+                "DELETE FROM cohorts WHERE split_parent_cohort_id = ?",
+                [cohort_id],
+            )
+
+            groups = ["A", "B", "C", "D"]
+            new_ids: list[int] = []
+            for idx, letter in enumerate(groups):
+                row = connection.execute(
+                    """
+                    INSERT INTO cohorts (
+                        cohort_id,
+                        name,
+                        logic_operator,
+                        join_type,
+                        is_active,
+                        hidden,
+                        split_parent_cohort_id,
+                        split_group_index,
+                        split_group_total
+                    )
+                    VALUES (nextval('cohorts_id_sequence'), ?, 'AND', 'condition_met', TRUE, FALSE, ?, ?, 4)
+                    RETURNING cohort_id
+                    """,
+                    [f"{parent_name} {letter}", cohort_id, idx],
+                ).fetchone()
+                new_ids.append(int(row[0]))
+
+            seed = f"{cohort_id}-{datetime.now(timezone.utc).isoformat()}"
+            connection.execute(
+                """
+                WITH base AS (
+                    SELECT user_id
+                    FROM cohort_membership
+                    WHERE cohort_id = ?
+                ),
+                randomized AS (
+                    SELECT
+                        user_id,
+                        ABS(hash(CAST(user_id AS VARCHAR) || ?)) % 4 AS grp
+                    FROM base
+                )
+                INSERT INTO cohort_membership (cohort_id, user_id, join_time)
+                SELECT
+                    CASE grp
+                        WHEN 0 THEN ?
+                        WHEN 1 THEN ?
+                        WHEN 2 THEN ?
+                        WHEN 3 THEN ?
+                    END,
+                    user_id,
+                    CURRENT_TIMESTAMP
+                FROM randomized
+                """,
+                [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
+            )
+            refresh_cohort_activity(connection)
+            connection.execute("COMMIT")
+        except Exception:
+            connection.execute("ROLLBACK")
+            raise
+
+        return {"created": 4}
+    finally:
+        connection.close()
+
+
 @app.delete("/cohorts/{cohort_id}")
 def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
     connection = get_connection()
@@ -1994,6 +2131,19 @@ def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
             raise HTTPException(status_code=404, detail="Cohort not found")
         if cohort_row[0] == "All Users":
             raise HTTPException(status_code=400, detail="All Users cohort cannot be deleted")
+
+        connection.execute(
+            """
+            DELETE FROM cohort_membership
+            WHERE cohort_id IN (
+                SELECT cohort_id
+                FROM cohorts
+                WHERE split_parent_cohort_id = ?
+            )
+            """,
+            [cohort_id],
+        )
+        connection.execute("DELETE FROM cohorts WHERE split_parent_cohort_id = ?", [cohort_id])
 
         connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
         connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
