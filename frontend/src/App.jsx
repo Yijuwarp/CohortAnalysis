@@ -223,7 +223,7 @@ export default function App() {
               </div>
             )}
             <button className={`toggle-circle ${isTopBarCollapsed ? 'collapsed' : ''}`} onClick={() => setIsTopBarCollapsed((prev) => !prev)}>
-              <span className="triangle-icon">▾</span>
+              <span className="triangle-icon">▴</span>
             </button>
             {isTopBarCollapsed && (
               <div className="dataset-row in-header">
@@ -254,7 +254,7 @@ export default function App() {
             <aside className={`left-pane ${isLeftPaneCollapsed ? 'collapsed' : ''}`} style={{ width: isLeftPaneCollapsed ? 58 : LEFT_PANE_WIDTH }}>
               <div className="left-pane-header">
                 <button className={`toggle-circle ${isLeftPaneCollapsed ? 'collapsed' : ''}`} onClick={() => setIsLeftPaneCollapsed((prev) => !prev)}>
-                  <span className="triangle-icon">▾</span>
+                  <span className="triangle-icon">◂</span>
                 </button>
               </div>
 

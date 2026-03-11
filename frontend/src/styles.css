@@ -52,7 +52,7 @@ body {
 .left-pane input,
 .left-pane select,
 .left-pane textarea,
-.left-pane button {
+.left-pane button:not(.toggle-circle)  {
   width: 100%;
 }
 
@@ -1030,7 +1030,7 @@ li .button {
 }
 
 .toggle-circle.collapsed .triangle-icon {
-  transform: rotate(-90deg);
+  transform: rotate(-180deg);
 }
 
 .top-bar > .toggle-circle {
