@@ -193,8 +193,8 @@ export default function App() {
         <>
           <div className="mapping-progress-overlay">
             <span>✓ Upload Dataset</span>
-            <span className="active">2 Map Columns</span>
-            <span>3 Explore Data</span>
+            <span className="active">Map Columns</span>
+            <span>Explore Data</span>
           </div>
           <Mapping
             columns={columns}
@@ -255,7 +255,7 @@ export default function App() {
                 <>
                   <section className={`pane-section ${sections.filters ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>
-                      <span className="pane-toggle">{sections.filters ? '◂' : '▾'}</span> <span className="pane-icon">🔎</span> Filters
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">🔎</span> Filters
                     </h3>
                     {sections.filters && (
                       <>
@@ -266,33 +266,44 @@ export default function App() {
                   </section>
                   <section className={`pane-section ${sections.settings ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>
-                      <span className="pane-toggle">{sections.settings ? '◂' : '▾'}</span> <span className="pane-icon">⚙</span> Analytics Settings
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">⚙</span> Analytics Settings
                     </h3>
                     {sections.settings && (
                       <>
                         <p className="pane-section-hint">Max day • Retention event • Revenue configuration</p>
-                        <div className="card">
-                          <label>
-                            Max Analysis Day
-                            <input type="number" min="0" value={globalMaxDay} onChange={(e) => setGlobalMaxDay(Number(e.target.value))} />
-                          </label>
-                          <label>
-                            Retention Event
-                            <SearchableSelect
-                              options={[{ label: 'Any Event', value: 'any' }, ...events]}
-                              value={selectedRetentionEvent}
-                              onChange={setSelectedRetentionEvent}
-                              placeholder="Select retention event"
-                            />
-                          </label>
-                          <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
+                        <div className="ui-section">
+                          <div className="card ui-card">
+                            <h4>Max Analysis Day</h4>
+                            <label>
+                              Max Analysis Day
+                              <input type="number" min="0" value={globalMaxDay} onChange={(e) => setGlobalMaxDay(Number(e.target.value))} />
+                            </label>
+                          </div>
+
+                          <div className="card ui-card">
+                            <h4>Retention Event</h4>
+                            <label>
+                              Retention Event
+                              <SearchableSelect
+                                options={[{ label: 'Any Event', value: 'any' }, ...events]}
+                                value={selectedRetentionEvent}
+                                onChange={setSelectedRetentionEvent}
+                                placeholder="Select retention event"
+                              />
+                            </label>
+                          </div>
+
+                          <div className="card ui-card">
+                            <h4>Revenue Configuration</h4>
+                            <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
+                          </div>
                         </div>
                       </>
                     )}
                   </section>
                   <section className={`pane-section ${sections.cohorts ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>
-                      <span className="pane-toggle">{sections.cohorts ? '◂' : '▾'}</span> <span className="pane-icon">👥</span> Cohorts
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">👥</span> Cohorts
                     </h3>
                     {sections.cohorts && (
                       <>
@@ -306,7 +317,7 @@ export default function App() {
             </aside>
 
             <section className="analytics-area">
-              <div className="analytics-tabs">
+              <div className="analytics-tabs ui-tabs">
                 <button className={activeTab === 'retention' ? 'active' : ''} onClick={() => setActiveTab('retention')}>Retention</button>
                 <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>

@@ -17,22 +17,20 @@
   --font-size-lg: 20px;
   --font-size-xl: 24px;
 
-  /* Colors */
-  --color-bg: #f3f4f6;
+  /* Theme: white + green glass */
+  --color-bg: #ffffff;
   --color-surface: #ffffff;
   --color-border: #e5e7eb;
   --color-text-primary: #111827;
   --color-text-secondary: #6b7280;
-
-  /* Accent (restrained green) */
-  --color-primary: #166534;
-  --color-primary-hover: #14532d;
-  --color-primary-light: #dcfce7;
+  --color-primary: #2e7d32;
+  --color-primary-hover: #43a047;
+  --color-primary-light: rgba(46, 125, 50, 0.08);
 
   /* Radius */
   --radius-sm: 6px;
   --radius-md: 10px;
 
   /* Shadow */
-  --shadow-sm: 0 2px 6px rgba(17, 24, 39, 0.06);
+  --shadow-sm: 0 2px 8px rgba(15, 23, 42, 0.05);
 }

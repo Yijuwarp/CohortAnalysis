@@ -312,13 +312,10 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
   return (
     <section className="card">
-      <h2>4. {editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h2>
+      <h2>{editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h2>
       <h4><strong>Name</strong></h4>
       <div className="grid">
-        <label>
-          Cohort Name (optional)
-          <input value={name} onChange={(e) => setName(e.target.value)} />
-        </label>
+        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional)" />
       </div>
 
       <h4><strong>Conditions</strong></h4>

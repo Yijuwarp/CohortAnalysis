@@ -160,7 +160,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
 
   return (
     <section className="card">
-      <h2>6. Usage Analytics</h2>
+      <h2>Usage Analytics</h2>
       <div className="inline-controls">
         <label>
           Usage Event

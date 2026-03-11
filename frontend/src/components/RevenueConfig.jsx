@@ -117,9 +117,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
   }
 
   return (
-    <section className="card">
-      <h2>2.5 Revenue Configuration</h2>
-      <div className="revenue-config-panel">
+    <div className="revenue-config-panel">
         <div className="revenue-config-add">
           <label>
             Add Revenue Event
@@ -197,7 +195,6 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
         </button>
         {message && <p className="success">{message}</p>}
         {error && <p className="error">{error}</p>}
-      </div>
-    </section>
+    </div>
   )
 }

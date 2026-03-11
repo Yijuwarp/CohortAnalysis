@@ -80,7 +80,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   return (
     <section className="card">
-      <h2>5. Retention</h2>
+      <h2>Retention</h2>
       <div className="retention-header">
         <div className="retention-controls-left">
           {showGlobalControls && (
