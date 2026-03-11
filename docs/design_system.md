@@ -1,46 +1,20 @@
-# Design System
+# Design System Notes
 
-## Color palette
+This project uses lightweight, component-scoped styling via `frontend/src/styles.css` and token definitions in `frontend/src/styles/tokens.css`.
 
-- Primary accent: `#2E7D32`
-- Primary hover: `#43A047`
-- Glass highlight: `rgba(46,125,50,0.08)`
-- Border: `#E5E7EB`
-- Background: `#FFFFFF`
-- Text primary: `#111827`
-- Text secondary: `#6B7280`
+## Principles
+- Analytics-first dense tables
+- Clear control grouping (filters/settings/cohorts)
+- Collapsible navigation to preserve chart/table space
+- Reusable card + button patterns
 
-## Spacing system
+## Common patterns
+- Cards for functional sections (`card`, `ui-card`)
+- Segmented/tab controls for analytics mode switching
+- Sticky cohort/size columns for wide day-based tables
+- Inline validation and error text for numeric/config inputs
 
-8px-based spacing scale:
-
-- `--space-1`: 4px
-- `--space-2`: 8px
-- `--space-3`: 12px
-- `--space-4`: 16px
-- `--space-5`: 24px
-- `--space-6`: 32px
-
-## Button styles
-
-- `button-primary`: filled green action button.
-- `button-secondary`: outlined button for standard secondary actions.
-- `button-ghost`: transparent/low-emphasis action button.
-
-## Card styles
-
-Standard card pattern (`card`, `ui-card`, `ui-panel`):
-
-- border radius: 10px
-- subtle border (`#E5E7EB`)
-- light shadow
-- internal padding: 16px+
-
-## Tab patterns
-
-Analytics tabs use an attached OneNote-like visual pattern:
-
-- light tab backgrounds with border
-- active tab merges into content area
-- subtle elevation on active state
-- no blue active highlights
+## Accessibility and behavior
+- Controls use native form elements where possible
+- Searchable select pattern is used for long option lists (events/columns)
+- Loading and empty states are explicitly rendered in analytics components

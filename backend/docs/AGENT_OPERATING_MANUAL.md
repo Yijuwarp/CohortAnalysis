@@ -1,32 +1,22 @@
-# Short Summary
-This manual tells AI agents where to add code and what architectural rules to preserve.
+# Agent Operating Manual (Backend)
 
-## System Overview
-The backend is layered: routers delegate to domains, domains orchestrate queries, and DB modules manage DuckDB primitives.
+## Current reality
+Backend logic is currently concentrated in `app/domains/legacy_api.py`, with routers in `app/routers/*` forwarding to that module.
 
-## Directory Structure
-- `app/routers`: HTTP contracts.
-- `app/domains`: business workflows.
-- `app/queries`: SQL-heavy query helpers.
-- `app/db`: connection/schema/indexes/migrations.
-- `app/models`: request payload schemas.
-- `docs/`: architecture and subsystem references.
+## What to preserve
+- Endpoint paths and request/response contracts
+- Table names and core data flow:
+  - `events` -> `events_normalized` -> `events_scoped`
+  - cohort tables (`cohorts`, `cohort_conditions`, `cohort_membership`, `cohort_activity_snapshot`)
+  - scope/revenue metadata tables
 
-## Domain Responsibilities
-Keep ingestion, scope, cohorts, analytics, and revenue logic in their domain folders.
+## Change boundaries for documentation tasks
+- Update Markdown docs freely.
+- Do not change backend Python behavior unless explicitly requested.
 
-## Data Pipeline
-Preserve `events` → `events_normalized` → `events_scoped` and downstream cohort/analytics tables.
-
-## Cohort Engine
-Cohort CRUD and membership refresh belong in `domains/cohorts` and related query helpers.
-
-## Analytics System
-Retention/usage/monetization endpoints should remain thin router adapters calling analytics services.
-
-## Rules for AI Agents
-1. Do not change endpoint paths or response shapes without explicit request.
-2. Keep SQL centralized and avoid copy/paste duplication.
-3. Add module docstrings with a one-sentence summary.
-4. Prefer small focused modules over large monoliths.
-5. Preserve backward-compatible DB semantics.
+## Validation checklist for backend docs
+When documenting behavior, verify against code for:
+- Router endpoint list (`app/routers/*`)
+- Pydantic request models (defined in `legacy_api.py` and re-exported in `app/models/*`)
+- Table creation/migration helpers (`ensure_*` functions)
+- Analytics SQL in retention/usage/monetization functions

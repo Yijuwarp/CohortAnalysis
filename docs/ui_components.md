@@ -1,37 +1,38 @@
-# UI Component Map
+# UI Components
 
-## Workspace shell
+## Core pages / containers
+- `App.jsx`: orchestrates upload -> mapping -> workspace flow.
+- `Upload.jsx`: CSV input and upload handling.
+- `Mapping.jsx`: canonical field mapping and type override UI.
 
-- `frontend/src/App.jsx`
-  - Application state orchestration.
-  - Left pane structure and section controls.
-  - Analytics tab selection and view composition.
+## Workspace panels
+- `FilterData.jsx`
+  - Applies date range and property filters via `/apply-filters`
+  - Uses `/columns`, `/column-values`, `/date-range`, `/scope`
 
-## Sidebar and configuration
+- `RevenueConfig.jsx`
+  - Loads and updates revenue event inclusion/override config
+  - Uses `/revenue-config-events` and `/update-revenue-config`
 
-- `frontend/src/components/FilterData.jsx`
-  - Dataset filter builder and application.
-- `frontend/src/components/RevenueConfig.jsx`
-  - Revenue event inclusion/override controls.
-- `frontend/src/components/CohortForm.jsx`
-  - Cohort create/edit flows, condition builder, cohort management.
+- `CohortForm.jsx`
+  - Cohort create/edit/delete/hide/split UI
+  - Uses `/cohorts`, `/cohorts/{id}`, `/cohorts/{id}/hide`, `/cohorts/{id}/random_split`
+  - Supports condition-level property filters with type-aware operators
 
 ## Analytics views
+- `RetentionTable.jsx` + `RetentionGraph.jsx`
+  - Uses `/retention`
+  - Supports table/graph modes and optional confidence interval rendering
 
-- `frontend/src/components/RetentionTable.jsx`
-  - Retention controls and table/graph output.
-- `frontend/src/components/UsageTable.jsx`
-  - Usage metric controls and dual table outputs.
-- `frontend/src/components/MonetizationTable.jsx`
-  - Monetization controls, prediction flow, sticky prediction summary, tuning panel host.
-- `frontend/src/components/TunePredictionPane.jsx`
-  - Temporary right-side tuning panel for projection parameters.
+- `UsageTable.jsx`
+  - Uses `/usage`
+  - Requires selected event and retention-event context
 
-## Shared primitives
+- `MonetizationTable.jsx` + `MonetizationGraph.jsx`
+  - Uses `/monetization`
+  - Supports multiple monetization metrics and projection features
+  - Integrates `TunePredictionPane.jsx` for interactive model tuning
 
-- `frontend/src/components/SearchableSelect.jsx`
-  - Search-enabled select used across forms and filters.
-- `frontend/src/styles.css`
-  - Global layout, card, tabs, sidebar, form, button, and table styling.
-- `frontend/src/styles/tokens.css`
-  - Theme tokens (colors, spacing, typography, radii, shadow).
+## Shared helpers
+- `SearchableSelect.jsx`: reusable searchable dropdown.
+- `frontend/src/utils/*`: date, formatting, cohort colors, prediction helpers.
