@@ -287,23 +287,21 @@ export default function App() {
                         <div className="ui-section">
                           <div className="card ui-card">
                             <h4>Max Analysis Day</h4>
-                            <label>
-                              Max Analysis Day
+                            <div className="settings-control-body">
                               <input type="number" min="0" value={globalMaxDay} onChange={(e) => setGlobalMaxDay(Number(e.target.value))} />
-                            </label>
+                            </div>
                           </div>
 
                           <div className="card ui-card">
                             <h4>Retention Event</h4>
-                            <label>
-                              Retention Event
+                            <div className="settings-control-body">
                               <SearchableSelect
                                 options={[{ label: 'Any Event', value: 'any' }, ...events]}
                                 value={selectedRetentionEvent}
                                 onChange={setSelectedRetentionEvent}
                                 placeholder="Select retention event"
                               />
-                            </label>
+                            </div>
                           </div>
 
                           <div className="card ui-card">

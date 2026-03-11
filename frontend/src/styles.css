@@ -239,11 +239,21 @@ button:disabled {
   padding-top: var(--space-3);
 }
 
-.revenue-config-add {
+.revenue-config-add-toolbar {
   display: flex;
-  gap: var(--space-3);
-  align-items: flex-end;
+  gap: var(--space-2);
+  align-items: center;
   margin-bottom: var(--space-3);
+}
+
+.revenue-config-add-toolbar select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+}
+
+.revenue-config-add-toolbar button {
+  height: 36px;
 }
 
 .revenue-config-table input[type='checkbox'] {
@@ -256,6 +266,22 @@ button:disabled {
 
 .invalid-number-input:focus {
   border-color: #dc2626;
+}
+
+.revenue-config-remove {
+  border: none;
+  background: transparent;
+  opacity: 0.6;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.revenue-config-remove:hover {
+  opacity: 1;
+}
+
+.settings-control-body {
+  margin-top: var(--space-2);
 }
 
 .muted-text {
@@ -1061,27 +1087,6 @@ li .button {
   margin-top: 20px;
   padding-top: 8px;
   margin-bottom: 0;
-}
-
-.revenue-config-add label,
-.revenue-config-add button {
-  height: 36px;
-}
-
-.revenue-config-add label {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-}
-
-.revenue-config-add label select {
-  height: 36px;
-}
-
-.revenue-config-add button {
-  width: auto;
-  align-self: flex-end;
 }
 
 .retention-aligned-control select,
