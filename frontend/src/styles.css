@@ -42,6 +42,32 @@ body {
   overflow-y: auto;
 }
 
+.left-pane .pane-section,
+.left-pane .card {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.left-pane input,
+.left-pane select,
+.left-pane textarea,
+.left-pane button {
+  width: 100%;
+}
+
+.left-pane table {
+  width: 100%;
+  table-layout: fixed;
+}
+
+.left-pane th,
+.left-pane td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
 .workspace-layout {
   display: flex;
   flex-direction: column;
