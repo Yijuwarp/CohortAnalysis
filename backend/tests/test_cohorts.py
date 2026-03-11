@@ -1162,6 +1162,25 @@ def test_random_split_creates_four_child_cohorts_and_assigns_members(client: Tes
     ).fetchone()[0]
     assert join_times == 0
 
+    parent_join_times = {
+        str(user_id): join_time
+        for user_id, join_time in db_connection.execute(
+            "SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?",
+            [parent_id],
+        ).fetchall()
+    }
+    child_join_rows = db_connection.execute(
+        """
+        SELECT cm.user_id, cm.join_time
+        FROM cohort_membership cm
+        WHERE cm.cohort_id IN (?, ?, ?, ?)
+        ORDER BY cm.user_id
+        """,
+        child_ids,
+    ).fetchall()
+    assert len(child_join_rows) == len(parent_join_times)
+    assert all(parent_join_times[str(user_id)] == join_time for user_id, join_time in child_join_rows)
+
     snapshot_count = db_connection.execute(
         """
         SELECT COUNT(*)

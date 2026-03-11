@@ -2110,17 +2110,20 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                 )
                 INSERT INTO cohort_membership (cohort_id, user_id, join_time)
                 SELECT
-                    CASE grp
+                    CASE b.grp
                         WHEN 0 THEN ?
                         WHEN 1 THEN ?
                         WHEN 2 THEN ?
                         WHEN 3 THEN ?
                     END,
-                    user_id,
-                    CURRENT_TIMESTAMP
-                FROM bucketed
+                    cm.user_id,
+                    cm.join_time
+                FROM bucketed b
+                JOIN cohort_membership cm
+                  ON b.user_id = cm.user_id
+                WHERE cm.cohort_id = ?
                 """,
-                [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
+                [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3], cohort_id],
             )
             refresh_cohort_activity(connection)
             connection.execute("COMMIT")
