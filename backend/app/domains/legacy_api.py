@@ -897,17 +897,26 @@ def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection) -> None:
     scoped_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
-    if not scoped_exists:
-        return
+    source_table = "events_scoped" if scoped_exists else "events_normalized"
+
+    connection.execute("DELETE FROM cohort_activity_snapshot")
+    connection.execute(
+        f"""
+        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
+        SELECT cm.cohort_id, e.user_id, e.event_time, e.event_name
+        FROM cohort_membership cm
+        JOIN {source_table} e
+          ON cm.user_id = e.user_id
+        """
+    )
 
     activity_rows = connection.execute(
         """
         SELECT
             c.cohort_id,
-            COUNT(DISTINCT es.user_id) AS active_members
+            COUNT(DISTINCT cas.user_id) AS active_members
         FROM cohorts c
-        LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
-        LEFT JOIN events_scoped es ON cm.user_id = es.user_id
+        LEFT JOIN cohort_activity_snapshot cas ON c.cohort_id = cas.cohort_id
         GROUP BY c.cohort_id
         """
     ).fetchall()
@@ -2112,21 +2121,6 @@ def random_split_cohort(cohort_id: int) -> dict[str, int]:
                 FROM bucketed
                 """,
                 [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
-            )
-            connection.execute(
-                """
-                INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-                SELECT
-                    cm.cohort_id,
-                    e.user_id,
-                    e.event_time,
-                    e.event_name
-                FROM cohort_membership cm
-                JOIN events_normalized e
-                    ON cm.user_id = e.user_id
-                WHERE cm.cohort_id IN (?, ?, ?, ?)
-                """,
-                [new_ids[0], new_ids[1], new_ids[2], new_ids[3]],
             )
             refresh_cohort_activity(connection)
             connection.execute("COMMIT")
