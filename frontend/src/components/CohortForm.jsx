@@ -620,11 +620,12 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </p>
       )}
 
-      <h3>Existing Cohorts</h3>
-      {cohorts.length === 0 ? (
-        <p className="secondary-text">No cohorts created yet.</p>
-      ) : (
-        <ul>
+      <div className="card existing-cohorts-card">
+        <h3>Existing Cohorts</h3>
+        {cohorts.length === 0 ? (
+          <p className="secondary-text">No cohorts created yet.</p>
+        ) : (
+          <ul>
           {cohorts.map((cohort) => {
             const isSystemCohort = cohort.cohort_name === 'All Users'
 
@@ -695,8 +696,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
               )}
             </li>
           )})}
-        </ul>
-      )}
+          </ul>
+        )}
+      </div>
     </section>
   )
 }

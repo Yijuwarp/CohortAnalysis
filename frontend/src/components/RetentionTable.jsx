@@ -119,19 +119,20 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               onChange={(e) => setIncludeCI(e.target.checked)}
             />
           </label>
-          <label>
-            CI Level
-            <select
-              value={confidence}
-              onChange={(e) => setConfidence(Number(e.target.value))}
-              disabled={!includeCI}
-            >
-              <option value={0.9}>90%</option>
-              <option value={0.95}>95%</option>
-              <option value={0.99}>99%</option>
-            </select>
-          </label>
-          <div className="view-toggle">
+          {includeCI && (
+            <label className="retention-aligned-control">
+              CI Level
+              <select
+                value={confidence}
+                onChange={(e) => setConfidence(Number(e.target.value))}
+              >
+                <option value={0.9}>90%</option>
+                <option value={0.95}>95%</option>
+                <option value={0.99}>99%</option>
+              </select>
+            </label>
+          )}
+          <div className="view-toggle retention-aligned-control">
             <button
               type="button"
               className={`view-button ${isPinned ? 'active' : ''}`}

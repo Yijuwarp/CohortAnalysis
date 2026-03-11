@@ -42,9 +42,9 @@ export default function App() {
   const [banner, setBanner] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
-  const [showReplaceWarning, setShowReplaceWarning] = useState(false)
   const [isTopBarCollapsed, setIsTopBarCollapsed] = useState(false)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
+  const [isExploreTransitioning, setIsExploreTransitioning] = useState(false)
   const [sections, setSections] = useState(persisted?.sections || { filters: true, settings: true, cohorts: true })
   const [events, setEvents] = useState([])
 
@@ -123,7 +123,6 @@ export default function App() {
       })
       setAppState('mapping')
       setBanner('')
-      setShowReplaceWarning(false)
       setSections({ filters: true, settings: true, cohorts: true })
     } catch (err) {
       setUploadError(err.message)
@@ -138,10 +137,15 @@ export default function App() {
   const handleMappingComplete = () => {
     clearPersistedState()
     refreshRetention()
-    setAppState('workspace')
-    setActiveTab('retention')
-    setSections({ filters: true, settings: true, cohorts: true })
-    setBanner('Dataset ready. Create cohorts and explore retention, usage, and monetization analytics.')
+    setBanner('Mapping complete. Opening Explore Data...')
+    setIsExploreTransitioning(true)
+    setTimeout(() => {
+      setAppState('workspace')
+      setActiveTab('retention')
+      setSections({ filters: true, settings: true, cohorts: true })
+      setBanner('Dataset ready. Create cohorts and explore retention, usage, and monetization analytics.')
+      setIsExploreTransitioning(false)
+    }, 650)
   }
 
   useEffect(() => {
@@ -206,12 +210,11 @@ export default function App() {
       )}
 
       {appState === 'workspace' && (
-        <div className="workspace-layout">
+        <div className={`workspace-layout ${isExploreTransitioning ? 'workspace-enter' : ''}`}>
           <header className={`top-bar ${isTopBarCollapsed ? 'collapsed' : ''}`}>
             {!isTopBarCollapsed && (
               <div className="inline-controls" style={{ margin: 0 }}>
                 <button className="button button-primary" onClick={() => {
-                  if (datasetMeta) setShowReplaceWarning(true)
                   fileInputRef.current?.click()
                 }}>Upload CSV</button>
                 <button className="button button-secondary" onClick={() => setAppState('mapping')}>Remap Columns</button>
@@ -219,8 +222,14 @@ export default function App() {
                 <button className="button button-secondary" onClick={() => openPaneSection('cohorts')}>Create Cohort</button>
               </div>
             )}
-            <button className="collapse-control" onClick={() => setIsTopBarCollapsed((prev) => !prev)}>{isTopBarCollapsed ? 'v' : '^'}</button>
-            {showReplaceWarning && <p className="warning-text">Uploading a new dataset will replace the current dataset and reset cohorts, filters, monetization configuration, and analytics results.</p>}
+            <button className={`toggle-circle ${isTopBarCollapsed ? 'collapsed' : ''}`} onClick={() => setIsTopBarCollapsed((prev) => !prev)}>
+              <span className="triangle-icon">▾</span>
+            </button>
+            {isTopBarCollapsed && (
+              <div className="dataset-row in-header">
+                Dataset: {datasetMeta?.filename || 'Unknown'} | Rows: {datasetMeta?.rows || 0} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+              </div>
+            )}
             {uploadError && <p className="error">{uploadError}</p>}
             <input
               ref={fileInputRef}
@@ -235,14 +244,18 @@ export default function App() {
 
           {banner && <div className="workspace-banner">{banner}</div>}
 
-          <div className="dataset-row">
-            Dataset: {datasetMeta?.filename || 'Unknown'} | Rows: {datasetMeta?.rows || 0} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
-          </div>
+          {!isTopBarCollapsed && (
+            <div className="dataset-row">
+              Dataset: {datasetMeta?.filename || 'Unknown'} | Rows: {datasetMeta?.rows || 0} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+            </div>
+          )}
 
           <div className="workspace-body">
             <aside className={`left-pane ${isLeftPaneCollapsed ? 'collapsed' : ''}`} style={{ width: isLeftPaneCollapsed ? 58 : LEFT_PANE_WIDTH }}>
               <div className="left-pane-header">
-                <button className="button button-secondary" onClick={() => setIsLeftPaneCollapsed((prev) => !prev)}>{isLeftPaneCollapsed ? '>' : '<'}</button>
+                <button className={`toggle-circle ${isLeftPaneCollapsed ? 'collapsed' : ''}`} onClick={() => setIsLeftPaneCollapsed((prev) => !prev)}>
+                  <span className="triangle-icon">▾</span>
+                </button>
               </div>
 
               {isLeftPaneCollapsed ? (
@@ -255,7 +268,7 @@ export default function App() {
                 <>
                   <section className={`pane-section ${sections.filters ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">🔎</span> Filters
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">🔎</span> <span className="pane-title">Filters</span>
                     </h3>
                     {sections.filters && (
                       <>
@@ -266,7 +279,7 @@ export default function App() {
                   </section>
                   <section className={`pane-section ${sections.settings ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">⚙</span> Analytics Settings
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">⚙</span> <span className="pane-title">Analytics Settings</span>
                     </h3>
                     {sections.settings && (
                       <>
@@ -303,7 +316,7 @@ export default function App() {
                   </section>
                   <section className={`pane-section ${sections.cohorts ? 'pane-section-expanded' : ''}`}>
                     <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">👥</span> Cohorts
+                      <span className="pane-toggle">▾</span> <span className="pane-icon">👥</span> <span className="pane-title">Cohorts</span>
                     </h3>
                     {sections.cohorts && (
                       <>

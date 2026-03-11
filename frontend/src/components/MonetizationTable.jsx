@@ -26,6 +26,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   const [predictions, setPredictions] = useState(null)
   const [predictionHorizon, setPredictionHorizon] = useState(90)
   const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
+  const [predictionBaseline, setPredictionBaseline] = useState(null)
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)
@@ -123,6 +124,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
     })
 
     setPredictions(nextPredictions)
+    setPredictionBaseline(nextPredictions)
   }
 
   const predictionSummary = useMemo(() => {
@@ -150,6 +152,8 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
                   onChange={(e) => {
                     setMetricType(e.target.value)
                     setPredictions(null)
+                    setPredictionBaseline(null)
+                    setIsTuningPaneOpen(false)
                   }}
                 >
                   {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -176,11 +180,14 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
               <button
                 className="button button-ghost"
                 type="button"
-                onClick={() => setIsTuningPaneOpen(true)}
+                onClick={() => {
+                  if (!predictions || Object.keys(predictions).length === 0) return
+                  setPredictionBaseline(JSON.parse(JSON.stringify(predictions)))
+                  setIsTuningPaneOpen(true)
+                }}
                 disabled={!predictions || Object.keys(predictions).length === 0}
-                title="Tune the A and B parameters of current predictions"
               >
-                Tune Monetization
+                Tune Prediction
               </button>
             </div>
 
@@ -228,17 +235,10 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
                 <tbody>
                   {displayRows.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td
-                        className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
-                        title={row.cohort_name}
-                      >
-                        {row.cohort_name}
-                      </td>
+                      <td className={isPinned ? 'sticky-col sticky-col-cohort' : ''} title={row.cohort_name}>{row.cohort_name}</td>
                       <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
                       {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)] ?? '—'}</td>)}
-                      <td className="col-prediction">
-                        {formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}
-                      </td>
+                      <td className="col-prediction">{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -260,7 +260,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
 
         {predictionSummary.length > 0 && (
           <aside className="prediction-sticky-card">
-            <h4>Prediction ({predictionHorizon}D)</h4>
+            <h4>Prediction Summary ({predictionHorizon}D)</h4>
             {predictionSummary.map((item) => (
               <div key={item.id} className="prediction-row">
                 <span>{item.name}</span>
@@ -275,10 +275,11 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
           onClose={() => setIsTuningPaneOpen(false)}
           predictions={predictions}
           displayRows={displayRows}
-          effectiveMaxDay={effectiveMaxDay}
-          predictionHorizon={predictionHorizon}
-          onUpdate={(newPredictions) => {
-            setPredictions(newPredictions)
+          onLiveUpdate={setPredictions}
+          onCancel={() => {
+            if (predictionBaseline) {
+              setPredictions(JSON.parse(JSON.stringify(predictionBaseline)))
+            }
             setIsTuningPaneOpen(false)
           }}
         />

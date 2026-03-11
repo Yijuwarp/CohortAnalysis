@@ -19,7 +19,7 @@ export function formatPrettyDate(dateString) {
           : 'th'
 
   const formatter = new Intl.DateTimeFormat('en-US', {
-    month: 'long',
+    month: 'short',
     year: 'numeric',
   })
 
