@@ -52,7 +52,7 @@ body {
 .left-pane input,
 .left-pane select,
 .left-pane textarea,
-.left-pane button:not(.toggle-circle)  {
+.left-pane .button  {
   width: 100%;
 }
 
@@ -241,19 +241,23 @@ button:disabled {
 
 .revenue-config-add-toolbar {
   display: flex;
-  gap: var(--space-2);
   align-items: center;
+  gap: var(--space-2);
   margin-bottom: var(--space-3);
 }
 
 .revenue-config-add-toolbar select {
-  flex: 1;
+  flex: 1 1 auto;
   min-width: 0;
   height: 36px;
 }
 
-.revenue-config-add-toolbar button {
+.revenue-config-add-toolbar .button {
+  width: auto;        /* overrides global rule */
+  flex: 0 0 auto;
   height: 36px;
+  padding: 0 10px;
+  white-space: nowrap;
 }
 
 .revenue-config-table input[type='checkbox'] {
