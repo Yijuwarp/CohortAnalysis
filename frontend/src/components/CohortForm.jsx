@@ -67,6 +67,28 @@ const formatPropertyFilter = (propertyFilter) => {
   return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`
 }
 
+const formatCohortSize = (size) => {
+  const numeric = Number(size || 0)
+  if (numeric >= 1000000) {
+    return `${(numeric / 1000000).toFixed(numeric >= 10000000 ? 0 : 1)}M`
+  }
+  if (numeric >= 1000) {
+    return `${(numeric / 1000).toFixed(numeric >= 100000 ? 0 : 1)}K`
+  }
+  return String(numeric)
+}
+
+const describeJoinType = (joinType) => (joinType === 'first_event' ? 'Join on first event' : 'Join when condition is met')
+
+const buildCohortDefinition = (cohort) => {
+  const logic = cohort.condition_logic || cohort.logic_operator || 'AND'
+  const conditionLines = (cohort.conditions || []).map((condition) => {
+    const property = condition.property_filter ? formatPropertyFilter(condition.property_filter) : ''
+    return `${condition.event_name} ≥ ${condition.min_event_count}${property}`
+  })
+  return [`Logic: ${logic}`, ...conditionLines, describeJoinType(cohort.join_type)].join(' • ')
+}
+
 function generateCohortName(currentConditions, currentLogicOperator) {
   if (!currentConditions || currentConditions.length === 0) {
     return 'Untitled Cohort'
@@ -112,7 +134,6 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [events, setEvents] = useState([])
   const [columns, setColumns] = useState([])
   const [valueCache, setValueCache] = useState({})
-  const [infoCohortId, setInfoCohortId] = useState(null)
   const [editingCohortId, setEditingCohortId] = useState(null)
   const [splittingId, setSplittingId] = useState(null)
 
@@ -253,6 +274,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       const payload = {
         name: finalName,
         logic_operator: logicOperator,
+        condition_logic: logicOperator,
         join_type: joinType,
         conditions: payloadConditions,
       }
@@ -339,10 +361,26 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     return childrenMap
   }, [cohorts])
 
+  const parentDefinitionTooltips = useMemo(
+    () => Object.fromEntries(parentCohorts.map((cohort) => [cohort.cohort_id, buildCohortDefinition(cohort)])),
+    [parentCohorts]
+  )
+
+  const childDefinitionTooltips = useMemo(() => {
+    const map = {}
+    Object.values(childCohortsByParent).forEach((children) => {
+      children.forEach((child) => {
+        map[child.cohort_id] = buildCohortDefinition(child)
+      })
+    })
+    return map
+  }, [childCohortsByParent])
+
+
   const handleEdit = (cohort) => {
     setEditingCohortId(cohort.cohort_id)
     setName(cohort.cohort_name)
-    setLogicOperator(cohort.logic_operator || 'AND')
+    setLogicOperator(cohort.condition_logic || cohort.logic_operator || 'AND')
     setJoinType(cohort.join_type || 'condition_met')
     setConditions(
       cohort.conditions?.length
@@ -360,6 +398,14 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
       </div>
 
       <h4><strong>Conditions</strong></h4>
+      <div className="cohort-condition-logic-picker">
+        <span>Match users where</span>
+        <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
+          <option value="AND">ALL conditions (AND)</option>
+          <option value="OR">ANY conditions (OR)</option>
+        </select>
+        <span>conditions are true</span>
+      </div>
       {conditions.map((condition, index) => {
         const propertyFilter = condition.property_filter
         const selectedColumn = propertyFilter?.column || ''
@@ -613,14 +659,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
               )}
             </div>
 
-            {conditions.length > 1 && index < conditions.length - 1 && (
-              <div className="cohort-logic-connector">
-                <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
-                  <option value="AND">AND</option>
-                  <option value="OR">OR</option>
-                </select>
-              </div>
-            )}
+            {conditions.length > 1 && index < conditions.length - 1 && <div className="cohort-logic-connector">{logicOperator}</div>}
           </div>
         )
       })}
@@ -661,122 +700,115 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </p>
       )}
 
+      <div className="cohorts-divider" />
       <div className="card existing-cohorts-card">
         <h3>Existing Cohorts</h3>
         {cohorts.length === 0 ? (
           <p className="secondary-text">No cohorts created yet.</p>
         ) : (
-          <ul>
+          <div className="cohort-list-table">
+            <div className="cohort-list-header cohort-list-row">
+              <span>Name</span>
+              <span>Size</span>
+              <span>Actions</span>
+            </div>
             {parentCohorts.map((cohort) => {
               const isSystemCohort = cohort.cohort_name === 'All Users'
               const childCohorts = cohort.hidden ? [] : (childCohortsByParent[cohort.cohort_id] || [])
               const minSizeForSplit = Number(cohort.size || 0) >= 8
+              const definitionTooltip = parentDefinitionTooltips[cohort.cohort_id]
 
               return (
                 <Fragment key={cohort.cohort_id}>
-                  <li title={cohort.is_active ? '' : 'No matching members under current filters'}>
-                    <div className="cohort-row">
-                      <div className="cohort-left">
-                        <span>{cohort.cohort_name}</span>
-                        {cohort.hidden && <span className="badge-hidden">Hidden</span>}
-                        {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
-                      </div>
-
-                      <div className="cohort-actions">
-                        <button
-                          className="button button-secondary button-icon"
-                          type="button"
-                          onClick={() => handleRandomSplit(cohort)}
-                          disabled={!minSizeForSplit || splittingId === cohort.cohort_id}
-                          title={minSizeForSplit ? 'Create randomized sub-cohorts' : 'Minimum 8 users required'}
-                        >
-                          {splittingId === cohort.cohort_id ? '⏳' : '🎲'}
-                        </button>
-
-                        <button
-                          className="button button-secondary button-icon"
-                          type="button"
-                          onClick={() => setInfoCohortId(infoCohortId === cohort.cohort_id ? null : cohort.cohort_id)}
-                        >
-                          i
-                        </button>
-
-                        <button className="button button-small" type="button" onClick={() => handleToggleHide(cohort.cohort_id)}>
-                          {cohort.hidden ? 'Unhide' : 'Hide'}
-                        </button>
-
-                        <button
-                          className="button button-secondary"
-                          type="button"
-                          onClick={() => handleEdit(cohort)}
-                          disabled={isSystemCohort}
-                          title={isSystemCohort ? 'System cohort cannot be modified' : ''}
-                        >
-                          Edit
-                        </button>
-
-                        <button
-                          className="button button-danger"
-                          type="button"
-                          onClick={() => handleDelete(cohort.cohort_id)}
-                          disabled={deletingId === cohort.cohort_id || isSystemCohort}
-                          title={isSystemCohort ? 'System cohort cannot be deleted' : ''}
-                        >
-                          {deletingId === cohort.cohort_id ? 'Deleting...' : 'Delete'}
-                        </button>
-                      </div>
+                  <div className="cohort-list-row cohort-row" title={cohort.is_active ? '' : 'No matching members under current filters'}>
+                    <div className="cohort-list-name cohort-left">
+                      <span>{cohort.cohort_name}</span>
+                      {cohort.hidden && <span className="badge-hidden">Hidden</span>}
+                      {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
                     </div>
-                    {infoCohortId === cohort.cohort_id && (
-                      <div className="cohort-info">
-                        <div>
-                          <strong>Logic:</strong> {cohort.logic_operator}
-                        </div>
-                        <div>
-                          <strong>Join:</strong> {cohort.join_type || 'condition_met'}
-                        </div>
-                        {(cohort.conditions || []).map((c, infoIndex) => (
-                          <div key={infoIndex}>
-                            {c.event_name}
-                            {c.property_filter
-                              ? formatPropertyFilter(c.property_filter)
-                              : ''}{' '}
-                            ≥ {c.min_event_count}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </li>
+
+                    <span className="cohort-list-size">{formatCohortSize(cohort.size)}</span>
+
+                    <div className="cohort-actions">
+                      <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={definitionTooltip}>
+                        ℹ
+                      </button>
+
+                      <button
+                        className="cohort-icon-button"
+                        type="button"
+                        onClick={() => handleRandomSplit(cohort)}
+                        disabled={!minSizeForSplit || splittingId === cohort.cohort_id}
+                        title={minSizeForSplit ? 'Create random subsets from this cohort' : 'Minimum 8 users required'}
+                      >
+                        {splittingId === cohort.cohort_id ? '⏳' : '🎲'}
+                      </button>
+
+                      <button
+                        className="cohort-icon-button"
+                        type="button"
+                        onClick={() => handleToggleHide(cohort.cohort_id)}
+                        title={cohort.hidden ? 'Show cohort in charts' : 'Hide cohort from charts'}
+                      >
+                        👁
+                      </button>
+
+                      <button
+                        className="cohort-icon-button"
+                        type="button"
+                        onClick={() => handleEdit(cohort)}
+                        disabled={isSystemCohort}
+                        title={isSystemCohort ? 'System cohort cannot be modified' : 'Edit cohort'}
+                      >
+                        ✏
+                      </button>
+
+                      <button
+                        className="cohort-icon-button"
+                        type="button"
+                        onClick={() => handleDelete(cohort.cohort_id)}
+                        disabled={deletingId === cohort.cohort_id || isSystemCohort}
+                        title={isSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
+                      >
+                        {deletingId === cohort.cohort_id ? '⏳' : '🗑'}
+                      </button>
+                    </div>
+                  </div>
 
                   {childCohorts.map((child) => {
                     const isChildSystemCohort = child.cohort_name === 'All Users'
+                    const childDefinitionTooltip = childDefinitionTooltips[child.cohort_id]
                     return (
-                      <li key={child.cohort_id} title={child.is_active ? '' : 'No matching members under current filters'}>
-                        <div className="cohort-row child">
-                          <div className="cohort-left">
-                            <span>{child.cohort_name}</span>
-                            {child.hidden && <span className="badge-hidden">Hidden</span>}
-                            {!child.is_active && <span className="badge-inactive">Inactive</span>}
-                          </div>
-
-                          <div className="cohort-actions">
-                            <button
-                              className="button button-danger"
-                              type="button"
-                              onClick={() => handleDelete(child.cohort_id)}
-                              disabled={deletingId === child.cohort_id || isChildSystemCohort}
-                              title={isChildSystemCohort ? 'System cohort cannot be deleted' : ''}
-                            >
-                              {deletingId === child.cohort_id ? 'Deleting...' : 'Delete'}
-                            </button>
-                          </div>
+                      <div key={child.cohort_id} className="cohort-list-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
+                        <div className="cohort-list-name cohort-left">
+                          <span>{child.cohort_name}</span>
+                          {child.hidden && <span className="badge-hidden">Hidden</span>}
+                          {!child.is_active && <span className="badge-inactive">Inactive</span>}
                         </div>
-                      </li>
+
+                        <span className="cohort-list-size">{formatCohortSize(child.size)}</span>
+
+                        <div className="cohort-actions">
+                          <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={childDefinitionTooltip}>
+                            ℹ
+                          </button>
+                          <button
+                            className="cohort-icon-button"
+                            type="button"
+                            onClick={() => handleDelete(child.cohort_id)}
+                            disabled={deletingId === child.cohort_id || isChildSystemCohort}
+                            title={isChildSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
+                          >
+                            {deletingId === child.cohort_id ? '⏳' : '🗑'}
+                          </button>
+                        </div>
+                      </div>
                     )
                   })}
                 </Fragment>
               )
             })}
-          </ul>
+          </div>
         )}
       </div>
     </section>

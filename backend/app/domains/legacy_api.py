@@ -102,6 +102,7 @@ class CohortCondition(BaseModel):
 class CreateCohortRequest(BaseModel):
     name: str = Field(min_length=1)
     logic_operator: str
+    condition_logic: str | None = None
     join_type: str = "condition_met"
     conditions: list[CohortCondition] = Field(max_length=5)
 
@@ -111,6 +112,16 @@ class CreateCohortRequest(BaseModel):
         normalized = value.upper()
         if normalized not in {"AND", "OR"}:
             raise ValueError("logic_operator must be either AND or OR")
+        return normalized
+
+    @field_validator("condition_logic")
+    @classmethod
+    def validate_condition_logic(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.upper()
+        if normalized not in {"AND", "OR"}:
+            raise ValueError("condition_logic must be either AND or OR")
         return normalized
 
     @field_validator("join_type")
@@ -1809,7 +1820,7 @@ def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
             VALUES (nextval('cohorts_id_sequence'), ?, ?, ?, TRUE)
             RETURNING cohort_id
             """,
-            [payload.name, payload.logic_operator, payload.join_type],
+            [payload.name, (payload.condition_logic or payload.logic_operator or "AND").upper(), payload.join_type],
         ).fetchone()[0]
 
         for condition in payload.conditions:
@@ -1891,11 +1902,13 @@ def list_cohorts() -> dict[str, list[dict[str, object]]]:
         for cohort_id, name, is_active, logic_operator, join_type, hidden, split_parent_cohort_id, split_group_index, split_group_total, event_name, min_event_count, property_column, property_operator, property_values in rows:
             cohort_id = int(cohort_id)
             if cohort_id not in cohorts:
+                logic = str(logic_operator or "AND").upper()
                 cohorts[cohort_id] = {
                     "cohort_id": cohort_id,
                     "cohort_name": str(name),
                     "is_active": bool(is_active),
-                    "logic_operator": str(logic_operator or "AND"),
+                    "logic_operator": logic,
+                    "condition_logic": logic,
                     "join_type": str(join_type or "condition_met"),
                     "hidden": bool(hidden),
                     "split_parent_cohort_id": int(split_parent_cohort_id) if split_parent_cohort_id is not None else None,
@@ -1964,7 +1977,7 @@ def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int
 
         connection.execute(
             "UPDATE cohorts SET name = ?, logic_operator = ?, join_type = ? WHERE cohort_id = ?",
-            [payload.name, payload.logic_operator, payload.join_type, cohort_id],
+            [payload.name, (payload.condition_logic or payload.logic_operator or "AND").upper(), payload.join_type, cohort_id],
         )
         connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
 
