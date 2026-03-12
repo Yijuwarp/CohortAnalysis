@@ -70,7 +70,8 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
   const loadMetadata = async () => {
     try {
       const [columnResponse, scopeResponse] = await Promise.all([getColumns(), getScope()])
-      const loadedColumns = columnResponse.columns || []
+      const rawColumns = columnResponse.columns || []
+      const loadedColumns = rawColumns.filter((column) => column.category !== 'metric')
       const nextColumnsSignature = JSON.stringify(loadedColumns.map((column) => ({ name: String(column.name || ''), data_type: String(column.data_type || ''), role: column.role ? String(column.role) : '' })))
       const hasColumnMetadataChanged = previousColumnsSignatureRef.current !== nextColumnsSignature
       if (hasColumnMetadataChanged) setValueCache({})
@@ -95,10 +96,10 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
 
       const mappedFilters = payload.filters?.length
         ? payload.filters.map((row) => {
-            const allowed = getAllowedOperators(row.column, loadedColumnMap)
-            const nextOperator = allowed.includes(row.operator) ? row.operator : allowed[0]
-            return { ...row, operator: nextOperator, enabled: row.enabled ?? true, value: normalizeRowValue(nextOperator, row.value) }
-          })
+          const allowed = getAllowedOperators(row.column, loadedColumnMap)
+          const nextOperator = allowed.includes(row.operator) ? row.operator : allowed[0]
+          return { ...row, operator: nextOperator, enabled: row.enabled ?? true, value: normalizeRowValue(nextOperator, row.value) }
+        })
         : [defaultFilter]
 
       setFilters(mappedFilters)

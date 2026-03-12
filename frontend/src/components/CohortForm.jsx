@@ -142,7 +142,13 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
 
   const propertyColumns = useMemo(
-    () => columns.filter((column) => !STRUCTURAL_COLUMNS.has(column.name)),
+    () =>
+      columns.filter((column) => {
+        if (column.category === 'metric') return false
+        if (column.category === 'property') return true
+        if (column.category === 'canonical') return column.name === 'user_id' || column.name === 'event_time'
+        return false
+      }),
     [columns]
   )
 
@@ -400,319 +406,319 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     <section>
       <div className="cohorts-section-card create-cohorts-card">
         <h3>{editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h3>
-      <h4><strong>Name</strong></h4>
-      <div className="grid">
-        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional)" />
-      </div>
+        <h4><strong>Name</strong></h4>
+        <div className="grid">
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional)" />
+        </div>
 
-      <h4><strong>Conditions</strong></h4>
-      <div className="cohort-condition-logic-picker">
-        <span>Match users where</span>
-        <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
-          <option value="AND">ALL conditions (AND)</option>
-          <option value="OR">ANY conditions (OR)</option>
-        </select>
-      </div>
-      {conditions.map((condition, index) => {
-        const propertyFilter = condition.property_filter
-        const selectedColumn = propertyFilter?.column || ''
-        const columnType = normalizeColumnType(columnByName[selectedColumn]?.data_type)
-        const valueCacheKey = getValueCacheKey(condition.event_name, selectedColumn)
-        const availableValues = valueCache[valueCacheKey]?.values || []
-        const isValueSelectionDisabled = !condition.event_name
-        const showProperty = condition.property_filter_expanded && propertyFilter
+        <h4><strong>Conditions</strong></h4>
+        <div className="cohort-condition-logic-picker">
+          <span>Match users where</span>
+          <select value={logicOperator} onChange={(e) => setLogicOperator(e.target.value)}>
+            <option value="AND">ALL conditions (AND)</option>
+            <option value="OR">ANY conditions (OR)</option>
+          </select>
+        </div>
+        {conditions.map((condition, index) => {
+          const propertyFilter = condition.property_filter
+          const selectedColumn = propertyFilter?.column || ''
+          const columnType = normalizeColumnType(columnByName[selectedColumn]?.data_type)
+          const valueCacheKey = getValueCacheKey(condition.event_name, selectedColumn)
+          const availableValues = valueCache[valueCacheKey]?.values || []
+          const isValueSelectionDisabled = !condition.event_name
+          const showProperty = condition.property_filter_expanded && propertyFilter
 
-        return (
-          <div key={index}>
-            <div className="cohort-condition-block">
-              <div className="cohort-condition-content">
-                <div className="cohort-condition-row">
-                <p className="cohort-rule-text">Performed</p>
-                <SearchableSelect
-                  options={events}
-                  value={condition.event_name}
-                  onChange={(nextEventName) => {
-                    const updated = [...conditions]
-                    updated[index].event_name = nextEventName
-                    updated[index].property_filter = null
-                    updated[index].property_filter_expanded = false
-                    setConditions(updated)
-                  }}
-                  placeholder="Select event"
-                />
-                </div>
-                                           <div className="cohort-condition-row">
-                <span className="cohort-rule-text">at least</span>
-
-                <input
-                  className="cohort-count-input"
-                  type="number"
-                  min="1"
-                  value={condition.min_event_count}
-                  onChange={(e) => {
-                    const updated = [...conditions]
-                    updated[index].min_event_count = Math.max(1, Number(e.target.value) || 1)
-                    setConditions(updated)
-                  }}
-                />
-
-                <span className="cohort-rule-text">times</span>
-                </div>
-
-                {conditions.length > 1 && (
-                  <button
-                    className="cohort-condition-remove"
-                    type="button"
-                    onClick={() => {
-                      const updated = conditions.filter((_, i) => i !== index)
-                      setConditions(updated)
-                    }}
-                  >
-                    X
-                  </button>
-                )}
-              </div>
-
-              <button
-                className="cohort-property-filter-action"
-                type="button"
-                onClick={() => {
-                  const updated = [...conditions]
-                  if (!updated[index].property_filter_expanded) {
-                    const defaultColumn = propertyColumns[0]?.name || ''
-                    const allowedOperators = getAllowedOperators(defaultColumn)
-                    updated[index].property_filter = {
-                      column: defaultColumn,
-                      operator: allowedOperators[0] || '=',
-                      values: getDefaultValuesForOperator(allowedOperators[0] || '=', normalizeColumnType(columnByName[defaultColumn]?.data_type)),
-                    }
-                    updated[index].property_filter_expanded = true
-                    ensureColumnValuesLoaded(defaultColumn, updated[index].event_name)
-                  } else {
-                    updated[index].property_filter_expanded = false
-                  }
-                  setConditions(updated)
-                }}
-              >
-                {showProperty ? 'Hide property filter' : '+ Add property filter (optional)'}
-              </button>
-
-              {showProperty && (
-                <div className="cohort-rule-filters">
-                  <div className="cohort-rule-filter-grid">
-                    <label>Property</label>
+          return (
+            <div key={index}>
+              <div className="cohort-condition-block">
+                <div className="cohort-condition-content">
+                  <div className="cohort-condition-row">
+                    <p className="cohort-rule-text">Performed</p>
                     <SearchableSelect
-                      options={propertyColumns.map((column) => ({ label: column.name, value: column.name }))}
-                      value={propertyFilter.column}
-                      onChange={(nextColumn) => {
-                        if (!nextColumn) {
-                          const updated = [...conditions]
-                          updated[index].property_filter = null
-                          updated[index].property_filter_expanded = false
-                          setConditions(updated)
-                          return
-                        }
-                        const allowed = getAllowedOperators(nextColumn)
-                        const nextType = normalizeColumnType(columnByName[nextColumn]?.data_type)
+                      options={events}
+                      value={condition.event_name}
+                      onChange={(nextEventName) => {
                         const updated = [...conditions]
-                        updated[index].property_filter = {
-                          ...updated[index].property_filter,
-                          column: nextColumn,
-                          operator: allowed[0],
-                          values: getDefaultValuesForOperator(allowed[0], nextType),
-                        }
+                        updated[index].event_name = nextEventName
+                        updated[index].property_filter = null
+                        updated[index].property_filter_expanded = false
                         setConditions(updated)
-                        ensureColumnValuesLoaded(nextColumn, updated[index].event_name)
                       }}
-                      placeholder="Select column"
+                      placeholder="Select event"
+                    />
+                  </div>
+                  <div className="cohort-condition-row">
+                    <span className="cohort-rule-text">at least</span>
+
+                    <input
+                      className="cohort-count-input"
+                      type="number"
+                      min="1"
+                      value={condition.min_event_count}
+                      onChange={(e) => {
+                        const updated = [...conditions]
+                        updated[index].min_event_count = Math.max(1, Number(e.target.value) || 1)
+                        setConditions(updated)
+                      }}
                     />
 
-                    <label>Operator</label>
-                    <select
-                      value={propertyFilter.operator}
-                      onChange={(e) => {
-                        const nextOperator = e.target.value
-                        const updated = [...conditions]
-                        updated[index].property_filter = {
-                          ...updated[index].property_filter,
-                          operator: nextOperator,
-                          values: getDefaultValuesForOperator(nextOperator, columnType),
-                        }
+                    <span className="cohort-rule-text">times</span>
+                  </div>
+
+                  {conditions.length > 1 && (
+                    <button
+                      className="cohort-condition-remove"
+                      type="button"
+                      onClick={() => {
+                        const updated = conditions.filter((_, i) => i !== index)
                         setConditions(updated)
-                        if (isMultiOperator(nextOperator)) {
-                          ensureColumnValuesLoaded(propertyFilter.column, updated[index].event_name)
-                        }
                       }}
                     >
-                      {getAllowedOperators(propertyFilter.column).map((operator) => (
-                        <option key={operator} value={operator}>
-                          {operator}
-                        </option>
-                      ))}
-                    </select>
+                      X
+                    </button>
+                  )}
+                </div>
 
-                    <label>Values</label>
-                    <div>
-                      {columnType === 'BOOLEAN' ? (
-                        <select
-                          disabled={isValueSelectionDisabled}
-                          value={String(propertyFilter.values)}
-                          onChange={(e) => {
+                <button
+                  className="cohort-property-filter-action"
+                  type="button"
+                  onClick={() => {
+                    const updated = [...conditions]
+                    if (!updated[index].property_filter_expanded) {
+                      const defaultColumn = propertyColumns[0]?.name || ''
+                      const allowedOperators = getAllowedOperators(defaultColumn)
+                      updated[index].property_filter = {
+                        column: defaultColumn,
+                        operator: allowedOperators[0] || '=',
+                        values: getDefaultValuesForOperator(allowedOperators[0] || '=', normalizeColumnType(columnByName[defaultColumn]?.data_type)),
+                      }
+                      updated[index].property_filter_expanded = true
+                      ensureColumnValuesLoaded(defaultColumn, updated[index].event_name)
+                    } else {
+                      updated[index].property_filter_expanded = false
+                    }
+                    setConditions(updated)
+                  }}
+                >
+                  {showProperty ? 'Hide property filter' : '+ Add property filter (optional)'}
+                </button>
+
+                {showProperty && (
+                  <div className="cohort-rule-filters">
+                    <div className="cohort-rule-filter-grid">
+                      <label>Property</label>
+                      <SearchableSelect
+                        options={propertyColumns.map((column) => ({ label: column.name, value: column.name }))}
+                        value={propertyFilter.column}
+                        onChange={(nextColumn) => {
+                          if (!nextColumn) {
                             const updated = [...conditions]
-                            updated[index].property_filter = {
-                              ...updated[index].property_filter,
-                              values: e.target.value === 'true',
-                            }
+                            updated[index].property_filter = null
+                            updated[index].property_filter_expanded = false
                             setConditions(updated)
-                          }}
-                        >
-                          <option value="true">True</option>
-                          <option value="false">False</option>
-                        </select>
-                      ) : isMultiOperator(propertyFilter.operator) ? (
-                        <div className="cohort-multi-values">
-                          <SearchableSelect
-                            options={availableValues}
-                            value=""
+                            return
+                          }
+                          const allowed = getAllowedOperators(nextColumn)
+                          const nextType = normalizeColumnType(columnByName[nextColumn]?.data_type)
+                          const updated = [...conditions]
+                          updated[index].property_filter = {
+                            ...updated[index].property_filter,
+                            column: nextColumn,
+                            operator: allowed[0],
+                            values: getDefaultValuesForOperator(allowed[0], nextType),
+                          }
+                          setConditions(updated)
+                          ensureColumnValuesLoaded(nextColumn, updated[index].event_name)
+                        }}
+                        placeholder="Select column"
+                      />
+
+                      <label>Operator</label>
+                      <select
+                        value={propertyFilter.operator}
+                        onChange={(e) => {
+                          const nextOperator = e.target.value
+                          const updated = [...conditions]
+                          updated[index].property_filter = {
+                            ...updated[index].property_filter,
+                            operator: nextOperator,
+                            values: getDefaultValuesForOperator(nextOperator, columnType),
+                          }
+                          setConditions(updated)
+                          if (isMultiOperator(nextOperator)) {
+                            ensureColumnValuesLoaded(propertyFilter.column, updated[index].event_name)
+                          }
+                        }}
+                      >
+                        {getAllowedOperators(propertyFilter.column).map((operator) => (
+                          <option key={operator} value={operator}>
+                            {operator}
+                          </option>
+                        ))}
+                      </select>
+
+                      <label>Values</label>
+                      <div>
+                        {columnType === 'BOOLEAN' ? (
+                          <select
                             disabled={isValueSelectionDisabled}
-                            onChange={(selected) => {
-                              const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
-                              if (existing.includes(selected) || existing.length >= 100) {
-                                return
-                              }
+                            value={String(propertyFilter.values)}
+                            onChange={(e) => {
                               const updated = [...conditions]
                               updated[index].property_filter = {
                                 ...updated[index].property_filter,
-                                values: [...existing, selected],
+                                values: e.target.value === 'true',
                               }
                               setConditions(updated)
                             }}
-                            placeholder="Select values"
-                          />
-                          <div className="cohort-pills">
-                            {(propertyFilter.values || []).map((value) => (
-                              <span className="cohort-pill" key={value}>
-                                {value}
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const updated = [...conditions]
-                                    updated[index].property_filter = {
-                                      ...updated[index].property_filter,
-                                      values: (updated[index].property_filter.values || []).filter((item) => item !== value),
-                                    }
-                                    setConditions(updated)
-                                  }}
-                                >
-                                  ×
-                                </button>
-                              </span>
-                            ))}
+                          >
+                            <option value="true">True</option>
+                            <option value="false">False</option>
+                          </select>
+                        ) : isMultiOperator(propertyFilter.operator) ? (
+                          <div className="cohort-multi-values">
+                            <SearchableSelect
+                              options={availableValues}
+                              value=""
+                              disabled={isValueSelectionDisabled}
+                              onChange={(selected) => {
+                                const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
+                                if (existing.includes(selected) || existing.length >= 100) {
+                                  return
+                                }
+                                const updated = [...conditions]
+                                updated[index].property_filter = {
+                                  ...updated[index].property_filter,
+                                  values: [...existing, selected],
+                                }
+                                setConditions(updated)
+                              }}
+                              placeholder="Select values"
+                            />
+                            <div className="cohort-pills">
+                              {(propertyFilter.values || []).map((value) => (
+                                <span className="cohort-pill" key={value}>
+                                  {value}
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      const updated = [...conditions]
+                                      updated[index].property_filter = {
+                                        ...updated[index].property_filter,
+                                        values: (updated[index].property_filter.values || []).filter((item) => item !== value),
+                                      }
+                                      setConditions(updated)
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </span>
+                              ))}
+                            </div>
                           </div>
-                        </div>
-                      ) : columnType === 'NUMERIC' ? (
-                        <input
-                          disabled={isValueSelectionDisabled}
-                          type="number"
-                          value={propertyFilter.values}
-                          onChange={(e) => {
-                            const updated = [...conditions]
-                            updated[index].property_filter = {
-                              ...updated[index].property_filter,
-                              values: e.target.value === '' ? '' : Number(e.target.value),
-                            }
-                            setConditions(updated)
-                          }}
-                        />
-                      ) : columnType === 'TIMESTAMP' ? (
-                        <input
-                          disabled={isValueSelectionDisabled}
-                          type="datetime-local"
-                          value={String(propertyFilter.values || '')}
-                          onChange={(e) => {
-                            const updated = [...conditions]
-                            updated[index].property_filter = {
-                              ...updated[index].property_filter,
-                              values: e.target.value,
-                            }
-                            setConditions(updated)
-                          }}
-                        />
-                      ) : (
-                        <SearchableSelect
-                          options={availableValues}
-                          value={String(propertyFilter.values || '')}
-                          disabled={isValueSelectionDisabled}
-                          onChange={(nextValue) => {
-                            const updated = [...conditions]
-                            updated[index].property_filter = {
-                              ...updated[index].property_filter,
-                              values: nextValue,
-                            }
-                            setConditions(updated)
-                          }}
-                          placeholder="Select value"
-                        />
-                      )}
+                        ) : columnType === 'NUMERIC' ? (
+                          <input
+                            disabled={isValueSelectionDisabled}
+                            type="number"
+                            value={propertyFilter.values}
+                            onChange={(e) => {
+                              const updated = [...conditions]
+                              updated[index].property_filter = {
+                                ...updated[index].property_filter,
+                                values: e.target.value === '' ? '' : Number(e.target.value),
+                              }
+                              setConditions(updated)
+                            }}
+                          />
+                        ) : columnType === 'TIMESTAMP' ? (
+                          <input
+                            disabled={isValueSelectionDisabled}
+                            type="datetime-local"
+                            value={String(propertyFilter.values || '')}
+                            onChange={(e) => {
+                              const updated = [...conditions]
+                              updated[index].property_filter = {
+                                ...updated[index].property_filter,
+                                values: e.target.value,
+                              }
+                              setConditions(updated)
+                            }}
+                          />
+                        ) : (
+                          <SearchableSelect
+                            options={availableValues}
+                            value={String(propertyFilter.values || '')}
+                            disabled={isValueSelectionDisabled}
+                            onChange={(nextValue) => {
+                              const updated = [...conditions]
+                              updated[index].property_filter = {
+                                ...updated[index].property_filter,
+                                values: nextValue,
+                              }
+                              setConditions(updated)
+                            }}
+                            placeholder="Select value"
+                          />
+                        )}
+                      </div>
                     </div>
+
+                    <button
+                      className="cohort-condition-remove"
+                      type="button"
+                      onClick={() => {
+                        const updated = [...conditions]
+                        updated[index].property_filter = null
+                        updated[index].property_filter_expanded = false
+                        setConditions(updated)
+                      }}
+                    >
+                      Remove Filter
+                    </button>
                   </div>
+                )}
+              </div>
 
-                  <button
-                    className="cohort-condition-remove"
-                    type="button"
-                    onClick={() => {
-                      const updated = [...conditions]
-                      updated[index].property_filter = null
-                      updated[index].property_filter_expanded = false
-                      setConditions(updated)
-                    }}
-                  >
-                    Remove Filter
-                  </button>
-                </div>
-              )}
+              {conditions.length > 1 && index < conditions.length - 1 && <div className="cohort-logic-connector">{logicOperator}</div>}
             </div>
+          )
+        })}
 
-            {conditions.length > 1 && index < conditions.length - 1 && <div className="cohort-logic-connector">{logicOperator}</div>}
-          </div>
-        )
-      })}
-
-      <button
-        className="cohort-add-condition"
-        type="button"
-        disabled={conditions.length >= 5}
-        onClick={() => setConditions([...conditions, createEmptyCondition(events[0] || '')])}
-      >
-        + Add Condition
-      </button>
-
-      <h4><strong>Users join the cohort</strong></h4>
-      <div className="cohort-join-time">
-        <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
-          <option value="condition_met">When condition is met</option>
-          <option value="first_event">On first event</option>
-        </select>
-      </div>
-
-      <div className="inline-controls">
-        <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
-          {loading ? (editingCohortId ? 'Updating...' : 'Creating...') : editingCohortId ? 'Update Cohort' : 'Create Cohort'}
+        <button
+          className="cohort-add-condition"
+          type="button"
+          disabled={conditions.length >= 5}
+          onClick={() => setConditions([...conditions, createEmptyCondition(events[0] || '')])}
+        >
+          + Add Condition
         </button>
 
-        {editingCohortId && (
-          <button className="button button-secondary" type="button" onClick={resetForm} disabled={loading}>
-            Cancel
+        <h4><strong>Users join the cohort</strong></h4>
+        <div className="cohort-join-time">
+          <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
+            <option value="condition_met">When condition is met</option>
+            <option value="first_event">On first event</option>
+          </select>
+        </div>
+
+        <div className="inline-controls">
+          <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
+            {loading ? (editingCohortId ? 'Updating...' : 'Creating...') : editingCohortId ? 'Update Cohort' : 'Create Cohort'}
           </button>
+
+          {editingCohortId && (
+            <button className="button button-secondary" type="button" onClick={resetForm} disabled={loading}>
+              Cancel
+            </button>
+          )}
+        </div>
+        {events.length === 0 && <p className="error">No events available under current filters</p>}
+        {error && <p className="error">{error}</p>}
+        {result && (
+          <p className="success">
+            {result.mode === 'updated' ? 'Updated' : 'Created'} cohort #{result.cohort_id} with {result.users_joined} users joined.
+          </p>
         )}
-      </div>
-      {events.length === 0 && <p className="error">No events available under current filters</p>}
-      {error && <p className="error">{error}</p>}
-      {result && (
-        <p className="success">
-          {result.mode === 'updated' ? 'Updated' : 'Created'} cohort #{result.cohort_id} with {result.users_joined} users joined.
-        </p>
-      )}
 
       </div>
 
