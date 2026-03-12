@@ -69,6 +69,110 @@ body {
 }
 
 
+
+.top-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: nowrap;
+
+  height: 48px;
+  padding: 0 16px;
+
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+.toolbar-left .button {
+  white-space: nowrap;
+  height: 32px;
+  padding: 0 12px;
+}
+
+.toolbar-dataset {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: #6b7280;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.toolbar-dataset-filename {
+  color: #111827;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.toolbar-dot {
+  color: #9ca3af;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+}
+
+.toolbar-filters-button {
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 6px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+  color: #374151;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.toolbar-filters-button.active {
+  background: rgba(46, 125, 50, 0.08);
+  border-color: #2e7d32;
+  color: #2e7d32;
+  font-weight: 500;
+}
+
+.toolbar-max-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+
+  font-size: 13px;
+  color: #374151;
+
+  white-space: nowrap;
+}
+
+.toolbar-max-day select {
+  width: 86px;
+  height: 32px;
+
+  padding: 0 8px;
+
+  display: inline-flex;
+  align-items: center;
+}
+
+.toolbar-control-disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
 .workspace-layout {
   display: flex;
   flex-direction: column;
