@@ -118,6 +118,7 @@ export default function App() {
       setDatasetMeta({
         filename: file.name,
         rows: Number(data.rows_imported || 0),
+        skippedRows: Number(data.skipped_rows || 0),
         users: 0,
         events: Number(data.total_events || 0),
       })
@@ -167,8 +168,21 @@ export default function App() {
     setSections({ filters: key === 'filters', settings: key === 'settings', cohorts: key === 'cohorts' })
   }
 
+  const rowsLabel = datasetMeta?.skippedRows > 0
+    ? `Rows: ${datasetMeta?.rows || 0} (Skipped: ${datasetMeta?.skippedRows || 0})`
+    : `Rows: ${datasetMeta?.rows || 0}`
+
   return (
     <main className="app-container workspace-root">
+      <input
+        ref={fileInputRef}
+        type="file"
+        data-testid="csv-upload-input"
+        aria-label="Upload CSV"
+        accept=".csv"
+        style={{ display: 'none' }}
+        onChange={(e) => handleUploadFile(e.target.files?.[0])}
+      />
       {appState === 'empty' && (
         <section className="card onboarding-card">
           <h1>Cohort Analysis</h1>
@@ -177,15 +191,6 @@ export default function App() {
           <p><strong>Optional fields:</strong> event_count, revenue</p>
           <p>Your dataset can include any number of additional fields such as country, device, version, campaign, etc. These fields can later be used for filtering and cohort definitions.</p>
           <pre className="sample-dataset">user_id,event_name,event_time,country,device,version\nu123,signup,2024-01-01 10:00:00,US,ios,3.9.1</pre>
-          <input
-            ref={fileInputRef}
-            type="file"
-            data-testid="csv-upload-input-onboarding"
-            aria-label="Upload CSV"
-            accept=".csv"
-            style={{ display: 'none' }}
-            onChange={(e) => handleUploadFile(e.target.files?.[0])}
-          />
           <button className="button button-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             {uploading ? 'Uploading...' : 'Upload CSV'}
           </button>
@@ -204,8 +209,12 @@ export default function App() {
             columns={columns}
             detectedTypes={detectedTypes}
             suggestedMappings={suggestedMappings}
+            datasetName={datasetMeta?.filename || 'Unknown'}
+            onUploadNewCSV={() => fileInputRef.current?.click()}
+            uploading={uploading}
             onMappingComplete={handleMappingComplete}
           />
+          {uploadError && <p className="error">{uploadError}</p>}
         </>
       )}
 
@@ -227,26 +236,17 @@ export default function App() {
             </button>
             {isTopBarCollapsed && (
               <div className="dataset-row in-header">
-                Dataset: {datasetMeta?.filename || 'Unknown'} | Rows: {datasetMeta?.rows || 0} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+                Dataset: {datasetMeta?.filename || 'Unknown'} | {rowsLabel} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
               </div>
             )}
             {uploadError && <p className="error">{uploadError}</p>}
-            <input
-              ref={fileInputRef}
-              type="file"
-              data-testid="csv-upload-input-workspace"
-              aria-label="Upload CSV"
-              accept=".csv"
-              style={{ display: 'none' }}
-              onChange={(e) => handleUploadFile(e.target.files?.[0])}
-            />
           </header>
 
           {banner && <div className="workspace-banner">{banner}</div>}
 
           {!isTopBarCollapsed && (
             <div className="dataset-row">
-              Dataset: {datasetMeta?.filename || 'Unknown'} | Rows: {datasetMeta?.rows || 0} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+              Dataset: {datasetMeta?.filename || 'Unknown'} | {rowsLabel} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
             </div>
           )}
 

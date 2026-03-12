@@ -14,9 +14,11 @@ vi.mock('./api', async () => {
 })
 
 vi.mock('./components/Mapping', () => ({
-  default: ({ onMappingComplete }) => (
+  default: ({ onMappingComplete, datasetName, onUploadNewCSV, uploading }) => (
     <div>
       <div>Mock Mapping UI</div>
+      <div>Dataset: {datasetName}</div>
+      <button onClick={onUploadNewCSV} disabled={uploading}>Upload New CSV</button>
       <button onClick={onMappingComplete}>Confirm Mapping</button>
     </div>
   ),
@@ -46,20 +48,20 @@ describe('App onboarding and workspace flow', () => {
   })
 
   it('upload opens mapping screen', async () => {
-    api.uploadCSV.mockResolvedValue({ rows_imported: 2, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 3 })
+    api.uploadCSV.mockResolvedValue({ rows_imported: 2, skipped_rows: 0, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 3 })
     render(<App />)
 
-    const input = screen.getByTestId('csv-upload-input-onboarding')
+    const input = screen.getByTestId('csv-upload-input')
     fireEvent.change(input, { target: { files: [new File(['a,b\n1,2'], 'events.csv', { type: 'text/csv' })] } })
 
     expect(await screen.findByText('Mock Mapping UI')).toBeInTheDocument()
   })
 
   it('keeps analytics hidden until mapping is confirmed', async () => {
-    api.uploadCSV.mockResolvedValue({ rows_imported: 2, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 2 })
+    api.uploadCSV.mockResolvedValue({ rows_imported: 2, skipped_rows: 0, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 2 })
     render(<App />)
 
-    fireEvent.change(screen.getByTestId('csv-upload-input-onboarding'), {
+    fireEvent.change(screen.getByTestId('csv-upload-input'), {
       target: { files: [new File(['a,b\n1,2'], 'events.csv', { type: 'text/csv' })] },
     })
 
@@ -78,7 +80,7 @@ describe('App onboarding and workspace flow', () => {
         columns: ['x'],
         detectedTypes: {},
         suggestedMappings: null,
-        datasetMeta: { filename: 'saved.csv', rows: 5, users: 2, events: 10 },
+        datasetMeta: { filename: 'saved.csv', rows: 5, skippedRows: 3, users: 2, events: 10 },
         selectedRetentionEvent: 'any',
         globalMaxDay: 7,
         activeTab: 'retention',
@@ -89,23 +91,54 @@ describe('App onboarding and workspace flow', () => {
     render(<App />)
 
     expect(await screen.findByText(/Dataset: saved.csv/)).toBeInTheDocument()
+    expect(await screen.findByText(/Skipped: 3/)).toBeInTheDocument()
     expect(screen.getByText('Retention')).toBeInTheDocument()
   })
 
+
+  it('allows replacing dataset from mapping view', async () => {
+    localStorage.setItem('cohort-analysis-workspace-v2', JSON.stringify({
+      version: 2,
+      state: {
+        appState: 'mapping',
+        columns: ['old_col'],
+        detectedTypes: {},
+        suggestedMappings: null,
+        datasetMeta: { filename: 'old.csv', rows: 1, users: 0, events: 1 },
+        selectedRetentionEvent: 'any',
+        globalMaxDay: 7,
+        activeTab: 'retention',
+        sections: { filters: true, settings: true, cohorts: true },
+      },
+    }))
+
+    api.uploadCSV.mockResolvedValueOnce({ rows_imported: 4, skipped_rows: 1, columns: ['new_col'], detected_types: {}, mapping_suggestions: null, total_events: 4 })
+    render(<App />)
+
+    expect(await screen.findByText('Dataset: old.csv')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByTestId('csv-upload-input'), {
+      target: { files: [new File(['a,b\n1,2'], 'new.csv', { type: 'text/csv' })] },
+    })
+
+    await waitFor(() => expect(api.uploadCSV).toHaveBeenCalledTimes(1))
+    expect(await screen.findByText('Dataset: new.csv')).toBeInTheDocument()
+    expect(screen.getByText('Mock Mapping UI')).toBeInTheDocument()
+  })
   it('clears persisted state only after successful replacement upload', async () => {
     localStorage.setItem('cohort-analysis-workspace-v2', JSON.stringify({ version: 2, state: { appState: 'workspace' } }))
 
     api.uploadCSV.mockRejectedValueOnce(new Error('upload failed'))
     const { rerender } = render(<App />)
-    const input = screen.getByTestId('csv-upload-input-workspace')
+    const input = screen.getByTestId('csv-upload-input')
     fireEvent.change(input, { target: { files: [new File(['a'], 'events.csv', { type: 'text/csv' })] } })
 
     await waitFor(() => expect(api.uploadCSV).toHaveBeenCalled())
     expect(localStorage.getItem('cohort-analysis-workspace-v2')).not.toBeNull()
 
-    api.uploadCSV.mockResolvedValueOnce({ rows_imported: 2, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 2 })
+    api.uploadCSV.mockResolvedValueOnce({ rows_imported: 2, skipped_rows: 0, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 2 })
     rerender(<App />)
-    fireEvent.change(screen.getByTestId('csv-upload-input-workspace'), { target: { files: [new File(['a'], 'events.csv', { type: 'text/csv' })] } })
+    fireEvent.change(screen.getByTestId('csv-upload-input'), { target: { files: [new File(['a'], 'events.csv', { type: 'text/csv' })] } })
 
     await screen.findByText('Mock Mapping UI')
     const saved = JSON.parse(localStorage.getItem('cohort-analysis-workspace-v2'))

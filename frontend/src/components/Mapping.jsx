@@ -3,7 +3,15 @@ import { mapColumns } from '../api'
 
 const TYPE_OPTIONS = ['TEXT', 'NUMERIC', 'TIMESTAMP', 'BOOLEAN']
 
-export default function Mapping({ columns, detectedTypes = {}, suggestedMappings = null, onMappingComplete }) {
+export default function Mapping({
+  columns,
+  detectedTypes = {},
+  suggestedMappings = null,
+  onMappingComplete,
+  datasetName = 'Unknown',
+  onUploadNewCSV,
+  uploading = false,
+}) {
   const [form, setForm] = useState({ user_id_column: '', event_name_column: '', event_time_column: '', event_count_column: '', revenue_column: '' })
   const [columnTypes, setColumnTypes] = useState({})
   const [error, setError] = useState('')
@@ -53,6 +61,16 @@ export default function Mapping({ columns, detectedTypes = {}, suggestedMappings
 
   return (
     <section className="card mapping-card">
+      <div className="dataset-header">
+        <div className="dataset-name">Dataset: {datasetName}</div>
+        <button
+          className="upload-new-csv"
+          onClick={() => onUploadNewCSV?.()}
+          disabled={uploading || loading}
+        >
+          {uploading ? 'Uploading...' : 'Upload New CSV'}
+        </button>
+      </div>
       <div className="mapping-layout">
         <div className="mapping-schema-section">
           <h3>Review Schema</h3>
