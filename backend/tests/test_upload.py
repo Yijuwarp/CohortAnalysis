@@ -18,6 +18,7 @@ def test_upload_valid_csv_inserts_rows_and_returns_columns(
     assert response.status_code == 200, response.text
     payload = response.json()
     assert payload["rows_imported"] == 2, "Upload should report two imported rows"
+    assert payload["skipped_rows"] == 0, "Well-formed CSV should not skip rows"
     assert payload["columns"] == ["user", "event", "time", "plan"], "Returned columns should match CSV order"
     assert payload["detected_types"]["user"] == "TEXT"
 
@@ -53,3 +54,14 @@ def test_detect_column_type_detects_float_numeric() -> None:
     series = pd.Series(["9.99", "-2.25", "0", None, ""])
 
     assert detect_column_type(series) == "NUMERIC"
+
+
+def test_upload_multiline_csv_field_counts_records_not_lines(client: TestClient) -> None:
+    csv_text = 'user,event,time\nu1,"signup\nmobile",2024-01-01\n'
+
+    response = csv_upload(client, csv_text=csv_text)
+
+    assert response.status_code == 200, response.text
+    payload = response.json()
+    assert payload["rows_imported"] == 1
+    assert payload["skipped_rows"] == 0

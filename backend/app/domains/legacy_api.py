@@ -1184,22 +1184,38 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
     end_timer = time_block("csv_upload")
     tmp_path = None
     try:
-        contents = await file.read()
-        file_size = len(contents)
+        file_size = 0
 
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
-            tmp.write(contents)
+            while chunk := await file.read(1024 * 1024):
+                file_size += len(chunk)
+                tmp.write(chunk)
             tmp_path = tmp.name
 
         connection = get_connection()
         try:
+            input_rows = connection.execute(
+                "SELECT COUNT(*) FROM read_csv(?, auto_detect=true, ignore_errors=false)",
+                [tmp_path],
+            ).fetchone()[0]
+
             connection.execute("DROP TABLE IF EXISTS events")
+            reset_application_state(connection)
             try:
                 connection.execute(
                     """
                     CREATE TABLE events AS
                     SELECT *
-                    FROM read_csv_auto(?)
+                    FROM read_csv(
+                        ?,
+                        auto_detect=true,
+                        sample_size=-1,
+                        all_varchar=true,
+                        quote='"',
+                        escape='"',
+                        ignore_errors=true,
+                        maximum_line_size=20000000  -- allow very large text/JSON fields in CSV rows
+                    )
                     """,
                     [tmp_path],
                 )
@@ -1207,9 +1223,8 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
                 end_timer(error=str(exc))
                 raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(exc)}") from exc
 
-            reset_application_state(connection)
-
             row_count = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
+            skipped_rows = max(input_rows - row_count, 0)
             column_info = connection.execute("PRAGMA table_info('events')").fetchall()
             column_names = [row[1] for row in column_info]
 
@@ -1233,6 +1248,7 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
 
             return {
                 "rows_imported": row_count,
+                "skipped_rows": skipped_rows,
                 "columns": column_names,
                 "detected_types": detected_types,
                 "mapping_suggestions": mapping_suggestions,
