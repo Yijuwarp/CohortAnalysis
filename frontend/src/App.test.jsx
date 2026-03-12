@@ -17,7 +17,7 @@ vi.mock('./components/Mapping', () => ({
   default: ({ onMappingComplete, datasetName, onUploadNewCSV, uploading }) => (
     <div>
       <div>Mock Mapping UI</div>
-      <div>Dataset: {datasetName}</div>
+      <div>{datasetName}</div>
       <button onClick={onUploadNewCSV} disabled={uploading}>Upload New CSV</button>
       <button onClick={onMappingComplete}>Confirm Mapping</button>
     </div>
@@ -88,10 +88,12 @@ describe('App onboarding and workspace flow', () => {
       },
     }))
 
+    api.getScope.mockResolvedValueOnce({ total_rows: 5, total_events: 10, filtered_rows: 5 })
+
     render(<App />)
 
-    expect(await screen.findByText(/Dataset: saved.csv/)).toBeInTheDocument()
-    expect(await screen.findByText(/Skipped: 3/)).toBeInTheDocument()
+    expect(await screen.findByText('saved.csv')).toBeInTheDocument()
+    expect(screen.getByText('5 rows')).toBeInTheDocument()
     expect(screen.getByText('Retention')).toBeInTheDocument()
   })
 
@@ -115,14 +117,14 @@ describe('App onboarding and workspace flow', () => {
     api.uploadCSV.mockResolvedValueOnce({ rows_imported: 4, skipped_rows: 1, columns: ['new_col'], detected_types: {}, mapping_suggestions: null, total_events: 4 })
     render(<App />)
 
-    expect(await screen.findByText('Dataset: old.csv')).toBeInTheDocument()
+    expect(await screen.findByText('old.csv')).toBeInTheDocument()
 
     fireEvent.change(screen.getByTestId('csv-upload-input'), {
       target: { files: [new File(['a,b\n1,2'], 'new.csv', { type: 'text/csv' })] },
     })
 
     await waitFor(() => expect(api.uploadCSV).toHaveBeenCalledTimes(1))
-    expect(await screen.findByText('Dataset: new.csv')).toBeInTheDocument()
+    expect(await screen.findByText('new.csv')).toBeInTheDocument()
     expect(screen.getByText('Mock Mapping UI')).toBeInTheDocument()
   })
   it('clears persisted state only after successful replacement upload', async () => {

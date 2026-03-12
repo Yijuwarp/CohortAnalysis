@@ -8,11 +8,11 @@ import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
 import MonetizationTable from './components/MonetizationTable'
 import SearchableSelect from './components/SearchableSelect'
+import TopToolbar from './components/TopToolbar'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
 const LEFT_PANE_WIDTH = 600
-const numberFormatter = new Intl.NumberFormat('en-US')
 
 function readPersistedState() {
   try {
@@ -43,11 +43,11 @@ export default function App() {
   const [banner, setBanner] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')
-  const [isTopBarCollapsed, setIsTopBarCollapsed] = useState(false)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
   const [isExploreTransitioning, setIsExploreTransitioning] = useState(false)
   const [leftPaneTab, setLeftPaneTab] = useState(persisted?.leftPaneTab || 'filters')
   const [events, setEvents] = useState([])
+  const [activeFilterCount, setActiveFilterCount] = useState(0)
 
   useEffect(() => {
     localStorage.setItem(
@@ -181,12 +181,6 @@ export default function App() {
     { key: 'cohorts', icon: '👥', label: 'Cohorts' },
   ], [])
 
-  const formatNumber = (n) => numberFormatter.format(n ?? 0)
-
-  const rowsLabel = datasetMeta?.skippedRows > 0
-    ? `Rows: ${formatNumber(datasetMeta?.rows)} (Skipped: ${formatNumber(datasetMeta?.skippedRows)})`
-    : `Rows: ${formatNumber(datasetMeta?.rows)}`
-
   return (
     <main className="app-container workspace-root">
       <input
@@ -235,35 +229,22 @@ export default function App() {
 
       {appState === 'workspace' && (
         <div className={`workspace-layout ${isExploreTransitioning ? 'workspace-enter' : ''}`}>
-          <header className={`top-bar ${isTopBarCollapsed ? 'collapsed' : ''}`}>
-            {!isTopBarCollapsed && (
-              <div className="inline-controls" style={{ margin: 0 }}>
-                <button className="button button-primary" onClick={() => {
-                  fileInputRef.current?.click()
-                }}>Upload CSV</button>
-                <button className="button button-secondary" onClick={() => setAppState('mapping')}>Remap Columns</button>
-                <button className="button button-secondary" onClick={() => openPaneSection('settings')}>Revenue Config</button>
-                <button className="button button-secondary" onClick={() => openPaneSection('cohorts')}>Create Cohort</button>
-              </div>
-            )}
-            <button className={`toggle-circle ${isTopBarCollapsed ? 'collapsed' : ''}`} onClick={() => setIsTopBarCollapsed((prev) => !prev)}>
-              <span className="triangle-icon">▴</span>
-            </button>
-            {isTopBarCollapsed && (
-              <div className="dataset-row in-header">
-                Dataset: {datasetMeta?.filename || 'Unknown'} | Events: {formatNumber(datasetMeta?.events)} | Users: {formatNumber(datasetMeta?.users)} | {rowsLabel}
-              </div>
-            )}
-            {uploadError && <p className="error">{uploadError}</p>}
-          </header>
+          <TopToolbar
+            hasDataset={Boolean(datasetMeta?.filename)}
+            datasetMeta={datasetMeta}
+            uploading={uploading}
+            onUploadClick={() => fileInputRef.current?.click()}
+            onRemapColumns={() => setAppState('mapping')}
+            onOpenRevenueConfig={() => openPaneSection('settings')}
+            onOpenCreateCohort={() => openPaneSection('cohorts')}
+            onToggleFilters={() => openPaneSection('filters')}
+            activeFilterCount={activeFilterCount}
+            globalMaxDay={globalMaxDay}
+            setGlobalMaxDay={setGlobalMaxDay}
+          />
 
+          {uploadError && <p className="error">{uploadError}</p>}
           {banner && <div className="workspace-banner">{banner}</div>}
-
-          {!isTopBarCollapsed && (
-            <div className="dataset-row">
-              Dataset: {datasetMeta?.filename || 'Unknown'} | Events: {formatNumber(datasetMeta?.events)} | Users: {formatNumber(datasetMeta?.users)} | {rowsLabel}
-            </div>
-          )}
 
           <div className="workspace-body">
             <aside className={`left-pane ${isLeftPaneCollapsed ? 'collapsed' : ''}`} style={{ width: isLeftPaneCollapsed ? 58 : LEFT_PANE_WIDTH }}>
@@ -302,7 +283,7 @@ export default function App() {
                   {leftPaneTab === 'filters' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Date range • Property filters</p>
-                      <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
+                      <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} onActiveFilterCountChange={setActiveFilterCount} />
                     </section>
                   )}
                   {leftPaneTab === 'settings' && (
