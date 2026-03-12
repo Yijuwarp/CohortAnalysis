@@ -4,6 +4,8 @@ import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
 
+const STRUCTURAL_COLUMNS = new Set(['user_id', 'event_name', 'event_time'])
+
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
   NUMERIC: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
@@ -138,6 +140,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   const [splittingId, setSplittingId] = useState(null)
 
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
+
+  const propertyColumns = useMemo(
+    () => columns.filter((column) => !STRUCTURAL_COLUMNS.has(column.name)),
+    [columns]
+  )
 
   const getAllowedOperators = (columnName, map = columnByName) => {
     if (!columnName || !map[columnName]) {
@@ -390,8 +397,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   }
 
   return (
-    <section className="card">
-      <h2>{editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h2>
+    <section>
+      <div className="cohorts-section-card create-cohorts-card">
+        <h3>{editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h3>
       <h4><strong>Name</strong></h4>
       <div className="grid">
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional)" />
@@ -404,7 +412,6 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
           <option value="AND">ALL conditions (AND)</option>
           <option value="OR">ANY conditions (OR)</option>
         </select>
-        <span>conditions are true</span>
       </div>
       {conditions.map((condition, index) => {
         const propertyFilter = condition.property_filter
@@ -419,6 +426,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
           <div key={index}>
             <div className="cohort-condition-block">
               <div className="cohort-condition-content">
+                <p className="cohort-rule-text">Users who performed</p>
                 <SearchableSelect
                   options={events}
                   value={condition.event_name}
@@ -432,18 +440,21 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   placeholder="Select event"
                 />
 
-                <span className="cohort-operator-symbol">≥</span>
+                <span className="cohort-rule-text">at least</span>
 
                 <input
+                  className="cohort-count-input"
                   type="number"
                   min="1"
                   value={condition.min_event_count}
                   onChange={(e) => {
                     const updated = [...conditions]
-                    updated[index].min_event_count = Number(e.target.value)
+                    updated[index].min_event_count = Math.max(1, Number(e.target.value) || 1)
                     setConditions(updated)
                   }}
                 />
+
+                <span className="cohort-rule-text">times</span>
 
                 {conditions.length > 1 && (
                   <button
@@ -460,12 +471,12 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
               </div>
 
               <button
-                className="cohort-add-condition"
+                className="cohort-property-filter-action"
                 type="button"
                 onClick={() => {
                   const updated = [...conditions]
                   if (!updated[index].property_filter_expanded) {
-                    const defaultColumn = columns[0]?.name || ''
+                    const defaultColumn = propertyColumns[0]?.name || ''
                     const allowedOperators = getAllowedOperators(defaultColumn)
                     updated[index].property_filter = {
                       column: defaultColumn,
@@ -480,7 +491,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   setConditions(updated)
                 }}
               >
-                {showProperty ? '▼ Property Filter' : '▶ Add Property Filter (Optional)'}
+                {showProperty ? 'Hide property filter' : '+ Add property filter (optional)'}
               </button>
 
               {showProperty && (
@@ -488,7 +499,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   <div className="cohort-rule-filter-grid">
                     <label>Property</label>
                     <SearchableSelect
-                      options={columns.map((column) => ({ label: column.name, value: column.name }))}
+                      options={propertyColumns.map((column) => ({ label: column.name, value: column.name }))}
                       value={propertyFilter.column}
                       onChange={(nextColumn) => {
                         if (!nextColumn) {
@@ -673,7 +684,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         + Add Condition
       </button>
 
-      <h4><strong>Join Time</strong></h4>
+      <h4><strong>Users join the cohort</strong></h4>
       <div className="cohort-join-time">
         <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
           <option value="condition_met">When condition is met</option>
@@ -700,8 +711,9 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         </p>
       )}
 
-      <div className="cohorts-divider" />
-      <div className="card existing-cohorts-card">
+      </div>
+
+      <div className="cohorts-section-card existing-cohorts-card">
         <h3>Existing Cohorts</h3>
         {cohorts.length === 0 ? (
           <p className="secondary-text">No cohorts created yet.</p>
