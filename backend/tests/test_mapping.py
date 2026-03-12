@@ -40,8 +40,9 @@ def test_valid_mapping_creates_normalized_table_with_timestamp_and_event_count(
 
     assert response.status_code == 200, response.text
     payload = response.json()
-    assert payload["status"] == "normalized"
-    assert payload["row_count"] == 2
+    assert payload["status"] == "ok"
+    assert payload["total_users"] == 2
+    assert payload["total_events"] == 2
 
     columns = {
         row[0]: row[1]

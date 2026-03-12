@@ -47,10 +47,10 @@ export default function Mapping({
     setLoading(true)
     setError('')
     try {
-      await mapColumns({ ...form, event_count_column: form.event_count_column || null, revenue_column: form.revenue_column || null, column_types: columnTypes })
+      const data = await mapColumns({ ...form, event_count_column: form.event_count_column || null, revenue_column: form.revenue_column || null, column_types: columnTypes })
       setShowDone(true)
       setTimeout(() => {
-        if (onMappingComplete) onMappingComplete()
+        if (onMappingComplete) onMappingComplete(data)
       }, 550)
     } catch (err) {
       setError(err.message)
