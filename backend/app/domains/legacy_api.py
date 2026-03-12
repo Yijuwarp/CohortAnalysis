@@ -1684,6 +1684,18 @@ def get_scope() -> dict[str, object]:
         connection.close()
 
 
+CANONICAL_COLUMNS = {"user_id", "event_name", "event_time"}
+METRIC_COLUMNS = {"original_event_count", "modified_event_count", "original_revenue", "modified_revenue"}
+
+
+def classify_column(column_name: str) -> str:
+    if column_name in CANONICAL_COLUMNS:
+        return "canonical"
+    if column_name in METRIC_COLUMNS:
+        return "metric"
+    return "property"
+
+
 @app.get("/columns")
 def get_columns() -> dict[str, list[dict[str, str | None]]]:
     connection = get_connection()
@@ -1713,6 +1725,7 @@ def get_columns() -> dict[str, list[dict[str, str | None]]]:
                 "name": str(name),
                 "role": role_map.get(str(name)),
                 "data_type": "TIMESTAMP" if "TIMESTAMP" in str(data_type).upper() else str(data_type).upper(),
+                "category": classify_column(str(name)),
             }
             for name, data_type in rows
         ]
