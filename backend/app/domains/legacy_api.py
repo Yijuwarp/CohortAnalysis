@@ -1209,12 +1209,13 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
                     FROM read_csv(
                         ?,
                         auto_detect=true,
-                        sample_size=-1,
+                        sample_size=100000,
                         all_varchar=true,
                         quote='"',
                         escape='"',
                         ignore_errors=true,
-                        maximum_line_size=20000000  -- allow very large text/JSON fields in CSV rows
+                        maximum_line_size=20000000,  -- allow very large text/JSON fields in CSV rows
+                        parallel=true
                     )
                     """,
                     [tmp_path],
@@ -1513,13 +1514,26 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         create_all_users_cohort(connection)
         refresh_cohort_activity(connection)
 
-        row_count = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
+        stats = connection.execute(
+            """
+            SELECT
+                SUM(modified_event_count),
+                COUNT(DISTINCT user_id)
+            FROM events_normalized
+            """
+        ).fetchone()
+        total_events = stats[0] or 0
+        total_users = stats[1] or 0
     except duckdb.ConversionException as exc:
         raise HTTPException(status_code=400, detail="Failed to convert event_time column to TIMESTAMP") from exc
     finally:
         connection.close()
 
-    return {"status": "normalized", "row_count": row_count}
+    return {
+        "status": "ok",
+        "total_events": int(total_events),
+        "total_users": int(total_users),
+    }
 
 
 @app.post("/apply-filters")

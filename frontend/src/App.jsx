@@ -12,6 +12,7 @@ import SearchableSelect from './components/SearchableSelect'
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
 const LEFT_PANE_WIDTH = 600
+const numberFormatter = new Intl.NumberFormat('en-US')
 
 function readPersistedState() {
   try {
@@ -135,7 +136,13 @@ export default function App() {
     }
   }
 
-  const handleMappingComplete = () => {
+  const handleMappingComplete = (data) => {
+    setDatasetMeta((prev) => ({
+      ...prev,
+      users: data?.total_users ?? prev?.users ?? 0,
+      events: data?.total_events ?? prev?.events ?? 0,
+    }))
+
     clearPersistedState()
     refreshRetention()
     setBanner('Mapping complete. Opening Explore Data...')
@@ -168,9 +175,11 @@ export default function App() {
     setSections({ filters: key === 'filters', settings: key === 'settings', cohorts: key === 'cohorts' })
   }
 
+  const formatNumber = (n) => numberFormatter.format(n ?? 0)
+
   const rowsLabel = datasetMeta?.skippedRows > 0
-    ? `Rows: ${datasetMeta?.rows || 0} (Skipped: ${datasetMeta?.skippedRows || 0})`
-    : `Rows: ${datasetMeta?.rows || 0}`
+    ? `Rows: ${formatNumber(datasetMeta?.rows)} (Skipped: ${formatNumber(datasetMeta?.skippedRows)})`
+    : `Rows: ${formatNumber(datasetMeta?.rows)}`
 
   return (
     <main className="app-container workspace-root">
@@ -236,7 +245,7 @@ export default function App() {
             </button>
             {isTopBarCollapsed && (
               <div className="dataset-row in-header">
-                Dataset: {datasetMeta?.filename || 'Unknown'} | {rowsLabel} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+                Dataset: {datasetMeta?.filename || 'Unknown'} | Events: {formatNumber(datasetMeta?.events)} | Users: {formatNumber(datasetMeta?.users)} | {rowsLabel}
               </div>
             )}
             {uploadError && <p className="error">{uploadError}</p>}
@@ -246,7 +255,7 @@ export default function App() {
 
           {!isTopBarCollapsed && (
             <div className="dataset-row">
-              Dataset: {datasetMeta?.filename || 'Unknown'} | {rowsLabel} | Users: {datasetMeta?.users || 0} | Events: {datasetMeta?.events || 0}
+              Dataset: {datasetMeta?.filename || 'Unknown'} | Events: {formatNumber(datasetMeta?.events)} | Users: {formatNumber(datasetMeta?.users)} | {rowsLabel}
             </div>
           )}
 
