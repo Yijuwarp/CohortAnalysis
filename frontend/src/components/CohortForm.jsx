@@ -426,7 +426,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
           <div key={index}>
             <div className="cohort-condition-block">
               <div className="cohort-condition-content">
-                <p className="cohort-rule-text">Users who performed</p>
+                <div className="cohort-condition-row">
+                <p className="cohort-rule-text">Performed</p>
                 <SearchableSelect
                   options={events}
                   value={condition.event_name}
@@ -439,7 +440,8 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   }}
                   placeholder="Select event"
                 />
-
+                </div>
+                                           <div className="cohort-condition-row">
                 <span className="cohort-rule-text">at least</span>
 
                 <input
@@ -455,6 +457,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                 />
 
                 <span className="cohort-rule-text">times</span>
+                </div>
 
                 {conditions.length > 1 && (
                   <button

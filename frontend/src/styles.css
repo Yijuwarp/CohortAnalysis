@@ -148,20 +148,26 @@ body {
 }
 
 .toolbar-max-day {
-  display: flex;
+  display: inline-flex;
+  flex-direction: row;   /* overrides global label rule */
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 
   font-size: 13px;
   color: #374151;
 
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.toolbar-max-day span {
   white-space: nowrap;
 }
 
 .toolbar-max-day select {
   width: 86px;
   height: 32px;
-
+  margin-top: 0;
   padding: 0 8px;
 
   display: inline-flex;
@@ -478,7 +484,12 @@ button:disabled {
 
 .cohort-condition-content {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cohort-condition-row {
+  display: flex;
   align-items: center;
   gap: 8px;
 }
@@ -494,7 +505,10 @@ button:disabled {
 }
 
 .cohort-count-input {
-  width: 80px;
+  width: 56px !important;
+  min-width: 56px;
+  padding: 4px 6px;
+  text-align: center;
 }
 
 .cohort-condition-content select,
