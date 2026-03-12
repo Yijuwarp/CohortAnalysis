@@ -84,7 +84,7 @@ describe('App onboarding and workspace flow', () => {
         selectedRetentionEvent: 'any',
         globalMaxDay: 7,
         activeTab: 'retention',
-        sections: { filters: true, settings: true, cohorts: true },
+        leftPaneTab: 'filters',
       },
     }))
 
@@ -108,7 +108,7 @@ describe('App onboarding and workspace flow', () => {
         selectedRetentionEvent: 'any',
         globalMaxDay: 7,
         activeTab: 'retention',
-        sections: { filters: true, settings: true, cohorts: true },
+        leftPaneTab: 'filters',
       },
     }))
 

@@ -46,7 +46,7 @@ export default function App() {
   const [isTopBarCollapsed, setIsTopBarCollapsed] = useState(false)
   const [isLeftPaneCollapsed, setIsLeftPaneCollapsed] = useState(false)
   const [isExploreTransitioning, setIsExploreTransitioning] = useState(false)
-  const [sections, setSections] = useState(persisted?.sections || { filters: true, settings: true, cohorts: true })
+  const [leftPaneTab, setLeftPaneTab] = useState(persisted?.leftPaneTab || 'filters')
   const [events, setEvents] = useState([])
 
   useEffect(() => {
@@ -63,11 +63,11 @@ export default function App() {
           selectedRetentionEvent,
           globalMaxDay,
           activeTab,
-          sections,
+          leftPaneTab,
         },
       })
     )
-  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, activeTab, sections])
+  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, activeTab, leftPaneTab])
 
   useEffect(() => {
     if (!banner) return
@@ -125,7 +125,7 @@ export default function App() {
       })
       setAppState('mapping')
       setBanner('')
-      setSections({ filters: true, settings: true, cohorts: true })
+      setLeftPaneTab('filters')
     } catch (err) {
       setUploadError(err.message)
     } finally {
@@ -150,7 +150,7 @@ export default function App() {
     setTimeout(() => {
       setAppState('workspace')
       setActiveTab('retention')
-      setSections({ filters: true, settings: true, cohorts: true })
+      setLeftPaneTab('filters')
       setBanner('Dataset ready. Create cohorts and explore retention, usage, and monetization analytics.')
       setIsExploreTransitioning(false)
     }, 650)
@@ -172,8 +172,14 @@ export default function App() {
 
   const openPaneSection = (key) => {
     setIsLeftPaneCollapsed(false)
-    setSections({ filters: key === 'filters', settings: key === 'settings', cohorts: key === 'cohorts' })
+    setLeftPaneTab(key)
   }
+
+  const leftPaneTabs = useMemo(() => [
+    { key: 'filters', icon: '🔎', label: 'Filters' },
+    { key: 'settings', icon: '⚙', label: 'Analytics Settings' },
+    { key: 'cohorts', icon: '👥', label: 'Cohorts' },
+  ], [])
 
   const formatNumber = (n) => numberFormatter.format(n ?? 0)
 
@@ -262,6 +268,24 @@ export default function App() {
           <div className="workspace-body">
             <aside className={`left-pane ${isLeftPaneCollapsed ? 'collapsed' : ''}`} style={{ width: isLeftPaneCollapsed ? 58 : LEFT_PANE_WIDTH }}>
               <div className="left-pane-header">
+                {!isLeftPaneCollapsed && (
+                  <div className="left-pane-tabbar">
+                    {leftPaneTabs.map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        className={`left-pane-tab ${leftPaneTab === tab.key ? 'active' : ''}`}
+                        role="tab"
+                        aria-selected={leftPaneTab === tab.key}
+                        aria-label={tab.label}
+                        onClick={() => setLeftPaneTab(tab.key)}
+                        title={tab.label}
+                      >
+                        <span>{tab.icon}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
                 <button className={`toggle-circle ${isLeftPaneCollapsed ? 'collapsed' : ''}`} onClick={() => setIsLeftPaneCollapsed((prev) => !prev)}>
                   <span className="triangle-icon">◂</span>
                 </button>
@@ -269,31 +293,22 @@ export default function App() {
 
               {isLeftPaneCollapsed ? (
                 <div className="icon-rail">
-                  <button onClick={() => openPaneSection('filters')} title="Filters">🔎</button>
-                  <button onClick={() => openPaneSection('settings')} title="Analytics Settings">⚙</button>
-                  <button onClick={() => openPaneSection('cohorts')} title="Cohorts">👥</button>
+                  {leftPaneTabs.map((tab) => (
+                    <button key={tab.key} onClick={() => openPaneSection(tab.key)} title={tab.label}>{tab.icon}</button>
+                  ))}
                 </div>
               ) : (
                 <>
-                  <section className={`pane-section ${sections.filters ? 'pane-section-expanded' : ''}`}>
-                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, filters: !prev.filters }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">🔎</span> <span className="pane-title">Filters</span>
-                    </h3>
-                    {sections.filters && (
-                      <>
-                        <p className="pane-section-hint">Date range • Property filters</p>
-                        <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
-                      </>
-                    )}
-                  </section>
-                  <section className={`pane-section ${sections.settings ? 'pane-section-expanded' : ''}`}>
-                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, settings: !prev.settings }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">⚙</span> <span className="pane-title">Analytics Settings</span>
-                    </h3>
-                    {sections.settings && (
-                      <>
-                        <p className="pane-section-hint">Max day • Retention event • Revenue configuration</p>
-                        <div className="ui-section">
+                  {leftPaneTab === 'filters' && (
+                    <section className="pane-section pane-section-expanded">
+                      <p className="pane-section-hint">Date range • Property filters</p>
+                      <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} />
+                    </section>
+                  )}
+                  {leftPaneTab === 'settings' && (
+                    <section className="pane-section pane-section-expanded">
+                      <p className="pane-section-hint">Max day • Retention event • Revenue configuration</p>
+                      <div className="ui-section">
                           <div className="card ui-card">
                             <h4>Max Analysis Day</h4>
                             <div className="settings-control-body">
@@ -318,20 +333,14 @@ export default function App() {
                             <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
                           </div>
                         </div>
-                      </>
-                    )}
-                  </section>
-                  <section className={`pane-section ${sections.cohorts ? 'pane-section-expanded' : ''}`}>
-                    <h3 className="pane-section-header" onClick={() => setSections((prev) => ({ ...prev, cohorts: !prev.cohorts }))}>
-                      <span className="pane-toggle">▾</span> <span className="pane-icon">👥</span> <span className="pane-title">Cohorts</span>
-                    </h3>
-                    {sections.cohorts && (
-                      <>
-                        <p className="pane-section-hint">Create and manage cohorts</p>
-                        <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
-                      </>
-                    )}
-                  </section>
+                    </section>
+                  )}
+                  {leftPaneTab === 'cohorts' && (
+                    <section className="pane-section pane-section-expanded">
+                      <p className="pane-section-hint">Create and manage cohorts</p>
+                      <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
+                    </section>
+                  )}
                 </>
               )}
             </aside>
