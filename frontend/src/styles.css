@@ -956,14 +956,9 @@ td.sticky-col-size {
 }
 
 .section-header-inline {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-3);
-}
-
-.section-header-inline h3 {
-  margin-bottom: 0;
 }
 
 .checkbox-inline {

@@ -174,8 +174,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
     })
   }, [cumulativeMode, dayColumns, metricType, retainedRows, userRows, volumeRows])
 
-  const cumulativeSupported =
-    metricType === 'count' || metricType === 'per_active_user' || metricType === 'per_installed_user'
+  const cumulativeSupported = metricType === 'count' || metricType === 'per_installed_user'
 
   useEffect(() => {
     if (!cumulativeSupported) {
@@ -265,18 +264,19 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
 
       {error && <p className="error">{error}</p>}
 
-      <div className="section-header-inline">
-        <h3>Event Volume ({volumeLabel})</h3>
-        <label className="checkbox-inline" title={cumulativeSupported ? '' : 'Not available for Per Event Firer'}>
-          <input
-            type="checkbox"
-            checked={cumulativeMode}
-            onChange={(e) => setCumulativeMode(e.target.checked)}
-            disabled={!cumulativeSupported}
-          />
-          Cumulative
-        </label>
-      </div>
+      <h3 className="section-header-inline">
+        Event Volume ({volumeLabel})
+        {cumulativeSupported && (
+          <label className="checkbox-inline">
+            <input
+              type="checkbox"
+              checked={cumulativeMode}
+              onChange={(e) => setCumulativeMode(e.target.checked)}
+            />
+            Cumulative
+          </label>
+        )}
+      </h3>
       {volumeDisplayRows.length > 0 && (
         <div className="analytics-table table-responsive">
           <table>
