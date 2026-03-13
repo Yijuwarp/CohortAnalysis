@@ -27,3 +27,8 @@ def get_retention(
 @router.get("/usage")
 def get_usage(event: str = Query(...), max_day: int = Query(7, ge=0), retention_event: str | None = Query(None)) -> dict[str, object]:
     return legacy_api.get_usage(event=event, max_day=max_day, retention_event=retention_event)
+
+
+@router.get("/usage-frequency")
+def get_usage_frequency(event: str = Query(...)) -> dict[str, object]:
+    return legacy_api.get_usage_frequency(event=event)
