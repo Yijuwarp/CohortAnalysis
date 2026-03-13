@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getUsage, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
+import UsageFrequencyHistogram from './UsageFrequencyHistogram'
 
 function formatRatioValue(value) {
   return Number(value).toFixed(2)
@@ -135,7 +136,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       ? 'Event Count'
       : metricType === 'per_event_firer'
         ? 'Events per Event Firer'
-        : 'Events per Active User'
+        : 'Events per Retained User'
 
   useEffect(() => {
     setEffectiveMaxDayVolume(Number(maxDay))
@@ -175,7 +176,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           Metric
           <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
             <option value="count">Count</option>
-            <option value="per_active_user">Per Active User</option>
+            <option value="per_active_user">Per Retained User</option>
             <option value="per_event_firer">Per Event Firer</option>
           </select>
         </label>
@@ -192,7 +193,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       </div>
 
       {metricType === 'per_active_user' && (
-        <p>Active users are calculated using the selected retention event.</p>
+        <p>Retained users are calculated using the selected retention event.</p>
       )}
 
       {error && <p className="error">{error}</p>}
@@ -263,6 +264,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           </table>
         </div>
       )}
+
+      {event && <UsageFrequencyHistogram event={event} />}
     </section>
   )
 }

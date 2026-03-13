@@ -165,3 +165,7 @@ export async function getMonetization(maxDay) {
   const safeMaxDay = normalizeMaxDay(maxDay)
   return request(`/monetization?max_day=${safeMaxDay}`, { method: 'GET' })
 }
+
+export async function getUsageFrequency(event) {
+  return request(`/usage-frequency?event=${encodeURIComponent(event)}`, { method: 'GET' })
+}

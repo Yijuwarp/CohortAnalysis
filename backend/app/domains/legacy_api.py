@@ -2788,3 +2788,86 @@ def get_usage(
         }
     finally:
         connection.close()
+
+
+def get_usage_frequency(event: str) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
+        ).fetchone()[0]
+        ensure_cohort_tables(connection)
+
+        if not scoped_exists:
+            return {"buckets": [], "cohort_sizes": []}
+
+        cohorts, cohort_sizes_map = build_active_cohort_base(connection)
+        if not cohorts:
+            return {"buckets": [], "cohort_sizes": []}
+
+        cohort_sizes = [{"cohort_id": c[0], "name": str(c[1]), "size": cohort_sizes_map.get(c[0], 0)} for c in cohorts]
+
+        rows = connection.execute(
+            """
+            WITH user_event_counts AS (
+                SELECT
+                    cm.cohort_id,
+                    cm.user_id,
+                    COALESCE(SUM(e.original_event_count), 0) AS event_count
+                FROM cohort_membership cm
+                LEFT JOIN events_scoped e
+                    ON e.user_id = cm.user_id
+                    AND e.event_name = ?
+                    AND e.event_time >= cm.join_time
+                GROUP BY cm.cohort_id, cm.user_id
+            )
+            SELECT
+                cohort_id,
+                CASE
+                    WHEN event_count = 0 THEN '0'
+                    WHEN event_count = 1 THEN '1'
+                    WHEN event_count BETWEEN 2 AND 5 THEN '2-5'
+                    WHEN event_count BETWEEN 6 AND 10 THEN '6-10'
+                    WHEN event_count BETWEEN 11 AND 20 THEN '11-20'
+                    ELSE '20+'
+                END AS bucket,
+                COUNT(*) AS users
+            FROM user_event_counts
+            GROUP BY cohort_id, bucket
+            ORDER BY
+                cohort_id,
+                CASE
+                    WHEN bucket = '0' THEN 0
+                    WHEN bucket = '1' THEN 1
+                    WHEN bucket = '2-5' THEN 2
+                    WHEN bucket = '6-10' THEN 3
+                    WHEN bucket = '11-20' THEN 4
+                    ELSE 5
+                END
+            """,
+            [event]
+        ).fetchall()
+
+        bucket_order = ["0", "1", "2-5", "6-10", "11-20", "20+"]
+        
+        bucket_data = {b: {c[0]: 0 for c in cohorts} for b in bucket_order}
+        
+        for cohort_id, bucket, users in rows:
+            if bucket in bucket_data:
+                bucket_data[bucket][cohort_id] = users
+                
+        buckets = []
+        for b in bucket_order:
+            cohorts_list = [{"cohort_id": cid, "users": count} for cid, count in bucket_data[b].items()]
+            cohorts_list.sort(key=lambda x: x["cohort_id"])
+            buckets.append({
+                "bucket": b,
+                "cohorts": cohorts_list
+            })
+
+        return {
+            "buckets": buckets,
+            "cohort_sizes": cohort_sizes
+        }
+    finally:
+        connection.close()
