@@ -2436,6 +2436,112 @@ def list_events() -> dict[str, list[str]]:
 
 
 
+
+
+@app.get("/events/{event_name}/properties")
+def get_event_properties(event_name: str) -> dict[str, list[str]]:
+    connection = get_connection()
+    try:
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
+        ).fetchone()[0]
+        if not scoped_exists:
+            return {"properties": []}
+
+        event_exists = connection.execute("SELECT 1 FROM events_scoped WHERE event_name = ? LIMIT 1", [event_name]).fetchone()
+        if event_exists is None:
+            raise HTTPException(status_code=404, detail=f"Unknown event: {event_name}")
+
+        columns = [
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events_scoped'
+                ORDER BY ordinal_position
+                """
+            ).fetchall()
+        ]
+        properties = [column for column in columns if classify_column(column) == "property"]
+
+        available = []
+        for column in properties:
+            column_ref = quote_identifier(column)
+            has_values = connection.execute(
+                f"""
+                SELECT 1
+                FROM events_scoped
+                WHERE event_name = ?
+                  AND {column_ref} IS NOT NULL
+                LIMIT 1
+                """,
+                [event_name],
+            ).fetchone()
+            if has_values is not None:
+                available.append(column)
+
+        return {"properties": available}
+    finally:
+        connection.close()
+
+
+@app.get("/events/{event_name}/properties/{property}/values")
+def get_event_property_values(event_name: str, property: str, limit: int = Query(25, ge=1, le=100)) -> dict[str, object]:
+    connection = get_connection()
+    try:
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
+        ).fetchone()[0]
+        if not scoped_exists:
+            return {"values": [], "total_distinct": 0}
+
+        event_exists = connection.execute("SELECT 1 FROM events_scoped WHERE event_name = ? LIMIT 1", [event_name]).fetchone()
+        if event_exists is None:
+            raise HTTPException(status_code=404, detail=f"Unknown event: {event_name}")
+
+        columns = {
+            str(row[0])
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events_scoped'
+                """
+            ).fetchall()
+        }
+        if property not in columns or classify_column(property) != "property":
+            raise HTTPException(status_code=400, detail=f"Unknown property: {property}")
+
+        property_ref = quote_identifier(property)
+        rows = connection.execute(
+            f"""
+            SELECT CAST({property_ref} AS VARCHAR) AS property_value, COUNT(*) AS frequency
+            FROM events_scoped
+            WHERE event_name = ?
+              AND {property_ref} IS NOT NULL
+            GROUP BY property_value
+            ORDER BY frequency DESC, property_value ASC
+            LIMIT ?
+            """,
+            [event_name, limit],
+        ).fetchall()
+
+        total_distinct = int(connection.execute(
+            f"""
+            SELECT COUNT(DISTINCT CAST({property_ref} AS VARCHAR))
+            FROM events_scoped
+            WHERE event_name = ?
+              AND {property_ref} IS NOT NULL
+            """,
+            [event_name],
+        ).fetchone()[0] or 0)
+
+        return {"values": [str(value) for value, _ in rows], "total_distinct": total_distinct}
+    finally:
+        connection.close()
+
+
 @app.get("/revenue-config-events")
 def get_revenue_config_events() -> dict[str, object]:
     connection = get_connection()
@@ -2687,11 +2793,32 @@ def get_monetization(max_day: int = Query(7, ge=0)) -> dict[str, object]:
         connection.close()
 
 
+def build_usage_property_filter_clause(
+    property: str | None,
+    operator: str,
+    value: str | None,
+    table_alias: str = "es",
+) -> tuple[str, list[object]]:
+    if not property:
+        return "", []
+    if operator not in {"=", "!="}:
+        raise HTTPException(status_code=400, detail="Unsupported operator. Allowed operators: =, !=")
+    if value is None or value == "":
+        raise HTTPException(status_code=400, detail="Property value is required when property filter is used")
+
+    column_ref = quote_identifier(property)
+    comparator = "=" if operator == "=" else "!="
+    return f" AND CAST({table_alias}.{column_ref} AS VARCHAR) {comparator} ?", [value]
+
+
 @app.get("/usage")
 def get_usage(
     event: str = Query(...),
     max_day: int = Query(7, ge=0),
     retention_event: str | None = Query(None),
+    property: str | None = Query(None),
+    operator: str = Query("="),
+    value: str | None = Query(None),
 ) -> dict[str, object]:
     connection = get_connection()
     try:
@@ -2704,6 +2831,7 @@ def get_usage(
             "max_day": int(max_day),
             "event": event,
             "retention_event": retention_event or "any",
+            "property_filter": {"property": property, "operator": operator, "value": value} if property else None,
             "usage_volume_table": [],
             "usage_users_table": [],
             "usage_adoption_table": [],
@@ -2723,6 +2851,29 @@ def get_usage(
             end_timer(event=event, max_day=max_day, retention_event=retention_event, error="event_not_found")
             return empty_response
 
+
+        known_columns = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events_scoped'
+                """
+            ).fetchall()
+        }
+        if property and (
+            property not in known_columns
+            or classify_column(property) != "property"
+        ):
+            raise HTTPException(status_code=400, detail=f"Unknown property: {property}")
+
+        property_clause, property_params = build_usage_property_filter_clause(
+            property=property,
+            operator=operator,
+            value=value,
+        )
+
         usage_rows = connection.execute(
             """
             WITH usage_deltas AS (
@@ -2736,7 +2887,7 @@ def get_usage(
                 JOIN events_scoped es ON es.user_id = cm.user_id
                 WHERE c.hidden = FALSE
                   AND es.event_name = ?
-                  AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?
+                  AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?{property_clause}
             )
             SELECT
                 cohort_id,
@@ -2745,8 +2896,8 @@ def get_usage(
                 COUNT(DISTINCT user_id) AS distinct_users
             FROM usage_deltas
             GROUP BY cohort_id, day_number
-            """,
-            [event, max_day],
+            """.format(property_clause=property_clause),
+            [event, max_day, *property_params],
         ).fetchall()
 
         adoption_rows = connection.execute(
@@ -2761,14 +2912,14 @@ def get_usage(
                 JOIN events_scoped es ON es.user_id = cm.user_id
                 WHERE c.hidden = FALSE
                   AND es.event_name = ?
-                  AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?
+                  AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?{property_clause}
                 GROUP BY cm.cohort_id, cm.user_id
             )
             SELECT cohort_id, first_event_day, COUNT(DISTINCT user_id) AS first_event_users
             FROM user_first_event_day
             GROUP BY cohort_id, first_event_day
-            """,
-            [event, max_day],
+            """.format(property_clause=property_clause),
+            [event, max_day, *property_params],
         ).fetchall()
 
         usage_by_day = {
@@ -2820,6 +2971,7 @@ def get_usage(
             "max_day": int(max_day),
             "event": event,
             "retention_event": retention_event or "any",
+            "property_filter": {"property": property, "operator": operator, "value": value} if property else None,
             "usage_volume_table": usage_volume_table,
             "usage_users_table": usage_users_table,
             "usage_adoption_table": usage_adoption_table,
@@ -2829,7 +2981,12 @@ def get_usage(
         connection.close()
 
 
-def get_usage_frequency(event: str) -> dict[str, object]:
+def get_usage_frequency(
+    event: str,
+    property: str | None = None,
+    operator: str = "=",
+    value: str | None = None,
+) -> dict[str, object]:
     connection = get_connection()
     try:
         scoped_exists = connection.execute(
@@ -2846,6 +3003,29 @@ def get_usage_frequency(event: str) -> dict[str, object]:
 
         cohort_sizes = [{"cohort_id": c[0], "name": str(c[1]), "size": cohort_sizes_map.get(c[0], 0)} for c in cohorts]
 
+        known_columns = {
+            row[0]
+            for row in connection.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_name = 'events_scoped'
+                """
+            ).fetchall()
+        }
+        if property and (
+            property not in known_columns
+            or classify_column(property) != "property"
+        ):
+            raise HTTPException(status_code=400, detail=f"Unknown property: {property}")
+
+        property_clause, property_params = build_usage_property_filter_clause(
+            property=property,
+            operator=operator,
+            value=value,
+            table_alias="e",
+        )
+
         rows = connection.execute(
             """
             WITH user_event_counts AS (
@@ -2857,7 +3037,7 @@ def get_usage_frequency(event: str) -> dict[str, object]:
                 LEFT JOIN events_scoped e
                     ON e.user_id = cm.user_id
                     AND e.event_name = ?
-                    AND e.event_time >= cm.join_time
+                    AND e.event_time >= cm.join_time{property_clause}
                 GROUP BY cm.cohort_id, cm.user_id
             )
             SELECT
@@ -2883,8 +3063,8 @@ def get_usage_frequency(event: str) -> dict[str, object]:
                     WHEN bucket = '11-20' THEN 4
                     ELSE 5
                 END
-            """,
-            [event]
+            """.format(property_clause=property_clause),
+            [event, *property_params]
         ).fetchall()
 
         bucket_order = ["0", "1", "2-5", "6-10", "11-20", "20+"]

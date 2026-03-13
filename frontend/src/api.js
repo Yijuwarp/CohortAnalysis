@@ -131,7 +131,7 @@ export async function listEvents() {
   })
 }
 
-export async function getUsage(event, maxDay, retentionEvent) {
+export async function getUsage(event, maxDay, retentionEvent, propertyFilter = null) {
   if (retentionEvent === undefined || retentionEvent === null || retentionEvent === '') {
     throw new Error('Retention event must be selected before loading usage metrics')
   }
@@ -140,8 +140,26 @@ export async function getUsage(event, maxDay, retentionEvent) {
   if (retentionEvent !== 'any') {
     path += `&retention_event=${encodeURIComponent(retentionEvent)}`
   }
+  if (propertyFilter?.property) {
+    path += `&property=${encodeURIComponent(propertyFilter.property)}`
+    path += `&operator=${encodeURIComponent(propertyFilter.operator || '=')}`
+    if (propertyFilter.value !== undefined && propertyFilter.value !== null && propertyFilter.value !== '') {
+      path += `&value=${encodeURIComponent(propertyFilter.value)}`
+    }
+  }
 
   return request(path, { method: 'GET' })
+}
+
+export async function getEventProperties(event) {
+  return request(`/events/${encodeURIComponent(event)}/properties`, { method: 'GET' })
+}
+
+export async function getEventPropertyValues(event, property, limit = 25) {
+  return request(
+    `/events/${encodeURIComponent(event)}/properties/${encodeURIComponent(property)}/values?limit=${limit}`,
+    { method: 'GET' }
+  )
 }
 
 
@@ -166,6 +184,15 @@ export async function getMonetization(maxDay) {
   return request(`/monetization?max_day=${safeMaxDay}`, { method: 'GET' })
 }
 
-export async function getUsageFrequency(event) {
-  return request(`/usage-frequency?event=${encodeURIComponent(event)}`, { method: 'GET' })
+export async function getUsageFrequency(event, propertyFilter = null) {
+  let path = `/usage-frequency?event=${encodeURIComponent(event)}`
+  if (propertyFilter?.property) {
+    path += `&property=${encodeURIComponent(propertyFilter.property)}`
+    path += `&operator=${encodeURIComponent(propertyFilter.operator || '=')}`
+    if (propertyFilter.value !== undefined && propertyFilter.value !== null && propertyFilter.value !== '') {
+      path += `&value=${encodeURIComponent(propertyFilter.value)}`
+    }
+  }
+
+  return request(path, { method: 'GET' })
 }

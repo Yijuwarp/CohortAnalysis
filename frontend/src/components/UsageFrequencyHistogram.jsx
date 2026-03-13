@@ -35,7 +35,7 @@ function formatUserCount(count) {
   return (Number(count) || 0).toLocaleString()
 }
 
-export default function UsageFrequencyHistogram({ event, refreshToken }) {
+export default function UsageFrequencyHistogram({ event, refreshToken, propertyFilter = null }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -50,7 +50,7 @@ export default function UsageFrequencyHistogram({ event, refreshToken }) {
     setLoading(true)
     setError('')
 
-    getUsageFrequency(event)
+    getUsageFrequency(event, propertyFilter)
       .then((res) => {
         if (!isMounted) return
         setData(res)
@@ -68,7 +68,7 @@ export default function UsageFrequencyHistogram({ event, refreshToken }) {
     return () => {
       isMounted = false
     }
-  }, [event, refreshToken])
+  }, [event, propertyFilter?.operator, propertyFilter?.property, propertyFilter?.value, refreshToken])
 
   const cohortMeta = useMemo(() => {
     if (!data || !data.cohort_sizes) return []

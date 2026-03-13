@@ -25,10 +25,39 @@ def get_retention(
 
 
 @router.get("/usage")
-def get_usage(event: str = Query(...), max_day: int = Query(7, ge=0), retention_event: str | None = Query(None)) -> dict[str, object]:
-    return legacy_api.get_usage(event=event, max_day=max_day, retention_event=retention_event)
+def get_usage(
+    event: str = Query(...),
+    max_day: int = Query(7, ge=0),
+    retention_event: str | None = Query(None),
+    property: str | None = Query(None),
+    operator: str = Query("="),
+    value: str | None = Query(None),
+) -> dict[str, object]:
+    return legacy_api.get_usage(
+        event=event,
+        max_day=max_day,
+        retention_event=retention_event,
+        property=property,
+        operator=operator,
+        value=value,
+    )
 
 
 @router.get("/usage-frequency")
-def get_usage_frequency(event: str = Query(...)) -> dict[str, object]:
-    return legacy_api.get_usage_frequency(event=event)
+def get_usage_frequency(
+    event: str = Query(...),
+    property: str | None = Query(None),
+    operator: str = Query("="),
+    value: str | None = Query(None),
+) -> dict[str, object]:
+    return legacy_api.get_usage_frequency(event=event, property=property, operator=operator, value=value)
+
+
+@router.get("/events/{event_name}/properties")
+def get_event_properties(event_name: str) -> dict[str, list[str]]:
+    return legacy_api.get_event_properties(event_name=event_name)
+
+
+@router.get("/events/{event_name}/properties/{property}/values")
+def get_event_property_values(event_name: str, property: str, limit: int = Query(25, ge=1, le=100)) -> dict[str, object]:
+    return legacy_api.get_event_property_values(event_name=event_name, property=property, limit=limit)

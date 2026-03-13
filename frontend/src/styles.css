@@ -320,6 +320,25 @@ button:disabled {
   margin-bottom: var(--space-4);
 }
 
+.usage-property-filter {
+  margin-top: var(--space-2);
+  margin-bottom: var(--space-4);
+}
+
+.usage-property-filter-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.usage-property-filter-label {
+  display: inline-block;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--color-text-secondary);
+}
+
 
 .retention-header {
   display: flex;
