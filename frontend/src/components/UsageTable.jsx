@@ -7,6 +7,10 @@ function formatRatioValue(value) {
   return Number(value).toFixed(2)
 }
 
+function formatCountValue(value) {
+  return Number(value).toLocaleString()
+}
+
 export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [event, setEvent] = useState('')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(maxDay))
@@ -220,10 +224,17 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
                   >
                     {row.cohort_name}
                   </td>
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
-                  {dayColumnsVolume.map((day) => (
-                    <td key={day}>{row.values?.[String(day)] ?? '—'}</td>
-                  ))}
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
+                  {dayColumnsVolume.map((day) => {
+                    const value = row.values?.[String(day)] ?? null
+                    if (value === null) return <td key={day}>—</td>
+
+                    return (
+                      <td key={day}>
+                        {metricType === 'count' ? formatCountValue(value) : value}
+                      </td>
+                    )
+                  })}
                 </tr>
               ))}
             </tbody>
@@ -253,10 +264,18 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
                   >
                     {row.cohort_name}
                   </td>
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
+                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
                   {dayColumnsUsers.map((day) => {
                     const value = row.values?.[String(day)] ?? null
-                    return <td key={day}>{value === null ? '—' : (modeUsers === 'percent' ? `${value}%` : value)}</td>
+                    return (
+                      <td key={day}>
+                        {value === null
+                          ? '—'
+                          : modeUsers === 'percent'
+                            ? `${value}%`
+                            : formatCountValue(value)}
+                      </td>
+                    )
                   })}
                 </tr>
               ))}
@@ -265,7 +284,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         </div>
       )}
 
-      {event && <UsageFrequencyHistogram event={event} />}
+      {event && (
+        <UsageFrequencyHistogram
+          event={event}
+          refreshToken={refreshToken}
+        />
+      )}
     </section>
   )
 }

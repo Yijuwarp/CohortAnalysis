@@ -16,6 +16,25 @@ const COLORS = [
   '#f15c80', '#e4d354', '#2b908f', '#f45b5b', '#91e8e1', '#7cb5ec',
 ]
 
+function formatCohortSize(size) {
+  const numericSize = Number(size) || 0
+  if (numericSize >= 1000) {
+    const valueInThousands = numericSize / 1000
+    const fixed = Number.isInteger(valueInThousands) ? valueInThousands.toFixed(0) : valueInThousands.toFixed(1)
+    return `${fixed}K`
+  }
+
+  return numericSize.toLocaleString()
+}
+
+function formatPercentFromRatio(ratio) {
+  return `${((Number(ratio) || 0) * 100).toFixed(2)}%`
+}
+
+function formatUserCount(count) {
+  return (Number(count) || 0).toLocaleString()
+}
+
 export default function UsageFrequencyHistogram({ event, refreshToken }) {
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(false)
@@ -51,31 +70,39 @@ export default function UsageFrequencyHistogram({ event, refreshToken }) {
     }
   }, [event, refreshToken])
 
+  const cohortMeta = useMemo(() => {
+    if (!data || !data.cohort_sizes) return []
+
+    return data.cohort_sizes.map((c) => {
+      const size = Number(c.size) || 0
+      const name = c.name || `Cohort ${c.cohort_id}`
+      return {
+        id: c.cohort_id,
+        key: `cohort_${c.cohort_id}`,
+        name,
+        size,
+        label: `${name} (${formatCohortSize(size)})`,
+      }
+    })
+  }, [data])
+
   const chartData = useMemo(() => {
     if (!data || !data.buckets || data.buckets.length === 0) return []
 
     return data.buckets.map((bucketObj) => {
       const row = { name: bucketObj.bucket }
-      let totalAllUsers = 0
-      bucketObj.cohorts.forEach((c) => {
-        const c_size_obj = data.cohort_sizes.find((cs) => cs.cohort_id === c.cohort_id)
-        const cohortName = c_size_obj?.name || `Cohort ${c.cohort_id}`
-        row[cohortName] = c.users
-        totalAllUsers += c.users
+      const bucketByCohortId = new Map(bucketObj.cohorts.map((cohort) => [cohort.cohort_id, Number(cohort.users) || 0]))
+
+      cohortMeta.forEach((cohort) => {
+        const users = bucketByCohortId.get(cohort.id) || 0
+        const percentage = cohort.size > 0 ? users / cohort.size : 0
+        row[cohort.key] = Math.min(percentage, 1)
+        row[`${cohort.key}__users`] = users
       })
-      row['All Users'] = totalAllUsers
+
       return row
     })
-  }, [data])
-
-  const cohortMeta = useMemo(() => {
-    if (!data || !data.cohort_sizes) return []
-    return data.cohort_sizes.map((c) => ({
-      id: c.cohort_id,
-      name: c.name || `Cohort ${c.cohort_id}`,
-      size: c.size,
-    }))
-  }, [data])
+  }, [cohortMeta, data])
 
   if (!event) return null
 
@@ -91,15 +118,22 @@ export default function UsageFrequencyHistogram({ event, refreshToken }) {
               <BarChart data={chartData} margin={{ top: 20, right: 30, left: 20, bottom: 5 }}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="name" />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={formatPercentFromRatio} />
+                <Tooltip
+                  formatter={(value, _name, item) => {
+                    const users = item && item.payload
+                      ? item.payload[`${item.dataKey}__users`] ?? 0
+                      : 0
+                    return [`${formatPercentFromRatio(value)} (${formatUserCount(users)} users)`, item?.name || '']
+                  }}
+                />
                 <Legend />
                 {cohortMeta.map((c, index) => (
                   <Bar
                     key={c.id}
-                    dataKey={c.name}
+                    dataKey={c.key}
                     fill={COLORS[index % COLORS.length]}
-                    name={c.name}
+                    name={c.label}
                   />
                 ))}
               </BarChart>
@@ -111,28 +145,32 @@ export default function UsageFrequencyHistogram({ event, refreshToken }) {
               <thead>
                 <tr>
                   <th>Bucket</th>
-                  <th>All Users</th>
                   {cohortMeta.map((c) => (
-                    <th key={c.id}>{c.name}</th>
+                    <th key={c.id}>{c.label}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {data.buckets.map((bucketObj) => {
-                  let totalUsers = 0
-                  bucketObj.cohorts.forEach(c => totalUsers += c.users)
+                  const bucketByCohortId = new Map(bucketObj.cohorts.map((cohort) => [cohort.cohort_id, Number(cohort.users) || 0]))
 
                   return (
                     <tr key={bucketObj.bucket}>
                       <td>{bucketObj.bucket}</td>
-                      <td>{totalUsers}</td>
                       {cohortMeta.map((cMeta) => {
-                        const cohortInfo = bucketObj.cohorts.find((c) => c.cohort_id === cMeta.id)
-                        const usersCount = cohortInfo ? cohortInfo.users : 0
-                        const percentage = cMeta.size > 0 ? ((usersCount / cMeta.size) * 100).toFixed(2) : '0.00'
+                        const usersCount = bucketByCohortId.get(cMeta.id) || 0
+                        const percentage = cMeta.size > 0 ? usersCount / cMeta.size : 0
+
                         return (
                           <td key={cMeta.id}>
-                            {usersCount} <small style={{ color: '#888' }}>({percentage}%)</small>
+                            {cMeta.size === 0 ? (
+                              '—'
+                            ) : (
+                              <>
+                                <div>{formatPercentFromRatio(percentage)}</div>
+                                <small style={{ color: '#888' }}>({formatUserCount(usersCount)})</small>
+                              </>
+                            )}
                           </td>
                         )
                       })}
