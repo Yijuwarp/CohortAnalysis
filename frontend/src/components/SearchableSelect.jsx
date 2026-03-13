@@ -11,7 +11,7 @@ const normalizeOption = (option) => {
   }
 }
 
-export default function SearchableSelect({ options, value, onChange, placeholder = 'Select...', disabled = false }) {
+export default function SearchableSelect({ options, value, onChange, placeholder = 'Select...', disabled = false, className = '' }) {
   const rootRef = useRef(null)
   const listboxId = useId()
   const [isOpen, setIsOpen] = useState(false)
@@ -96,9 +96,10 @@ export default function SearchableSelect({ options, value, onChange, placeholder
   const hasNoMatches = !hasNoOptions && filteredOptions.length === 0
 
   return (
-    <div className={`searchable-select ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef}>
+    <div className={`searchable-select ${className} ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef}>
       <input
         className="searchable-select-input"
+        title={selectedOption?.label || value || ''}
         role="combobox"
         aria-expanded={isOpen}
         aria-controls={listboxId}
@@ -139,7 +140,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
                     onMouseEnter={() => setActiveIndex(index)}
                     onClick={() => handleSelect(option.value)}
                   >
-                    {option.label}
+                    <span title={option.label}>{option.label}</span>
                   </button>
                 )
               })}

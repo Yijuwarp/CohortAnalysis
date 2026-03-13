@@ -2706,6 +2706,7 @@ def get_usage(
             "retention_event": retention_event or "any",
             "usage_volume_table": [],
             "usage_users_table": [],
+            "usage_adoption_table": [],
             "retained_users_table": [],
         }
         if not scoped_exists:
@@ -2728,7 +2729,8 @@ def get_usage(
                 SELECT
                     cm.cohort_id,
                     cm.user_id,
-                    DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number
+                    DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number,
+                    es.original_event_count AS event_count
                 FROM cohort_membership cm
                 JOIN cohorts c ON c.cohort_id = cm.cohort_id
                 JOIN events_scoped es ON es.user_id = cm.user_id
@@ -2736,9 +2738,35 @@ def get_usage(
                   AND es.event_name = ?
                   AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?
             )
-            SELECT cohort_id, day_number, COUNT(*) AS total_events, COUNT(DISTINCT user_id) AS distinct_users
+            SELECT
+                cohort_id,
+                day_number,
+                SUM(event_count) AS total_events,
+                COUNT(DISTINCT user_id) AS distinct_users
             FROM usage_deltas
             GROUP BY cohort_id, day_number
+            """,
+            [event, max_day],
+        ).fetchall()
+
+        adoption_rows = connection.execute(
+            """
+            WITH user_first_event_day AS (
+                SELECT
+                    cm.cohort_id,
+                    cm.user_id,
+                    MIN(DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)) AS first_event_day
+                FROM cohort_membership cm
+                JOIN cohorts c ON c.cohort_id = cm.cohort_id
+                JOIN events_scoped es ON es.user_id = cm.user_id
+                WHERE c.hidden = FALSE
+                  AND es.event_name = ?
+                  AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?
+                GROUP BY cm.cohort_id, cm.user_id
+            )
+            SELECT cohort_id, first_event_day, COUNT(DISTINCT user_id) AS first_event_users
+            FROM user_first_event_day
+            GROUP BY cohort_id, first_event_day
             """,
             [event, max_day],
         ).fetchall()
@@ -2747,28 +2775,38 @@ def get_usage(
             (int(cohort_id), int(day_number)): {"total_events": int(total_events), "distinct_users": int(distinct_users)}
             for cohort_id, day_number, total_events, distinct_users in usage_rows
         }
+        adoption_by_first_day = {
+            (int(cohort_id), int(day_number)): int(first_event_users)
+            for cohort_id, day_number, first_event_users in adoption_rows
+        }
 
         retention_rows = fetch_retention_active_rows(connection, max_day, retention_event)
         retained_by_day = {(int(c), int(d)): int(a) for c, d, a in retention_rows}
 
         usage_volume_table = []
         usage_users_table = []
+        usage_adoption_table = []
         retained_users_table = []
         for cohort_id, cohort_name in cohorts:
             cohort_id = int(cohort_id)
             cohort_size = cohort_sizes.get(cohort_id, 0)
             volume_values = {}
             user_values = {}
+            adoption_values = {}
             retained_values = {}
+            cumulative_adoption = 0
             for day_number in range(max_day + 1):
                 bucket = usage_by_day.get((cohort_id, day_number), {})
                 volume_values[str(day_number)] = int(bucket.get("total_events", 0))
                 user_values[str(day_number)] = int(bucket.get("distinct_users", 0))
+                cumulative_adoption += int(adoption_by_first_day.get((cohort_id, day_number), 0))
+                adoption_values[str(day_number)] = cumulative_adoption
                 retained_values[str(day_number)] = int(retained_by_day.get((cohort_id, day_number), 0))
 
             common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size)}
             usage_volume_table.append({**common_metadata, "values": volume_values})
             usage_users_table.append({**common_metadata, "values": user_values})
+            usage_adoption_table.append({**common_metadata, "values": adoption_values})
             retained_users_table.append({**common_metadata, "values": retained_values})
 
         end_timer(
@@ -2784,6 +2822,7 @@ def get_usage(
             "retention_event": retention_event or "any",
             "usage_volume_table": usage_volume_table,
             "usage_users_table": usage_users_table,
+            "usage_adoption_table": usage_adoption_table,
             "retained_users_table": retained_users_table,
         }
     finally:
