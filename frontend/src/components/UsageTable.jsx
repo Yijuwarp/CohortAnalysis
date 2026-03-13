@@ -3,6 +3,20 @@ import { getUsage, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
 
+function computeCumulative(values) {
+  let running = 0
+  const result = {}
+
+  Object.keys(values)
+    .sort((a, b) => Number(a) - Number(b))
+    .forEach((day) => {
+      running += Number(values[day] || 0)
+      result[day] = running
+    })
+
+  return result
+}
+
 function formatRatioValue(value) {
   return Number(value).toFixed(2)
 }
@@ -18,6 +32,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [isPinned, setIsPinned] = useState(true)
   const [modeUsers, setModeUsers] = useState('count')
   const [metricType, setMetricType] = useState('count')
+  const [cumulativeMode, setCumulativeMode] = useState(false)
   const [events, setEvents] = useState([])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
@@ -47,7 +62,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
     try {
       const response = await getUsage(selectedEvent, Number(maxDay), retentionEvent)
       setVolumeRows(response.usage_volume_table || [])
-      setUserRows(response.usage_users_table || [])
+      const adoptionRows = response.usage_adoption_table || []
+      const adoptionByCohort = new Map(adoptionRows.map((row) => [row.cohort_id, row.values || {}]))
+      setUserRows((response.usage_users_table || []).map((row) => ({
+        ...row,
+        adoption_values: adoptionByCohort.get(row.cohort_id) || {},
+      })))
       setRetainedRows(response.retained_users_table || [])
     } catch (err) {
       setError(err.message)
@@ -90,13 +110,19 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const userDisplayRows = useMemo(
     () =>
       userRows.map((row) => {
-        if (modeUsers === 'count') {
-          return row
+        let baseValues = row.values || {}
+
+        if (modeUsers === 'adoption_count' || modeUsers === 'adoption_percent') {
+          baseValues = row.adoption_values || {}
+        }
+
+        if (modeUsers === 'count' || modeUsers === 'adoption_count') {
+          return { ...row, values: baseValues }
         }
 
         const converted = {}
         for (const day of dayColumns) {
-          const rawValue = Number(row.values?.[String(day)] ?? 0)
+          const rawValue = Number(baseValues[String(day)] ?? 0)
           const percent = row.size > 0 ? (rawValue / row.size) * 100 : 0
           converted[String(day)] = formatRatioValue(percent)
         }
@@ -111,36 +137,69 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
     const retainedByCohort = new Map(retainedRows.map((row) => [row.cohort_id, row.values || {}]))
 
     return volumeRows.map((row) => {
-      if (metricType === 'count') {
-        return row
-      }
-
       const converted = {}
       const usersByDay = usersByCohort.get(row.cohort_id) || {}
       const retainedByDay = retainedByCohort.get(row.cohort_id) || {}
+      const eventValues = cumulativeMode ? computeCumulative(row.values || {}) : row.values || {}
 
       for (const day of dayColumns) {
-        const totalEvents = Number(row.values?.[String(day)] ?? 0)
+        const totalEvents = Number(eventValues[String(day)] ?? 0)
         const distinctUsers = Number(usersByDay[String(day)] ?? 0)
         const retainedUsers = Number(retainedByDay[String(day)] ?? 0)
 
+        if (metricType === 'count') {
+          converted[String(day)] = totalEvents
+          continue
+        }
+
         if (metricType === 'per_event_firer') {
           converted[String(day)] = formatRatioValue(distinctUsers > 0 ? totalEvents / distinctUsers : 0)
-        } else {
-          converted[String(day)] = formatRatioValue(retainedUsers > 0 ? totalEvents / retainedUsers : 0)
+          continue
         }
+
+        if (metricType === 'per_installed_user') {
+          converted[String(day)] = formatRatioValue(row.size > 0 ? totalEvents / row.size : 0)
+          continue
+        }
+
+        if (metricType === 'per_active_user') {
+          converted[String(day)] = formatRatioValue(retainedUsers > 0 ? totalEvents / retainedUsers : 0)
+          continue
+        }
+
+        converted[String(day)] = '0.00'
       }
 
       return { ...row, values: converted }
     })
-  }, [dayColumns, metricType, retainedRows, userRows, volumeRows])
+  }, [cumulativeMode, dayColumns, metricType, retainedRows, userRows, volumeRows])
+
+  const cumulativeSupported =
+    metricType === 'count' || metricType === 'per_active_user' || metricType === 'per_installed_user'
+
+  useEffect(() => {
+    if (!cumulativeSupported) {
+      setCumulativeMode(false)
+    }
+  }, [cumulativeSupported])
 
   const volumeLabel =
     metricType === 'count'
       ? 'Event Count'
+      : metricType === 'per_installed_user'
+        ? 'Events per Installed User'
       : metricType === 'per_event_firer'
         ? 'Events per Event Firer'
         : 'Events per Retained User'
+
+  const uniqueUsersLabel =
+    modeUsers === 'count'
+      ? 'Daily Users (Count)'
+      : modeUsers === 'percent'
+        ? 'Daily Users (%)'
+        : modeUsers === 'adoption_count'
+          ? 'Cumulative Adoption (Count)'
+          : 'Cumulative Adoption (%)'
 
   useEffect(() => {
     setEffectiveMaxDayVolume(Number(maxDay))
@@ -167,13 +226,16 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
             value={event}
             onChange={setEvent}
             placeholder="Select an event"
+            className="searchable-select-prominent"
           />
         </label>
         <label>
           Unique Users
           <select value={modeUsers} onChange={(e) => setModeUsers(e.target.value)}>
-            <option value="count">Count</option>
-            <option value="percent">%</option>
+            <option value="count">Daily Users (Count)</option>
+            <option value="percent">Daily Users (%)</option>
+            <option value="adoption_count">Cumulative Adoption (Count)</option>
+            <option value="adoption_percent">Cumulative Adoption (%)</option>
           </select>
         </label>
         <label>
@@ -181,6 +243,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
             <option value="count">Count</option>
             <option value="per_active_user">Per Retained User</option>
+            <option value="per_installed_user">Per Installed User</option>
             <option value="per_event_firer">Per Event Firer</option>
           </select>
         </label>
@@ -202,7 +265,18 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
 
       {error && <p className="error">{error}</p>}
 
-      <h3>Event Volume ({volumeLabel})</h3>
+      <div className="section-header-inline">
+        <h3>Event Volume ({volumeLabel})</h3>
+        <label className="checkbox-inline" title={cumulativeSupported ? '' : 'Not available for Per Event Firer'}>
+          <input
+            type="checkbox"
+            checked={cumulativeMode}
+            onChange={(e) => setCumulativeMode(e.target.checked)}
+            disabled={!cumulativeSupported}
+          />
+          Cumulative
+        </label>
+      </div>
       {volumeDisplayRows.length > 0 && (
         <div className="analytics-table table-responsive">
           <table>
@@ -242,7 +316,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         </div>
       )}
 
-      <h3>Unique Users</h3>
+      <h3>Unique Users ({uniqueUsersLabel})</h3>
       {userDisplayRows.length > 0 && (
         <div className="analytics-table table-responsive">
           <table>
@@ -272,6 +346,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
                         {value === null
                           ? '—'
                           : modeUsers === 'percent'
+                            || modeUsers === 'adoption_percent'
                             ? `${value}%`
                             : formatCountValue(value)}
                       </td>
