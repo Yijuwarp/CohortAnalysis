@@ -77,3 +77,15 @@ def test_usage_filter_requires_value_when_property_selected(client: TestClient) 
 
     response = client.get("/usage?event=open&max_day=1&property=source&operator=%3D")
     assert response.status_code == 400, response.text
+
+
+def test_usage_rejects_non_property_columns(client: TestClient) -> None:
+    _prepare_property_fixture(client)
+
+    usage_response = client.get("/usage?event=open&max_day=1&property=user_id&operator=%3D&value=u1")
+    assert usage_response.status_code == 400, usage_response.text
+    assert usage_response.json()["detail"] == "Unknown property: user_id"
+
+    frequency_response = client.get("/usage-frequency?event=open&property=event_time&operator=%3D&value=2026-01-01")
+    assert frequency_response.status_code == 400, frequency_response.text
+    assert frequency_response.json()["detail"] == "Unknown property: event_time"

@@ -41,6 +41,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [propertyValues, setPropertyValues] = useState([])
   const [propertyValue, setPropertyValue] = useState('')
   const [propertyLoading, setPropertyLoading] = useState(false)
+  const [showPropertyFilter, setShowPropertyFilter] = useState(false)
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
@@ -56,6 +57,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
     setPropertyOperator('=')
     setPropertyValue('')
     setPropertyValues([])
+    setShowPropertyFilter(false)
   }
 
   const handleEventChange = (nextEvent) => {
@@ -162,6 +164,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       isMounted = false
     }
   }, [event])
+
+  useEffect(() => {
+    if (eventProperty) {
+      setShowPropertyFilter(true)
+    }
+  }, [eventProperty])
 
   useEffect(() => {
     if (!event || !eventProperty) {
@@ -343,12 +351,24 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       </div>
 
       <div className="usage-property-filter">
-        <span className="usage-property-filter-label">Where</span>
+        <div className="usage-property-filter-header">
+          <span className="usage-property-filter-label">Where</span>
+          {!showPropertyFilter && (
+            <button
+              type="button"
+              className="button button-secondary button-small"
+              onClick={() => setShowPropertyFilter(true)}
+              disabled={propertyLoading || eventProperties.length === 0}
+            >
+              + Add Property
+            </button>
+          )}
+        </div>
         {propertyLoading ? (
           <small className="secondary-text">Loading event properties...</small>
         ) : eventProperties.length === 0 ? (
           <small className="secondary-text">(No event properties available)</small>
-        ) : (
+        ) : showPropertyFilter ? (
           <div className="inline-controls">
             <SearchableSelect
               options={eventProperties}
@@ -356,6 +376,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
               onChange={(value) => {
                 setEventProperty(value)
                 setPropertyValue('')
+                setShowPropertyFilter(true)
               }}
               placeholder="Select property"
             />
@@ -372,7 +393,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
             />
             <button type="button" className="filter-remove" onClick={clearPropertyFilter} title="Clear property filter">✕</button>
           </div>
-        )}
+        ) : null}
       </div>
 
       {metricType === 'per_active_user' && (

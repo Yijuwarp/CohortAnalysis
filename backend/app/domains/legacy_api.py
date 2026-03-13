@@ -2862,7 +2862,10 @@ def get_usage(
                 """
             ).fetchall()
         }
-        if property and property not in known_columns:
+        if property and (
+            property not in known_columns
+            or classify_column(property) != "property"
+        ):
             raise HTTPException(status_code=400, detail=f"Unknown property: {property}")
 
         property_clause, property_params = build_usage_property_filter_clause(
@@ -3010,7 +3013,10 @@ def get_usage_frequency(
                 """
             ).fetchall()
         }
-        if property and property not in known_columns:
+        if property and (
+            property not in known_columns
+            or classify_column(property) != "property"
+        ):
             raise HTTPException(status_code=400, detail=f"Unknown property: {property}")
 
         property_clause, property_params = build_usage_property_filter_clause(
