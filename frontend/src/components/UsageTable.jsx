@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { getUsage, listEvents } from '../api'
+import { getEventProperties, getEventPropertyValues, getUsage, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
 
@@ -34,12 +34,34 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [metricType, setMetricType] = useState('count')
   const [cumulativeMode, setCumulativeMode] = useState(false)
   const [events, setEvents] = useState([])
+
+  const [eventProperties, setEventProperties] = useState([])
+  const [eventProperty, setEventProperty] = useState('')
+  const [propertyOperator, setPropertyOperator] = useState('=')
+  const [propertyValues, setPropertyValues] = useState([])
+  const [propertyValue, setPropertyValue] = useState('')
+  const [propertyLoading, setPropertyLoading] = useState(false)
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+
+  const propertyFilter = eventProperty ? { property: eventProperty, operator: propertyOperator, value: propertyValue } : null
+  const propertyFilterRequiresValue = Boolean(eventProperty && !propertyValue)
+
+  const clearPropertyFilter = () => {
+    setEventProperty('')
+    setPropertyOperator('=')
+    setPropertyValue('')
+    setPropertyValues([])
+  }
+
+  const handleEventChange = (nextEvent) => {
+    clearPropertyFilter()
+    setEvent(nextEvent)
+  }
 
   const loadUsage = async (selectedEvent = event) => {
     if (!selectedEvent) {
@@ -57,10 +79,15 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       return
     }
 
+    if (propertyFilterRequiresValue) {
+      setError('Select a property value before loading usage metrics')
+      return
+    }
+
     setLoading(true)
     setError('')
     try {
-      const response = await getUsage(selectedEvent, Number(maxDay), retentionEvent)
+      const response = await getUsage(selectedEvent, Number(maxDay), retentionEvent, propertyFilter)
       setVolumeRows(response.usage_volume_table || [])
       const adoptionRows = response.usage_adoption_table || []
       const adoptionByCohort = new Map(adoptionRows.map((row) => [row.cohort_id, row.values || {}]))
@@ -104,6 +131,63 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
       setRetainedRows([])
     }
   }, [event, maxDay, retentionEvent])
+
+  useEffect(() => {
+    if (!event) {
+      setEventProperties([])
+      clearPropertyFilter()
+      return
+    }
+
+    let isMounted = true
+    setPropertyLoading(true)
+
+    getEventProperties(event)
+      .then((response) => {
+        if (!isMounted) return
+        const properties = response.properties || []
+        setEventProperties(properties)
+        setEventProperty((current) => (current && properties.includes(current) ? current : ''))
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setEventProperties([])
+        clearPropertyFilter()
+      })
+      .finally(() => {
+        if (isMounted) setPropertyLoading(false)
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [event])
+
+  useEffect(() => {
+    if (!event || !eventProperty) {
+      setPropertyValues([])
+      setPropertyValue('')
+      return
+    }
+
+    let isMounted = true
+    getEventPropertyValues(event, eventProperty)
+      .then((response) => {
+        if (!isMounted) return
+        const nextValues = response.values || []
+        setPropertyValues(nextValues)
+        setPropertyValue((current) => (current && nextValues.includes(current) ? current : ''))
+      })
+      .catch(() => {
+        if (!isMounted) return
+        setPropertyValues([])
+        setPropertyValue('')
+      })
+
+    return () => {
+      isMounted = false
+    }
+  }, [event, eventProperty])
 
   const dayColumns = useMemo(() => Array.from({ length: Number(maxDay) + 1 }, (_, index) => index), [maxDay])
 
@@ -223,7 +307,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           <SearchableSelect
             options={events}
             value={event}
-            onChange={setEvent}
+            onChange={handleEventChange}
             placeholder="Select an event"
             className="searchable-select-prominent"
           />
@@ -253,9 +337,42 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         >
           {isPinned ? "📌" : "📍"}
         </button>
-        <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}>
+        <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event || propertyFilterRequiresValue || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}>
           {loading ? 'Loading...' : 'Load Usage'}
         </button>
+      </div>
+
+      <div className="usage-property-filter">
+        <span className="usage-property-filter-label">Where</span>
+        {propertyLoading ? (
+          <small className="secondary-text">Loading event properties...</small>
+        ) : eventProperties.length === 0 ? (
+          <small className="secondary-text">(No event properties available)</small>
+        ) : (
+          <div className="inline-controls">
+            <SearchableSelect
+              options={eventProperties}
+              value={eventProperty}
+              onChange={(value) => {
+                setEventProperty(value)
+                setPropertyValue('')
+              }}
+              placeholder="Select property"
+            />
+            <select value={propertyOperator} onChange={(e) => setPropertyOperator(e.target.value)} disabled={!eventProperty}>
+              <option value="=">=</option>
+              <option value="!=">!=</option>
+            </select>
+            <SearchableSelect
+              options={propertyValues}
+              value={propertyValue}
+              onChange={setPropertyValue}
+              placeholder="Select value"
+              disabled={!eventProperty}
+            />
+            <button type="button" className="filter-remove" onClick={clearPropertyFilter} title="Clear property filter">✕</button>
+          </div>
+        )}
       </div>
 
       {metricType === 'per_active_user' && (
@@ -363,6 +480,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         <UsageFrequencyHistogram
           event={event}
           refreshToken={refreshToken}
+          propertyFilter={propertyFilter}
         />
       )}
     </section>
