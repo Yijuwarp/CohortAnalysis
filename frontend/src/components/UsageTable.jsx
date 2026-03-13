@@ -6,8 +6,6 @@ function formatRatioValue(value) {
   return Number(value).toFixed(2)
 }
 
-const MAX_DAY_DETECTION_WINDOW = 365
-
 export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [event, setEvent] = useState('')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(maxDay))
@@ -23,7 +21,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [error, setError] = useState('')
 
 
-  const loadUsage = async (selectedEvent = event, overrideMaxDay) => {
+  const loadUsage = async (selectedEvent = event) => {
     if (!selectedEvent) {
       setVolumeRows([])
       setUserRows([])
@@ -42,7 +40,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
     setLoading(true)
     setError('')
     try {
-      const response = await getUsage(selectedEvent, Number(overrideMaxDay ?? maxDay), retentionEvent)
+      const response = await getUsage(selectedEvent, Number(maxDay), retentionEvent)
       setVolumeRows(response.usage_volume_table || [])
       setUserRows(response.usage_users_table || [])
       setRetainedRows(response.retained_users_table || [])
@@ -64,11 +62,6 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         setEvents(nextEvents)
         const initialEvent = nextEvents[0] || ''
         setEvent((current) => (current && nextEvents.includes(current) ? current : initialEvent))
-
-        // Trigger an initial fetch with a larger window to detect the appropriate maxDay
-        if (initialEvent && (retentionEvent !== undefined && retentionEvent !== null && retentionEvent !== '')) {
-          loadUsage(initialEvent, MAX_DAY_DETECTION_WINDOW)
-        }
       } catch (err) {
         setEvents([])
         setEvent('')

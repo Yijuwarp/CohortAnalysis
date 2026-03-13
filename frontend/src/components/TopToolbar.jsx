@@ -101,7 +101,7 @@ export default function TopToolbar({
             onChange={(e) => setGlobalMaxDay(Number(e.target.value))}
             disabled={!hasDataset}
           >
-            {MAX_DAY_OPTIONS.map((day) => (
+            {(MAX_DAY_OPTIONS.includes(globalMaxDay) ? MAX_DAY_OPTIONS : [...MAX_DAY_OPTIONS, globalMaxDay].sort((a,b) => a-b)).map((day) => (
               <option key={day} value={day}>{day}</option>
             ))}
           </select>

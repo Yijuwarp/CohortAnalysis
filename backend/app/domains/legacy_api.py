@@ -879,7 +879,7 @@ def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[st
     ensure_scope_tables(connection)
     total_rows = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
     filtered_rows = int(connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0])
-    total_events = int(connection.execute("SELECT COALESCE(SUM(COALESCE(modified_event_count, original_event_count, 0)), 0) FROM events_scoped").fetchone()[0] or 0)
+    total_events = int(connection.execute("SELECT COALESCE(SUM(original_event_count), 0) FROM events_scoped").fetchone()[0] or 0)
 
     connection.execute(
         """

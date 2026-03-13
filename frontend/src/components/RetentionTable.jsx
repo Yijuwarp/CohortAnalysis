@@ -3,10 +3,7 @@ import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
 
-const MAX_DAY_DETECTION_WINDOW = 365
-
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true }) {
-  const [hasInitializedMaxDay, setHasInitializedMaxDay] = useState(false)
   const [isPinned, setIsPinned] = useState(true)
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
@@ -21,7 +18,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
     setError('')
 
     try {
-      const response = await getRetention(Number(overrideMaxDay ?? maxDay), retentionEvent, includeCI, confidence)
+      const response = await getRetention(Number(maxDay), retentionEvent, includeCI, confidence)
       setData(response.retention_table)
     } catch (err) {
       setError(err.message)
@@ -42,39 +39,10 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   useEffect(() => {
     loadEvents()
-    loadRetention(MAX_DAY_DETECTION_WINDOW) // Fetch more initially to detect the true maxDay
-    setHasInitializedMaxDay(false)
-  }, [refreshToken, retentionEvent])
-
-  useEffect(() => {
     loadRetention()
-  }, [retentionEvent, maxDay, includeCI, confidence])
+  }, [refreshToken, retentionEvent, maxDay, includeCI, confidence])
 
-  useEffect(() => {
-    if (!data.length) {
-      return
-    }
 
-    const allUsersRow = data.find((row) => row.cohort_name === 'All Users')
-    if (!allUsersRow || !allUsersRow.retention) {
-      return
-    }
-
-    let lastNonZero = 0
-    Object.entries(allUsersRow.retention).forEach(([day, value]) => {
-      const numeric = Number(value)
-      if (!Number.isNaN(numeric) && numeric > 0) {
-        lastNonZero = Math.max(lastNonZero, Number(day))
-      }
-    })
-
-    const computedMaxDay = Math.max(1, lastNonZero)
-
-    if (!hasInitializedMaxDay && computedMaxDay > 0) {
-      setMaxDay(computedMaxDay)
-      setHasInitializedMaxDay(true)
-    }
-  }, [data, maxDay, hasInitializedMaxDay])
 
   const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
 

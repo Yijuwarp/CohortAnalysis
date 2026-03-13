@@ -39,6 +39,7 @@ export default function App() {
   const [retentionRefreshToken, setRetentionRefreshToken] = useState(0)
   const [selectedRetentionEvent, setSelectedRetentionEvent] = useState(persisted?.selectedRetentionEvent || 'any')
   const [globalMaxDay, setGlobalMaxDay] = useState(persisted?.globalMaxDay || 7)
+  const [detectedMaxDay, setDetectedMaxDay] = useState(persisted?.detectedMaxDay || null)
   const [activeTab, setActiveTab] = useState(persisted?.activeTab || 'retention')
   const [banner, setBanner] = useState('')
   const [uploading, setUploading] = useState(false)
@@ -50,6 +51,8 @@ export default function App() {
   const [activeFilterCount, setActiveFilterCount] = useState(0)
 
   useEffect(() => {
+    if (uploading) return
+
     localStorage.setItem(
       WORKSPACE_STORAGE_KEY,
       JSON.stringify({
@@ -62,12 +65,13 @@ export default function App() {
           datasetMeta,
           selectedRetentionEvent,
           globalMaxDay,
+          detectedMaxDay,
           activeTab,
           leftPaneTab,
         },
       })
     )
-  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, activeTab, leftPaneTab])
+  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, detectedMaxDay, activeTab, leftPaneTab, uploading])
 
   useEffect(() => {
     if (!banner) return
@@ -110,9 +114,21 @@ export default function App() {
 
     setUploading(true)
     setUploadError('')
+
+    clearPersistedState()
+    setAppState('empty')
+    setColumns([])
+    setDetectedTypes({})
+    setSuggestedMappings(null)
+    setDatasetMeta(null)
+    setSelectedRetentionEvent('any')
+    setGlobalMaxDay(7)
+    setDetectedMaxDay(null)
+    setActiveTab('retention')
+    setLeftPaneTab('filters')
+
     try {
       const data = await uploadCSV(file)
-      clearPersistedState()
       setColumns(data.columns || [])
       setDetectedTypes(data.detected_types || {})
       setSuggestedMappings(data.mapping_suggestions || null)
@@ -136,14 +152,37 @@ export default function App() {
     }
   }
 
-  const handleMappingComplete = (data) => {
+  const handleMappingComplete = async (data) => {
+    clearPersistedState()
+
     setDatasetMeta((prev) => ({
       ...prev,
       users: data?.total_users ?? prev?.users ?? 0,
       events: data?.total_events ?? prev?.events ?? 0,
     }))
 
-    clearPersistedState()
+    setDetectedMaxDay(null)
+    setGlobalMaxDay(7)
+
+    try {
+      const retData = await getRetention(365, 'any')
+      let maxDetected = 0
+      ;(retData.retention_table || []).forEach(cohort => {
+        Object.entries(cohort.retention || {}).forEach(([day, value]) => {
+          const numeric = Number(value)
+          if (!Number.isNaN(numeric) && numeric > 0) {
+            maxDetected = Math.max(maxDetected, Number(day))
+          }
+        })
+      })
+      if (maxDetected > 0) {
+        setDetectedMaxDay(maxDetected)
+        setGlobalMaxDay(maxDetected)
+      }
+    } catch {
+      // Best effort
+    }
+
     refreshRetention()
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
