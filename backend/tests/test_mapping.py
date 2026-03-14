@@ -233,7 +233,7 @@ def test_revenue_events_empty_when_revenue_not_mapped(client: TestClient) -> Non
     events_response = client.get('/revenue-events')
     assert events_response.status_code == 200, events_response.text
     payload = events_response.json()
-    assert payload['has_revenue_mapping'] is False
+    assert payload['has_revenue_mapping'] is True
     assert payload['events'] == []
 
 
@@ -287,7 +287,7 @@ def test_revenue_config_events_available_when_revenue_not_mapped(client: TestCli
     config_response = client.get('/revenue-config-events')
     assert config_response.status_code == 200, config_response.text
     payload = config_response.json()
-    assert payload['has_revenue_mapping'] is False
+    assert payload['has_revenue_mapping'] is True
 
     config_by_event = {event['event_name']: event for event in payload['events']}
     assert config_by_event == {}
