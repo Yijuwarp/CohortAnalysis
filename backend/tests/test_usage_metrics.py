@@ -140,7 +140,7 @@ def test_usage_adoption_with_aggregated_rows_counts_distinct_users(client: TestC
     assert _all_users_values(payload, "usage_adoption_table") == {"0": 1, "1": 2, "2": 2}
 
 
-def test_usage_volume_with_aggregated_rows_uses_original_event_count_not_row_count_or_overrides(client: TestClient) -> None:
+def test_usage_volume_with_aggregated_rows_uses_event_count_not_row_count_or_overrides(client: TestClient) -> None:
     csv_text = (
         "user_id,event_name,event_time,event_count\n"
         "u1,open,2026-01-01 10:00:00,5\n"

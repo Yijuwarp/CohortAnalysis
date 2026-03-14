@@ -1,39 +1,56 @@
-"""
-Short summary: exposes cohort management endpoints.
-"""
-from fastapi import APIRouter
-
-from app.domains import legacy_api
+from fastapi import APIRouter, Depends
+import duckdb
+from app.db.connection import get_connection
 from app.models.cohort_models import CreateCohortRequest
+from app.domains.cohorts.cohort_service import (
+    create_cohort,
+    list_cohorts,
+    update_cohort,
+    delete_cohort,
+    random_split_cohort,
+    toggle_cohort_hide,
+)
 
 router = APIRouter()
 
-
 @router.post("/cohorts")
-def create_cohort(payload: CreateCohortRequest) -> dict[str, int]:
-    return legacy_api.create_cohort(payload)
-
+async def create_cohort_endpoint(
+    request: CreateCohortRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return create_cohort(conn, request)
 
 @router.get("/cohorts")
-def list_cohorts() -> dict[str, list[dict[str, object]]]:
-    return legacy_api.list_cohorts()
-
+async def list_cohorts_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return list_cohorts(conn)
 
 @router.put("/cohorts/{cohort_id}")
-def update_cohort(cohort_id: int, payload: CreateCohortRequest) -> dict[str, int]:
-    return legacy_api.update_cohort(cohort_id, payload)
-
+async def update_cohort_endpoint(
+    cohort_id: int,
+    request: CreateCohortRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return update_cohort(conn, cohort_id, request)
 
 @router.delete("/cohorts/{cohort_id}")
-def delete_cohort(cohort_id: int) -> dict[str, int | bool]:
-    return legacy_api.delete_cohort(cohort_id)
-
-
-@router.patch("/cohorts/{cohort_id}/hide")
-def toggle_cohort_hide(cohort_id: int) -> dict[str, object]:
-    return legacy_api.toggle_cohort_hide(cohort_id)
-
+async def delete_cohort_endpoint(
+    cohort_id: int,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return delete_cohort(conn, cohort_id)
 
 @router.post("/cohorts/{cohort_id}/random_split")
-def random_split_cohort(cohort_id: int) -> dict[str, int]:
-    return legacy_api.random_split_cohort(cohort_id)
+async def split_cohort_endpoint(
+    cohort_id: int,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return random_split_cohort(conn, cohort_id)
+
+@router.patch("/cohorts/{cohort_id}/hide")
+async def toggle_hide_endpoint(
+    cohort_id: int,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return toggle_cohort_hide(conn, cohort_id)

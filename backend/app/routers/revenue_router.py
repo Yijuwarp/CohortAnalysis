@@ -1,57 +1,30 @@
-"""
-Short summary: exposes revenue and monetization endpoints.
-"""
-from fastapi import APIRouter, Query
-
-from app.domains import legacy_api
+from fastapi import APIRouter, Depends
+import duckdb
+from app.db.connection import get_connection
 from app.models.revenue_models import UpdateRevenueConfigRequest
+from app.domains.revenue.revenue_config_service import (
+    get_revenue_config_events,
+    get_revenue_events,
+    update_revenue_config,
+)
 
 router = APIRouter()
 
-
-def normalize_max_day(raw_max_day: str | None) -> int:
-    """Normalize raw query input while preserving integer behavior for legacy NaN requests."""
-    if raw_max_day is None:
-        return 7
-
-    try:
-        parsed = int(float(raw_max_day))
-    except (TypeError, ValueError):
-        return 7
-
-    if parsed <= 0:
-        return 7
-
-    return parsed
-
-
-@router.get("/events")
-def list_events() -> dict[str, list[str]]:
-    return legacy_api.list_events()
-
-
 @router.get("/revenue-config-events")
-def get_revenue_config_events() -> dict[str, object]:
-    return legacy_api.get_revenue_config_events()
-
+async def revenue_config_events_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_revenue_config_events(conn)
 
 @router.get("/revenue-events")
-def get_revenue_events() -> dict[str, object]:
-    return legacy_api.get_revenue_events()
-
+async def revenue_events_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_revenue_events(conn)
 
 @router.post("/update-revenue-config")
-def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, object]:
-    return legacy_api.update_revenue_config(payload)
-
-
-@router.get("/monetization")
-def get_monetization(
-    max_day: str | None = Query(
-        None,
-        description="Raw max_day query value. Parsed to a positive integer; invalid values default to 7.",
-    )
-) -> dict[str, object]:
-    # NOTE: this query is intentionally typed as string to gracefully handle "max_day=NaN"
-    # from legacy/front-end callers while still coercing to an integer for domain logic.
-    return legacy_api.get_monetization(max_day=normalize_max_day(max_day))
+async def update_revenue_config_endpoint(
+    request: UpdateRevenueConfigRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return update_revenue_config(conn, request)

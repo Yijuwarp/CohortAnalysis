@@ -1,6 +1,15 @@
 """
-Short summary: initializes and validates revenue support tables.
+Short summary: handles revenue configuration table setup.
 """
-from app.domains.legacy_api import ensure_revenue_event_selection_table, initialize_revenue_event_selection
+import duckdb
 
-__all__ = ["ensure_revenue_event_selection_table", "initialize_revenue_event_selection"]
+def ensure_revenue_event_selection_table(connection: duckdb.DuckDBPyConnection) -> None:
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS revenue_event_selection (
+            event_name VARCHAR PRIMARY KEY,
+            is_included BOOLEAN NOT NULL DEFAULT FALSE,
+            override_revenue DOUBLE
+        )
+        """
+    )

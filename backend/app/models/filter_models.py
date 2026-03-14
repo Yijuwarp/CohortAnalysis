@@ -1,6 +1,17 @@
 """
 Short summary: defines filtering models used for scoped dataset operations.
 """
-from app.domains.legacy_api import ApplyFiltersRequest, DateRange, ScopeFilter
+from pydantic import BaseModel, Field
 
-__all__ = ["DateRange", "ScopeFilter", "ApplyFiltersRequest"]
+class DateRange(BaseModel):
+    start: str
+    end: str
+
+class ScopeFilter(BaseModel):
+    column: str
+    operator: str
+    value: str | float | int | list[str] | list[float] | list[int]
+
+class ApplyFiltersRequest(BaseModel):
+    date_range: DateRange | None = None
+    filters: list[ScopeFilter] = Field(default_factory=list)

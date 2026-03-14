@@ -1,23 +1,37 @@
-"""
-Short summary: exposes dataset metadata endpoints.
-"""
-from fastapi import APIRouter, Query
-
-from app.domains import legacy_api
+from fastapi import APIRouter, Depends
+import duckdb
+from app.db.connection import get_connection
+from app.domains.scope.scope_metadata import (
+    get_scope,
+    get_columns,
+    get_column_values,
+    get_date_range,
+)
 
 router = APIRouter()
 
+@router.get("/scope")
+async def get_scope_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_scope(conn)
 
 @router.get("/columns")
-def get_columns() -> dict[str, list[dict[str, str | None]]]:
-    return legacy_api.get_columns()
-
+async def get_columns_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_columns(conn)
 
 @router.get("/column-values")
-def get_column_values(column: str = Query(..., min_length=1), event_name: str | None = Query(default=None, min_length=1)) -> dict[str, list[str] | int]:
-    return legacy_api.get_column_values(column=column, event_name=event_name)
-
+async def get_column_values_endpoint(
+    column: str,
+    event_name: str | None = None,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_column_values(conn, column, event_name)
 
 @router.get("/date-range")
-def get_date_range() -> dict[str, str | None]:
-    return legacy_api.get_date_range()
+async def get_date_range_endpoint(
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_date_range(conn)

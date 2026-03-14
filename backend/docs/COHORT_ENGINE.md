@@ -15,7 +15,7 @@
 ## Condition evaluation
 For each condition, engine builds a CTE that:
 1. filters by `event_name` (+ optional property filter),
-2. computes cumulative `SUM(original_event_count)` per user ordered by event time/name,
+2. computes cumulative `SUM(event_count)` per user ordered by event time/name,
 3. keeps users when cumulative count reaches `min_event_count`.
 
 Combination:

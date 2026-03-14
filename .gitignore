@@ -3,3 +3,4 @@ __pycache__/
 backend/cohort_analysis.duckdb
 frontend/node_modules/
 frontend/package-lock.json
+frontend/dist/
