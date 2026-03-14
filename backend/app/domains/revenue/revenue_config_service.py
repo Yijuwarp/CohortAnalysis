@@ -6,7 +6,6 @@ from fastapi import HTTPException
 from app.models.revenue_models import UpdateRevenueConfigRequest
 from app.domains.revenue.revenue_tables import ensure_revenue_event_selection_table
 from app.domains.revenue.revenue_recompute import recompute_modified_revenue_columns
-from app.domains.ingestion.mapping_service import get_has_revenue_mapping
 
 def initialize_revenue_event_selection(connection: duckdb.DuckDBPyConnection) -> None:
     ensure_revenue_event_selection_table(connection)
@@ -52,7 +51,7 @@ def get_revenue_config_events(connection: duckdb.DuckDBPyConnection) -> dict[str
     ).fetchall()
 
     return {
-        "has_revenue_mapping": get_has_revenue_mapping(connection),
+        "has_revenue_mapping": True,
         "events": [
             {"event_name": str(name), "included": bool(inc), "override": float(ov) if ov is not None else None}
             for name, inc, ov in rows
@@ -64,13 +63,12 @@ def get_revenue_config_events(connection: duckdb.DuckDBPyConnection) -> dict[str
 def get_revenue_events(connection: duckdb.DuckDBPyConnection) -> dict[str, bool | list[dict[str, object]]]:
     ensure_revenue_event_selection_table(connection)
     
-    has_revenue_mapping = get_has_revenue_mapping(connection)
     rows = connection.execute(
         "SELECT event_name, is_included, override_revenue FROM revenue_event_selection ORDER BY event_name"
     ).fetchall()
     
     return {
-        "has_revenue_mapping": has_revenue_mapping,
+        "has_revenue_mapping": True,
         "events": [
             {"event_name": str(name), "is_included": bool(inc), "override": float(ov) if ov is not None else None}
             for name, inc, ov in rows
@@ -105,12 +103,6 @@ def update_revenue_config(connection: duckdb.DuckDBPyConnection, payload: Update
         [(u[2], u[0], u[1]) for u in updates],
     )
 
-    has_revenue = connection.execute(
-        "SELECT EXISTS (SELECT 1 FROM events_normalized WHERE original_revenue != 0)"
-    ).fetchone()[0]
-    from app.domains.ingestion.mapping_service import set_has_revenue_mapping
-    set_has_revenue_mapping(connection, has_revenue)
-
     recompute_modified_revenue_columns(connection, "events_normalized")
 
     scoped_exists = connection.execute(
@@ -137,7 +129,7 @@ def update_revenue_config(connection: duckdb.DuckDBPyConnection, payload: Update
     ).fetchall()
 
     return {
-        "has_revenue_mapping": has_revenue,
+        "has_revenue_mapping": True,
         "events": [
             {"event_name": str(name), "included": bool(inc), "override": float(ov) if ov is not None else None}
             for name, inc, ov in rows

@@ -93,36 +93,6 @@ def suggest_column_mapping(columns: list[str]) -> dict[str, str | None]:
         "revenue": suggest_revenue(columns) or None,
     }
 
-
-def ensure_dataset_metadata_table(connection: duckdb.DuckDBPyConnection) -> None:
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS dataset_metadata (
-            id INTEGER PRIMARY KEY,
-            has_revenue_mapping BOOLEAN NOT NULL DEFAULT FALSE
-        )
-        """
-    )
-
-
-def set_has_revenue_mapping(connection: duckdb.DuckDBPyConnection, has_revenue_mapping: bool) -> None:
-    ensure_dataset_metadata_table(connection)
-    connection.execute(
-        """
-        INSERT INTO dataset_metadata (id, has_revenue_mapping)
-        VALUES (1, ?)
-        ON CONFLICT (id) DO UPDATE SET has_revenue_mapping = excluded.has_revenue_mapping
-        """,
-        [bool(has_revenue_mapping)],
-    )
-
-
-def get_has_revenue_mapping(connection: duckdb.DuckDBPyConnection) -> bool:
-    ensure_dataset_metadata_table(connection)
-    row = connection.execute("SELECT has_revenue_mapping FROM dataset_metadata WHERE id = 1").fetchone()
-    return bool(row[0]) if row else False
-
-
 def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingRequest) -> dict[str, str | int]:
     from app.domains.ingestion.normalization_service import ensure_normalized_events_revenue_columns
     from app.domains.scope.scope_metadata import ensure_scope_tables
@@ -350,7 +320,6 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
         ensure_revenue_event_selection_table(connection)
-        ensure_dataset_metadata_table(connection)
 
         setup_timer()
 
@@ -372,12 +341,6 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
 
             initialize_revenue_event_selection(connection)
             recompute_modified_revenue_columns(connection, "events_normalized")
-
-            has_revenue = connection.execute(
-                "SELECT EXISTS (SELECT 1 FROM events_normalized WHERE original_revenue != 0)"
-            ).fetchone()[0]
-
-            set_has_revenue_mapping(connection, has_revenue)
 
             revenue_timer()
         else:
