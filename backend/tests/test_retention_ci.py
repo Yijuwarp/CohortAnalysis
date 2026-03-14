@@ -4,7 +4,9 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app import main
-from app.main import wilson_ci
+# We need to patch the actual service modules because they are imported into the routers
+import app.domains.analytics.retention_service as retention_service
+from app.utils.math_utils import wilson_ci
 from tests.test_retention import _prepare_events
 
 
@@ -87,18 +89,27 @@ def test_retention_returns_null_retention_and_ci_for_zero_sized_cohort(
         def close() -> None:
             return None
 
+    # Patch the service module directly
     monkeypatch.setattr(main, 'get_connection', lambda: _FakeConnection())
-    monkeypatch.setattr(main, 'ensure_cohort_tables', lambda _connection: None)
-    monkeypatch.setattr(main, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort')], {99: 0}))
-    monkeypatch.setattr(main, 'fetch_retention_active_rows', lambda _connection, _max_day, _retention_event: [])
+    monkeypatch.setattr(retention_service, 'ensure_cohort_tables', lambda _connection: None)
+    monkeypatch.setattr(retention_service, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort')], {99: 0}))
+    monkeypatch.setattr(retention_service, 'fetch_retention_active_rows', lambda _connection, _max_day, _retention_event: [])
 
-    response = client.get('/retention?max_day=1&include_ci=true&confidence=0.95')
+    # The router might also need its dependency patched if it's already bound
+    # But usually TestClient(main.app) will use the patched main.get_connection if called that way.
+    # However, for FastAPI dependencies, we might need to use app.dependency_overrides.
+    main.app.dependency_overrides[main.app_get_connection] = lambda: _FakeConnection()
 
-    assert response.status_code == 200, response.text
-    row = response.json()['retention_table'][0]
-    assert row['size'] == 0
-    assert row['retention'] == {'0': None, '1': None}
-    assert row['retention_ci'] == {
-        '0': {'lower': None, 'upper': None},
-        '1': {'lower': None, 'upper': None},
-    }
+    try:
+        response = client.get('/retention?max_day=1&include_ci=true&confidence=0.95')
+
+        assert response.status_code == 200, response.text
+        row = response.json()['retention_table'][0]
+        assert row['size'] == 0
+        assert row['retention'] == {'0': None, '1': None}
+        assert row['retention_ci'] == {
+            '0': {'lower': None, 'upper': None},
+            '1': {'lower': None, 'upper': None},
+        }
+    finally:
+        main.app.dependency_overrides.clear()

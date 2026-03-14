@@ -1,6 +1,12 @@
 """
 Short summary: defines ingestion request models for upload and mapping.
 """
-from app.domains.legacy_api import ColumnMappingRequest
+from pydantic import BaseModel, Field
 
-__all__ = ["ColumnMappingRequest"]
+class ColumnMappingRequest(BaseModel):
+    user_id_column: str
+    event_name_column: str
+    event_time_column: str
+    event_count_column: str | None = None
+    revenue_column: str | None = None
+    column_types: dict[str, str] = Field(default_factory=dict)

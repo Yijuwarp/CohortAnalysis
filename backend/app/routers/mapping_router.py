@@ -1,14 +1,14 @@
-"""
-Short summary: exposes column mapping endpoint and delegates normalization.
-"""
-from fastapi import APIRouter
-
-from app.domains import legacy_api
+from fastapi import APIRouter, Depends
+import duckdb
+from app.db.connection import get_connection
 from app.models.ingestion_models import ColumnMappingRequest
+from app.domains.ingestion.mapping_service import map_columns
 
 router = APIRouter()
 
-
 @router.post("/map-columns")
-def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
-    return legacy_api.map_columns(mapping)
+async def map_columns_endpoint(
+    request: ColumnMappingRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return map_columns(conn, request)

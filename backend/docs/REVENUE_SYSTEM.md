@@ -25,8 +25,8 @@ When mapping includes a revenue column:
 
 ## Recompute rules
 For each event row in `events_normalized` / `events_scoped`:
-- Excluded or missing config => `modified_event_count = 0`, `modified_revenue = 0`
-- Included + override => `modified_revenue = original_event_count * override_value`
+- Excluded or missing config => `modified_revenue = 0`
+- Included + override => `modified_revenue = event_count * override_value`
 - Included + no override => `modified_revenue = original_revenue`
 
 ## Related endpoints

@@ -29,9 +29,8 @@ Normalization behavior:
 - Creates `events_normalized` via grouped aggregation.
 - Groups by canonical columns + metadata columns.
 - Aggregates:
-  - `original_event_count` (sum or count)
+  - `event_count` (sum or count)
   - `original_revenue` (sum or 0)
-  - `modified_event_count` initialized from original
   - `modified_revenue` initialized from original
 
 Post-normalization reset/init:
@@ -43,6 +42,6 @@ Post-normalization reset/init:
 ## Step 3: Scope (`POST /apply-filters`)
 - Validates filter columns/operators against normalized schema.
 - Rebuilds `events_scoped` with SQL `WHERE` from date range + filter list.
-- Recomputes modified revenue/count fields for scoped table.
+- Recomputes modified revenue fields for scoped table.
 - Updates `dataset_scope` counts and filter JSON.
 - Rebuilds cohort memberships and activity snapshots.
