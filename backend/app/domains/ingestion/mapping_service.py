@@ -339,6 +339,9 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         if mapping.revenue_column:
             revenue_timer = time_block("revenue_initialization")
 
+            # Reset revenue config for new dataset
+            connection.execute("DELETE FROM revenue_event_selection")
+
             initialize_revenue_event_selection(connection)
             recompute_modified_revenue_columns(connection, "events_normalized")
 
