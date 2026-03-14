@@ -250,8 +250,10 @@ TIMESTAMP_INPUT_FORMATS: tuple[str, ...] = (
     "%Y-%m-%d %H",
     "%Y-%m-%d %H:%M",
     "%Y-%m-%d %H:%M:%S",
+    "%Y-%m-%d %H:%M:%S.%f",
 )
 
+_TZ_OFFSET_RE = re.compile(r"[+-]\d{2}:?\d{2}$")
 
 def normalize_event_timestamp_value(value: object, *, allow_empty: bool) -> datetime | None:
     if value is None:
@@ -259,20 +261,31 @@ def normalize_event_timestamp_value(value: object, *, allow_empty: bool) -> date
             return None
         raise HTTPException(status_code=400, detail="Timestamp value cannot be null")
 
-    raw = str(value).strip().replace("T", " ")
+    raw = str(value).strip()
+
     if raw == "":
         if allow_empty:
             return None
-        raise HTTPException(status_code=400, detail="Timestamp value cannot be null")
+        raise HTTPException(status_code=400, detail="Timestamp value cannot be empty")
+
+    # 1. Strip timezone suffixes first (before T replacement, so "UTC" T isn't touched)
+    if raw.upper().endswith("UTC"):
+        raw = raw[:-3].strip()
+    elif raw.endswith("Z"):
+        raw = raw[:-1]
+    else:
+        raw = _TZ_OFFSET_RE.sub("", raw).strip()
+
+    # 2. Now safe to replace ISO T separator
+    raw = raw.replace("T", " ")
 
     for fmt in TIMESTAMP_INPUT_FORMATS:
         try:
-            parsed = datetime.strptime(raw, fmt)
-            return datetime.strptime(parsed.strftime("%Y-%m-%d %H:%M:%S"), "%Y-%m-%d %H:%M:%S")
+            return datetime.strptime(raw, fmt).replace(microsecond=0)
         except ValueError:
             continue
-    raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {raw}")
 
+    raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {raw!r}")
 
 def parse_bool_value(value: object) -> bool:
     normalized = str(value).strip().lower()
@@ -297,21 +310,9 @@ def detect_column_type(values: pd.Series) -> str:
     if cleaned.empty:
         return "TEXT"
 
-    try:
-        cleaned.astype(float)
-        return "NUMERIC"
-    except ValueError:
-        pass
-
     non_null = cleaned.tolist()
 
-    try:
-        for value in non_null:
-            parse_int_value(value)
-        return "NUMERIC"
-    except ValueError:
-        pass
-
+    # BOOLEAN
     try:
         for value in non_null:
             parse_bool_value(value)
@@ -319,12 +320,22 @@ def detect_column_type(values: pd.Series) -> str:
     except ValueError:
         pass
 
+    # TIMESTAMP
     try:
         for value in non_null:
             normalize_event_timestamp_value(value, allow_empty=False)
         return "TIMESTAMP"
     except HTTPException:
-        return "TEXT"
+        pass
+
+    # NUMERIC
+    try:
+        cleaned.astype(float)
+        return "NUMERIC"
+    except ValueError:
+        pass
+
+    return "TEXT"
 
 
 def suggest_user_id(columns: list[str]) -> str | None:
@@ -862,16 +873,26 @@ def create_scoped_indexes(connection: duckdb.DuckDBPyConnection) -> None:
 
 def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
     normalized_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'events_normalized'
+        AND table_schema = 'main'
+        """
     ).fetchone()[0]
+
     if not normalized_exists:
         return
 
-    connection.execute("CREATE OR REPLACE TABLE events_scoped AS SELECT * FROM events_normalized")
-    ensure_normalized_events_revenue_columns(connection, "events_scoped")
-    recompute_modified_revenue_columns(connection, "events_scoped")
-    create_scoped_indexes(connection)
+    # Use a VIEW instead of copying the dataset
+    connection.execute("""
+        CREATE OR REPLACE VIEW events_scoped AS
+        SELECT * FROM events_normalized
+    """)
+
     upsert_dataset_scope(connection, {"date_range": None, "filters": []})
+
+    # Cohort activity still needs refresh
     refresh_cohort_activity(connection)
 
 
@@ -1209,8 +1230,7 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
                     FROM read_csv(
                         ?,
                         auto_detect=true,
-                        sample_size=100000,
-                        all_varchar=true,
+                        sample_size=10000,
                         quote='"',
                         escape='"',
                         ignore_errors=true,
@@ -1234,7 +1254,7 @@ async def upload_csv(file: UploadFile = File(...)) -> dict[str, object]:
                 raise HTTPException(status_code=400, detail="CSV must contain at least 3 columns")
 
             # Get a sample for type detection to avoid materializing the entire dataset in Pandas
-            sample_df = connection.execute("SELECT * FROM events LIMIT 10000").df()
+            sample_df = connection.execute("SELECT * FROM events LIMIT 1000").df()
             detected_types = {
                 str(column): detect_column_type(sample_df[column])
                 for column in column_names
@@ -1299,69 +1319,78 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             requested_columns.add(mapping.event_count_column)
         if mapping.revenue_column:
             requested_columns.add(mapping.revenue_column)
+
         missing_columns = sorted(requested_columns - set(existing_columns))
         if missing_columns:
             raise HTTPException(
                 status_code=400,
                 detail=f"Mapped columns not found in uploaded CSV: {', '.join(missing_columns)}",
             )
-        end_timer = time_block("csv_normalization")
 
-        # Get a sample for type detection if column_types are not fully provided
+        # ---------- TYPE DETECTION ----------
+        detect_timer = time_block("type_detection")
+
         sample_df = connection.execute("SELECT * FROM events LIMIT 10000").df()
         selected_types = {
             column: str(mapping.column_types.get(column, detect_column_type(sample_df[column]))).upper()
             for column in existing_columns
         }
+        # ---------- TYPE VALIDATION ----------
         allowed_types = {"TEXT", "NUMERIC", "TIMESTAMP", "BOOLEAN"}
+
         for column, selected_type in selected_types.items():
             if selected_type not in allowed_types:
-                raise HTTPException(status_code=400, detail=f"Invalid type override for column '{column}': {selected_type}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid type override for column '{column}': {selected_type}"
+                )
 
-        for field_name, column_name, expected_type in [
+        # Core column type requirements
+        core_requirements = [
             ("user_id", mapping.user_id_column, "TEXT"),
             ("event_name", mapping.event_name_column, "TEXT"),
             ("event_time", mapping.event_time_column, "TIMESTAMP"),
-        ]:
+        ]
+
+        for field_name, column_name, expected_type in core_requirements:
             actual = selected_types[column_name]
             if actual != expected_type:
-                end_timer(error="type_mismatch")
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Mapped field '{field_name}' requires {expected_type} type, got {actual}",
+                    detail=f"Mapped field '{field_name}' requires {expected_type} type, got {actual}"
                 )
 
+        # Optional columns
         if mapping.event_count_column:
-            actual = selected_types[mapping.event_count_column]
-            if actual != "NUMERIC":
-                end_timer(error="type_mismatch_event_count")
+            if selected_types[mapping.event_count_column] != "NUMERIC":
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Mapped field 'event_count' requires NUMERIC type, got {actual}",
+                    detail="Mapped field 'event_count' must be NUMERIC"
                 )
+
         if mapping.revenue_column:
-            actual = selected_types[mapping.revenue_column]
-            if actual != "NUMERIC":
-                end_timer(error="type_mismatch_revenue")
+            if selected_types[mapping.revenue_column] != "NUMERIC":
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Mapped field 'revenue_column' requires NUMERIC type, got {actual}",
+                    detail="Mapped field 'revenue_column' must be NUMERIC"
                 )
+        detect_timer()
 
-        # Validation 1: Reject empty event_time values
+        # ---------- VALIDATION ----------
+        validation_timer = time_block("validation")
+
         time_col_q = quote_identifier(str(mapping.event_time_column))
-
         empty_time_count = connection.execute(f"""
             SELECT COUNT(*)
             FROM events
             WHERE {time_col_q} IS NULL
             OR TRIM(CAST({time_col_q} AS VARCHAR)) = ''
         """).fetchone()[0]
+
         if empty_time_count > 0:
-            end_timer(error="empty_event_time")
+            validation_timer(error="empty_event_time")
             raise HTTPException(status_code=400, detail="event_time must not be empty")
 
-        # Validation 2: Reject non-integer event_count values
         if mapping.event_count_column:
             count_col_q = quote_identifier(mapping.event_count_column)
             invalid_count_check = connection.execute(f"""
@@ -1372,21 +1401,25 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                 OR CAST({count_col_q} AS DOUBLE) != CAST({count_col_q} AS INTEGER)
                 OR CAST({count_col_q} AS INTEGER) < 1
             """).fetchone()[0]
+
             if invalid_count_check > 0:
-                end_timer(error="invalid_event_count")
+                validation_timer(error="invalid_event_count")
                 raise HTTPException(status_code=400, detail="event_count must be integer >= 1")
 
-        # Build SQL for normalization and aggregation
-        # We need to distinguish between core mapped columns, value columns (count/revenue), and metadata columns
+        validation_timer()
+
+        # ---------- NORMALIZATION ----------
+        normalize_timer = time_block("events_normalization")
+
         core_map = {
             mapping.user_id_column: "user_id",
             mapping.event_name_column: "event_name",
             mapping.event_time_column: "event_time",
         }
+
         value_cols = {mapping.event_count_column, mapping.revenue_column} - {None}
         metadata_cols = [c for c in existing_columns if c not in core_map and c not in value_cols]
 
-        # Get actual DuckDB types to determine if we can fast-path TIMESTAMP parsing
         actual_types = {
             row[1]: str(row[2]).upper()
             for row in connection.execute("PRAGMA table_info('events')").fetchall()
@@ -1396,70 +1429,51 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             ctype = selected_types[col_name]
             q_col = quote_identifier(col_name)
             alias = f" AS {quote_identifier(target_name)}" if target_name else ""
-            
+
             if ctype == "TEXT":
                 return f"NULLIF(TRIM(CAST({q_col} AS VARCHAR)), ''){alias}"
+
             elif ctype == "NUMERIC":
                 return f"CAST({q_col} AS DOUBLE){alias}"
+
             elif ctype == "BOOLEAN":
                 return f"CAST({q_col} AS BOOLEAN){alias}"
+
             elif ctype == "TIMESTAMP":
-                # If DuckDB already inferred TIMESTAMP, use column directly
                 if actual_types.get(col_name) == "TIMESTAMP":
                     return f"{q_col}{alias}"
 
-                # Otherwise rely on DuckDB parser
-                v_col = f"CAST({q_col} AS VARCHAR)"
-
-                # Remove surrounding CSV quotes and normalize ISO timestamps
-                cleaned = f"REPLACE(TRIM(BOTH '\"' FROM {v_col}), 'T', ' ')"
-
-                # DuckDB parses most formats natively; the only exception is
-                # coarse hour-precision strings like "2024-01-01 09" (length 13)
-                # which need ":00:00" appended before casting.
-                return (
-                    f"COALESCE("
-                    f"TRY_CAST({cleaned} AS TIMESTAMP), "
-                    f"TRY_CAST({cleaned} || ':00:00' AS TIMESTAMP)"
-                    f"){alias}"
+                v_col = f"TRIM(BOTH '\"' FROM TRIM(CAST({q_col} AS VARCHAR)))"
+                cleaned = (
+                    f"REPLACE("
+                    f"TRIM(REGEXP_REPLACE({v_col}, '\\s*(UTC|Z|[+-]\\d{{2}}:?\\d{{2}})$', '', 'i')), "
+                    f"'T',' ')"
                 )
 
-
-
-
-
-
-
-
-
+                return f"TRY_CAST({cleaned} AS TIMESTAMP){alias}"
 
             return f"{q_col}{alias}"
 
-
-        # Expressions for grouping (core + metadata)
         grouped_expressions = []
         for col, target in core_map.items():
             grouped_expressions.append(get_cast_expr(col, target))
         for col in metadata_cols:
             grouped_expressions.append(get_cast_expr(col, col))
-        
+
         group_by_indices = ", ".join([str(i + 1) for i in range(len(grouped_expressions))])
 
-        # Expressions for values
         if mapping.event_count_column:
-            count_col_str = str(mapping.event_count_column)
-            count_expr = f"SUM(CAST({quote_identifier(count_col_str)} AS INTEGER))"
+            count_expr = f"SUM(CAST({quote_identifier(mapping.event_count_column)} AS INTEGER))"
         else:
             count_expr = "COUNT(*)"
-        
+
         if mapping.revenue_column:
-            rev_col_str = str(mapping.revenue_column)
-            rev_expr = f"SUM(COALESCE(CAST({quote_identifier(rev_col_str)} AS DOUBLE), 0.0))"
+            rev_expr = f"SUM(COALESCE(CAST({quote_identifier(mapping.revenue_column)} AS DOUBLE), 0.0))"
         else:
             rev_expr = "0.0"
 
-
         connection.execute("DROP TABLE IF EXISTS events_normalized")
+
         sql = f"""
             CREATE TABLE events_normalized AS
             SELECT
@@ -1471,48 +1485,73 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             FROM events
             GROUP BY {group_by_indices}
         """
+
         connection.execute(sql)
+        bad_time = connection.execute("""
+            SELECT 1
+            FROM events_normalized
+            WHERE event_time IS NULL
+            LIMIT 1
+        """).fetchone()
 
+        if bad_time:
+            raise HTTPException(
+                status_code=400,
+                detail="Some event_time values could not be parsed as TIMESTAMP"
+            )
         row_count = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
-        end_timer(row_count=row_count)
+        normalize_timer(row_count=row_count)
 
-
-
+        # ---------- TABLE SETUP ----------
+        setup_timer = time_block("table_setup")
 
         ensure_normalized_events_revenue_columns(connection)
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN original_event_count SET NOT NULL")
-        connection.execute(
-            "ALTER TABLE events_normalized ALTER COLUMN original_revenue SET DEFAULT 0"
-        )
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN original_revenue SET NOT NULL")
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_event_count SET DEFAULT 0")
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_event_count SET NOT NULL")
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET DEFAULT 0")
-        connection.execute("ALTER TABLE events_normalized ALTER COLUMN modified_revenue SET NOT NULL")
-
-
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
         ensure_revenue_event_selection_table(connection)
         ensure_dataset_metadata_table(connection)
 
+        setup_timer()
+
+        # ---------- DATASET INITIALIZATION ----------
+        init_timer = time_block("dataset_initialization")
+
         connection.execute("DELETE FROM cohort_membership")
         connection.execute("DELETE FROM cohort_activity_snapshot")
         connection.execute("DELETE FROM cohort_conditions")
         connection.execute("DELETE FROM cohorts")
+
         initialize_scoped_dataset(connection)
+
+        init_timer()
+
+        # ---------- REVENUE PIPELINE ----------
         if mapping.revenue_column:
+            revenue_timer = time_block("revenue_initialization")
+
             initialize_revenue_event_selection(connection)
             recompute_modified_revenue_columns(connection, "events_normalized")
-            recompute_modified_revenue_columns(connection, "events_scoped")
+
             has_revenue = connection.execute(
                 "SELECT COUNT(*) FROM events_normalized WHERE original_revenue != 0"
             ).fetchone()[0] > 0
+
             set_has_revenue_mapping(connection, has_revenue)
+
+            revenue_timer()
         else:
             connection.execute("DELETE FROM revenue_event_selection")
+
+        # ---------- COHORT PRECOMPUTATION ----------
+        cohort_timer = time_block("cohort_initialization")
+
         create_all_users_cohort(connection)
         refresh_cohort_activity(connection)
+
+        cohort_timer()
+
+        # ---------- FINAL STATS ----------
+        stats_timer = time_block("final_stats")
 
         stats = connection.execute(
             """
@@ -1522,10 +1561,15 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
             FROM events_normalized
             """
         ).fetchone()
+
         total_events = stats[0] or 0
         total_users = stats[1] or 0
+
+        stats_timer()
+
     except duckdb.ConversionException as exc:
         raise HTTPException(status_code=400, detail="Failed to convert event_time column to TIMESTAMP") from exc
+
     finally:
         connection.close()
 
@@ -1535,7 +1579,6 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
         "total_users": int(total_users),
     }
 
-
 @app.post("/apply-filters")
 def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
     connection = get_connection()
@@ -1543,8 +1586,12 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
         normalized_exists = connection.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
         ).fetchone()[0]
+
         if not normalized_exists:
-            raise HTTPException(status_code=400, detail="No normalized events found. Upload and map columns first.")
+            raise HTTPException(
+                status_code=400,
+                detail="No normalized events found. Upload and map columns first."
+            )
 
         known_columns = {
             row[0]
@@ -1556,6 +1603,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
                 """
             ).fetchall()
         }
+
         column_types = {
             row[0]: str(row[1]).upper()
             for row in connection.execute(
@@ -1567,6 +1615,8 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
             ).fetchall()
         }
 
+        # ---------------- DATE VALIDATION ----------------
+
         if payload.date_range:
             try:
                 start_date = date.fromisoformat(payload.date_range.start)
@@ -1576,82 +1626,90 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
                     status_code=400,
                     detail="Invalid date range: start must be before or equal to end",
                 ) from exc
+
             if start_date > end_date:
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid date range: start must be before or equal to end",
                 )
 
+        # ---------------- FILTER VALIDATION ----------------
+
         numeric_types = {
-            "TINYINT",
-            "SMALLINT",
-            "INTEGER",
-            "BIGINT",
-            "HUGEINT",
-            "UTINYINT",
-            "USMALLINT",
-            "UINTEGER",
-            "UBIGINT",
-            "FLOAT",
-            "REAL",
-            "DOUBLE",
-            "DECIMAL",
+            "TINYINT","SMALLINT","INTEGER","BIGINT","HUGEINT",
+            "UTINYINT","USMALLINT","UINTEGER","UBIGINT",
+            "FLOAT","REAL","DOUBLE","DECIMAL"
         }
+
         text_allowed = {"=", "!=", "IN", "NOT IN"}
         numeric_allowed = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
         timestamp_allowed = {"=", "!=", ">", "<", ">=", "<="}
 
         for filter_row in payload.filters:
             if filter_row.column not in known_columns:
-                raise HTTPException(status_code=400, detail=f"Unknown filter column: {filter_row.column}")
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Unknown filter column: {filter_row.column}"
+                )
 
             operator = filter_row.operator.upper()
             raw_type = column_types.get(filter_row.column, "TEXT")
+
             if "TIMESTAMP" in raw_type or raw_type == "DATE":
-                column_kind = "TIMESTAMP"
                 allowed_ops = timestamp_allowed
             elif raw_type in numeric_types or raw_type.startswith("DECIMAL"):
-                column_kind = "NUMERIC"
                 allowed_ops = numeric_allowed
             else:
-                column_kind = "TEXT"
                 allowed_ops = text_allowed
 
             if operator not in allowed_ops:
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Operator '{operator}' not allowed for column type {column_kind}",
+                    detail=f"Operator '{operator}' not allowed for column type {raw_type}",
                 )
 
+        # ---------------- BUILD FILTER SQL ----------------
+
         where_clause, params = build_where_clause(payload)
+
         end_timer = time_block("scope_rebuild")
-        connection.execute("DROP TABLE IF EXISTS events_scoped")
+
+        # Recreate filtered VIEW instead of table
+        connection.execute("DROP VIEW IF EXISTS events_scoped")
+
         connection.execute(
-            f"CREATE TABLE events_scoped AS SELECT * FROM events_normalized {where_clause}",
-            params,
+            f"""
+            CREATE VIEW events_scoped AS
+            SELECT *
+            FROM events_normalized
+            {where_clause}
+            """,
+            params
         )
-        ensure_normalized_events_revenue_columns(connection, "events_scoped")
-        recompute_modified_revenue_columns(connection, "events_scoped")
-        create_scoped_indexes(connection)
 
         counts = upsert_dataset_scope(
             connection,
             {
                 "date_range": payload.date_range.model_dump() if payload.date_range else None,
-                "filters": [filter_row.model_dump() for filter_row in payload.filters],
+                "filters": [f.model_dump() for f in payload.filters],
             },
         )
+
         rebuild_all_cohort_memberships(connection)
         refresh_cohort_activity(connection)
+
         end_timer(filtered_rows=counts["filtered_rows"])
 
         return {
             "status": "ok",
             **counts,
-            "percentage": (counts["filtered_rows"] / counts["total_rows"] * 100.0)
-            if counts["total_rows"]
-            else 0.0,
+            "percentage": (
+                counts["filtered_rows"] / counts["total_rows"] * 100.0
+                if counts["total_rows"]
+                else 0.0
+            ),
         }
+
     finally:
         connection.close()
 
@@ -2652,20 +2710,6 @@ def update_revenue_config(payload: UpdateRevenueConfigRequest) -> dict[str, obje
         set_has_revenue_mapping(connection, has_revenue)
 
         recompute_modified_revenue_columns(connection, "events_normalized")
-
-        scoped_exists = connection.execute(
-            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-        ).fetchone()[0]
-        if scoped_exists:
-            recompute_modified_revenue_columns(connection, "events_scoped")
-            create_scoped_indexes(connection)
-
-            ensure_scope_tables(connection)
-            scope_row = connection.execute(
-                "SELECT filters_json FROM dataset_scope WHERE id = 1"
-            ).fetchone()
-            filters_payload = json.loads(scope_row[0]) if scope_row and scope_row[0] else {"date_range": None, "filters": []}
-            upsert_dataset_scope(connection, filters_payload)
 
         rows = connection.execute(
         """
