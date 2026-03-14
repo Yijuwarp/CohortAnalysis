@@ -480,7 +480,7 @@ def test_column_values_global_validation_uses_events_normalized_when_scoped_tabl
     )
     assert mapped.status_code == 200, mapped.text
 
-    db_connection.execute('DROP TABLE IF EXISTS events_scoped')
+    db_connection.execute('DROP VIEW IF EXISTS events_scoped')
 
     response = client.get('/column-values?column=version')
     assert response.status_code == 200, response.text

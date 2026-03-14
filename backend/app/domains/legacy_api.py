@@ -154,6 +154,21 @@ def quote_identifier(identifier: str) -> str:
     return f'"{escaped}"'
 
 
+def sql_quote_value(value: object) -> str:
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, list):
+        quoted_list = [sql_quote_value(v) for v in value]
+        return f"({', '.join(quoted_list)})"
+
+    escaped = str(value).replace("'", "''")
+    return f"'{escaped}'"
+
+
 NUMERIC_TYPES = {
     "TINYINT",
     "SMALLINT",
@@ -425,7 +440,6 @@ def suggest_column_mapping(columns: list[str]) -> dict[str, str | None]:
 def reset_application_state(connection: duckdb.DuckDBPyConnection) -> None:
     tables_to_drop = [
         "events_normalized",
-        "events_scoped",
         "cohort_membership",
         "cohort_activity_snapshot",
         "cohort_conditions",
@@ -435,6 +449,8 @@ def reset_application_state(connection: duckdb.DuckDBPyConnection) -> None:
 
     for table in tables_to_drop:
         connection.execute(f'DROP TABLE IF EXISTS "{table}"')
+
+    connection.execute('DROP VIEW IF EXISTS "events_scoped"')
 
     connection.execute("DROP SEQUENCE IF EXISTS cohort_id_seq")
     connection.execute("DROP SEQUENCE IF EXISTS condition_id_seq")
@@ -781,11 +797,17 @@ def ensure_normalized_events_revenue_columns(connection: duckdb.DuckDBPyConnecti
     if "original_event_count" not in existing_columns:
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN original_event_count INTEGER")
     if "original_revenue" not in existing_columns:
-        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN original_revenue DOUBLE")
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN original_revenue DOUBLE DEFAULT 0.0")
     if "modified_event_count" not in existing_columns:
         connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_event_count INTEGER")
     if "modified_revenue" not in existing_columns:
-        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_revenue DOUBLE")
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN modified_revenue DOUBLE DEFAULT 0.0")
+
+    # Restore default constraints if they exist but were removed
+    if "original_revenue" in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ALTER COLUMN original_revenue SET DEFAULT 0.0")
+    if "modified_revenue" in existing_columns:
+        connection.execute(f"ALTER TABLE {table_name} ALTER COLUMN modified_revenue SET DEFAULT 0.0")
 
     # Ensure any pre-existing revenue columns with DECIMAL precision are widened to DOUBLE
     column_types = get_column_type_map(connection, table_name)
@@ -1160,13 +1182,13 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
     build_cohort_membership(connection, int(cohort_id), source_table)
 
 
-def build_where_clause(payload: ApplyFiltersRequest) -> tuple[str, list[object]]:
+def build_where_clause(payload: ApplyFiltersRequest) -> str:
     clauses: list[str] = []
-    params: list[object] = []
 
     if payload.date_range:
-        clauses.append("event_time >= ?::TIMESTAMP AND event_time < (?::DATE + INTERVAL 1 DAY)")
-        params.extend([payload.date_range.start, payload.date_range.end])
+        start = sql_quote_value(payload.date_range.start)
+        end = sql_quote_value(payload.date_range.end)
+        clauses.append(f"event_time >= {start}::TIMESTAMP AND event_time < ({end}::DATE + INTERVAL 1 DAY)")
 
     supported = {"=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN"}
     for filter_row in payload.filters:
@@ -1178,18 +1200,17 @@ def build_where_clause(payload: ApplyFiltersRequest) -> tuple[str, list[object]]
         if operator in {"IN", "NOT IN"}:
             if not isinstance(filter_row.value, list) or not filter_row.value:
                 raise HTTPException(status_code=400, detail=f"Operator {operator} requires a non-empty array value")
-            placeholders = ", ".join(["?"] * len(filter_row.value))
-            clauses.append(f"{column} {operator} ({placeholders})")
-            params.extend(filter_row.value)
+            val_str = sql_quote_value(filter_row.value)
+            clauses.append(f"{column} {operator} {val_str}")
         else:
             if isinstance(filter_row.value, list):
                 raise HTTPException(status_code=400, detail=f"Operator {operator} requires a scalar value")
-            clauses.append(f"{column} {operator} ?")
-            params.append(filter_row.value)
+            val_str = sql_quote_value(filter_row.value)
+            clauses.append(f"{column} {operator} {val_str}")
 
     if not clauses:
-        return "", []
-    return f"WHERE {' AND '.join(clauses)}", params
+        return ""
+    return f"WHERE {' AND '.join(clauses)}"
 
 
 @app.get("/")
@@ -1450,7 +1471,7 @@ def map_columns(mapping: ColumnMappingRequest) -> dict[str, str | int]:
                     f"'T',' ')"
                 )
 
-                return f"TRY_CAST({cleaned} AS TIMESTAMP){alias}"
+                return f"COALESCE(TRY_CAST({cleaned} AS TIMESTAMP), TRY_CAST({cleaned} || ':00:00' AS TIMESTAMP)){alias}"
 
             return f"{q_col}{alias}"
 
@@ -1663,14 +1684,15 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
                 allowed_ops = text_allowed
 
             if operator not in allowed_ops:
+                column_kind = get_column_kind(raw_type)
                 raise HTTPException(
                     status_code=400,
-                    detail=f"Operator '{operator}' not allowed for column type {raw_type}",
+                    detail=f"Operator '{operator}' not allowed for column type {column_kind}",
                 )
 
         # ---------------- BUILD FILTER SQL ----------------
 
-        where_clause, params = build_where_clause(payload)
+        where_clause = build_where_clause(payload)
 
         end_timer = time_block("scope_rebuild")
 
@@ -1683,8 +1705,7 @@ def apply_filters(payload: ApplyFiltersRequest) -> dict[str, object]:
             SELECT *
             FROM events_normalized
             {where_clause}
-            """,
-            params
+            """
         )
 
         counts = upsert_dataset_scope(
