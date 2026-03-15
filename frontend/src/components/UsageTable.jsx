@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { getEventProperties, getEventPropertyValues, getUsage, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
+import ComparePane from './ComparePane'
 
 function computeCumulative(values) {
   let running = 0
@@ -47,6 +48,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
   const [retainedRows, setRetainedRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
 
 
   const propertyFilter = eventProperty ? { property: eventProperty, operator: propertyOperator, value: propertyValue } : null
@@ -348,6 +350,16 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event || propertyFilterRequiresValue || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}>
           {loading ? 'Loading...' : 'Load Usage'}
         </button>
+        <button
+          type="button"
+          className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
+          onClick={() => setIsComparePaneOpen(prev => !prev)}
+          title="Compare two cohorts statistically"
+          data-testid="open-compare-pane"
+          disabled={!event}
+        >
+          ⚖ Compare
+        </button>
       </div>
 
       <div className="usage-property-filter">
@@ -504,6 +516,15 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           propertyFilter={propertyFilter}
         />
       )}
+
+      <ComparePane
+        isOpen={isComparePaneOpen}
+        onClose={() => setIsComparePaneOpen(false)}
+        tab="usage"
+        maxDay={maxDay}
+        currentEvent={event}
+        defaultMetric={metricType === 'per_active_user' ? 'per_retained_user' : metricType !== 'count' ? metricType : 'per_installed_user'}
+      />
     </section>
   )
 }

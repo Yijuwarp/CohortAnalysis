@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
+import ComparePane from './ComparePane'
 
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true }) {
   const [isPinned, setIsPinned] = useState(true)
@@ -12,6 +13,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [includeCI, setIncludeCI] = useState(false)
   const [confidence, setConfidence] = useState(0.95)
   const [viewMode, setViewMode] = useState('table')
+  const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
 
   const loadRetention = async (overrideMaxDay) => {
     setLoading(true)
@@ -124,6 +126,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               Graph
             </button>
           </div>
+          <button
+            type="button"
+            className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
+            onClick={() => setIsComparePaneOpen(prev => !prev)}
+            title="Compare two cohorts statistically"
+            data-testid="open-compare-pane"
+          >
+            ⚖ Compare
+          </button>
         </div>
       </div>
 
@@ -178,6 +189,14 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       {viewMode === 'graph' && (
         <RetentionGraph data={data} maxDay={maxDay} includeCI={includeCI} />
       )}
+
+      <ComparePane
+        isOpen={isComparePaneOpen}
+        onClose={() => setIsComparePaneOpen(false)}
+        tab="retention"
+        maxDay={maxDay}
+        defaultMetric="retention_rate"
+      />
     </section>
   )
 }
