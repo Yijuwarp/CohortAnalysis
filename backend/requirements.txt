@@ -6,3 +6,4 @@ python-multipart
 duckdb
 pandas
 pytest
+scipy>=1.11

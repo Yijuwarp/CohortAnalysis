@@ -198,7 +198,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
                 title="Compare two cohorts statistically"
                 data-testid="open-compare-pane"
               >
-                ⚖ Compare
+                🔬 Compare
               </button>
             </div>
 

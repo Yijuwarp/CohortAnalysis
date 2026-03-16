@@ -8,6 +8,7 @@ from __future__ import annotations
 import math
 import duckdb
 from fastapi import HTTPException
+from scipy import stats
 
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.queries.retention_queries import fetch_retention_active_rows
@@ -472,8 +473,18 @@ def compare_cohorts(
     if cohort_a == cohort_b:
         raise HTTPException(status_code=400, detail="cohort_a and cohort_b must be different")
 
+    if tab not in {"retention", "usage", "monetization"}:
+        raise HTTPException(status_code=400, detail=f"Unknown tab: {tab}")
+
     if metric not in ALL_METRICS:
         raise HTTPException(status_code=400, detail=f"Unknown metric: {metric}")
+
+    if tab == "retention" and metric not in RETENTION_METRICS:
+        raise HTTPException(status_code=400, detail="Metric not valid for retention tab")
+    if tab == "usage" and metric not in USAGE_METRICS:
+        raise HTTPException(status_code=400, detail="Metric not valid for usage tab")
+    if tab == "monetization" and metric not in MONETIZATION_METRICS:
+        raise HTTPException(status_code=400, detail="Metric not valid for monetization tab")
 
     ensure_cohort_tables(conn)
 
@@ -493,8 +504,8 @@ def compare_cohorts(
     # Compute vectors
     # ------------------------------------------------------------------
     if metric == "retention_rate":
-        vec_a, s_a, n_a = _compute_retention_vectors(conn, cohort_a, day)
-        vec_b, s_b, n_b = _compute_retention_vectors(conn, cohort_b, day)
+        vec_a, s_a, n_a = _compute_retention_vectors(conn, cohort_a, day, event)
+        vec_b, s_b, n_b = _compute_retention_vectors(conn, cohort_b, day, event)
         val_a = s_a / n_a if n_a > 0 else 0.0
         val_b = s_b / n_b if n_b > 0 else 0.0
 
@@ -530,40 +541,64 @@ def compare_cohorts(
     # ------------------------------------------------------------------
     # Run statistical tests
     # ------------------------------------------------------------------
-    if metric in PROPORTION_METRICS:
-        p_z = _two_proportion_z_test(s_a, n_a, s_b, n_b)
-        p_fish = _fisher_exact(s_a, n_a, s_b, n_b)
-        tests = [
-            {"name": "two_proportion_z_test", "p_value": round(p_z, 6)},
-            {"name": "fisher_exact", "p_value": round(p_fish, 6)},
-        ]
-        p_value = min(p_z, p_fish)
+    # Guard against very small samples: statistical tests are unreliable
+    # and some libraries emit warnings or errors. In these cases, we
+    # return a well-formed response without any tests.
+    sample_size_a = len(vec_a)
+    sample_size_b = len(vec_b)
+
+    if sample_size_a < 2 or sample_size_b < 2:
+        tests: list[dict] = []
+        p_value: float | None = None
     else:
-        p_t = _welch_t_test(vec_a, vec_b)
-        p_mw = _mann_whitney_u(vec_a, vec_b)
-        tests = [
-            {"name": "welch_t_test", "p_value": round(p_t, 6)},
-            {"name": "mann_whitney_u", "p_value": round(p_mw, 6)},
-        ]
-        p_value = min(p_t, p_mw)
+        if metric in PROPORTION_METRICS:
+            p_z = _two_proportion_z_test(s_a, n_a, s_b, n_b)
+
+            # Fisher's exact test becomes extremely slow for large cohorts.
+            # For large sample sizes rely on the z-test only.
+            if (n_a + n_b) > 5000:
+                tests = [
+                    {"name": "two_proportion_z_test", "p_value": round(p_z, 6)},
+                ]
+                p_value = float(p_z)
+            else:
+                p_fish = _fisher_exact(s_a, n_a, s_b, n_b)
+                tests = [
+                    {"name": "two_proportion_z_test", "p_value": round(p_z, 6)},
+                    {"name": "fisher_exact", "p_value": round(p_fish, 6)},
+                ]
+                p_value = float(min(p_z, p_fish))
+        else:
+            # Continuous metrics: Welch t-test and Mann-Whitney U via scipy.stats
+            t_res = stats.ttest_ind(vec_a, vec_b, equal_var=False, alternative="two-sided")
+            mw_res = stats.mannwhitneyu(vec_a, vec_b, alternative="two-sided", method="asymptotic")
+            p_t = float(t_res.pvalue)
+            p_mw = float(mw_res.pvalue)
+            tests = [
+                {"name": "welch_t_test", "p_value": round(p_t, 6)},
+                {"name": "mann_whitney_u", "p_value": round(p_mw, 6)},
+            ]
+            p_value = float(min(p_t, p_mw))
 
     # ------------------------------------------------------------------
     # Derive summary statistics
     # ------------------------------------------------------------------
     difference = val_a - val_b
+    # Guard against division by zero – when the control value is zero,
+    # a relative lift is not well-defined so we return None.
     relative_lift = (difference / val_b) if val_b != 0 else None
-    significant = p_value < 0.05
+    significant = bool(p_value is not None and p_value < 0.05)
 
     label = METRIC_LABELS.get(metric, metric)
     metric_label = f"Day {day} {label}"
 
     return {
         "metric_label": metric_label,
-        "cohort_a_value": round(val_a, 6),
-        "cohort_b_value": round(val_b, 6),
-        "difference": round(difference, 6),
-        "relative_lift": round(relative_lift, 6) if relative_lift is not None else None,
-        "p_value": round(p_value, 6),
+        "cohort_a_value": round(float(val_a), 6),
+        "cohort_b_value": round(float(val_b), 6),
+        "difference": round(float(difference), 6),
+        "relative_lift": round(float(relative_lift), 6) if relative_lift is not None else None,
+        "p_value": round(float(p_value), 6) if p_value is not None else None,
         "significant": significant,
         "tests": tests,
     }

@@ -358,7 +358,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
           data-testid="open-compare-pane"
           disabled={!event}
         >
-          ⚖ Compare
+          🔬 Compare
         </button>
       </div>
 

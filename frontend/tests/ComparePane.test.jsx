@@ -68,14 +68,14 @@ function renderPane(props = {}) {
 // ---------------------------------------------------------------------------
 
 describe('ComparePane', () => {
-  test('compare_pane_opens – pane is visible when isOpen=true', async () => {
+  test('compare_pane_opens_when_isOpen_true', async () => {
     renderPane({ isOpen: true })
     const pane = screen.getByTestId('compare-pane')
     expect(pane).toBeInTheDocument()
     expect(pane.className).toContain('open')
   })
 
-  test('compare_pane_does_not_render_open – pane is hidden when isOpen=false', () => {
+  test('compare_pane_closed_when_isOpen_false', () => {
     renderPane({ isOpen: false })
     const pane = screen.getByTestId('compare-pane')
     expect(pane.className).not.toContain('open')
@@ -100,24 +100,18 @@ describe('ComparePane', () => {
     expect(options).toContain('2')
   })
 
-  test('run_button_disabled_until_inputs_valid – button disabled without cohorts selected', async () => {
+  test('run_button_enabled_when_both_cohorts_auto_selected', async () => {
     renderPane()
 
     await waitFor(() => {
-      expect(screen.getByTestId('compare-run-button')).toBeInTheDocument()
+      expect(screen.getByTestId('compare-cohort-a')).toBeInTheDocument()
+      expect(screen.getByTestId('compare-cohort-b')).toBeInTheDocument()
     })
 
-    // Initially no cohorts selected → button disabled
-    expect(screen.getByTestId('compare-run-button')).toBeDisabled()
-
-    // Select cohort A
-    fireEvent.change(screen.getByTestId('compare-cohort-a'), { target: { value: '1' } })
-    // Still missing cohort B
-    expect(screen.getByTestId('compare-run-button')).toBeDisabled()
-
-    // Select cohort B
-    fireEvent.change(screen.getByTestId('compare-cohort-b'), { target: { value: '2' } })
-    // Now both selected → enabled
+    // With two visible cohorts, both dropdowns should auto-populate and
+    // the run button should be enabled.
+    expect(screen.getByTestId('compare-cohort-a')).toHaveValue('1')
+    expect(screen.getByTestId('compare-cohort-b')).toHaveValue('2')
     expect(screen.getByTestId('compare-run-button')).not.toBeDisabled()
   })
 

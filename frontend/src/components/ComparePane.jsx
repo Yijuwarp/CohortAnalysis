@@ -58,7 +58,6 @@ export default function ComparePane({
   maxDay,
   defaultMetric,    // optional initial metric value
   currentEvent,     // for usage tab: the event that's currently selected in UsageTable
-  hiddenCohortIds,  // set of cohort IDs that are hidden
 }) {
   const paneRef = useRef(null)
   const [cohorts, setCohorts] = useState([])
@@ -77,7 +76,7 @@ export default function ComparePane({
   useEffect(() => {
     if (!isOpen) return
     listCohorts()
-      .then(data => setCohorts((data.cohorts || []).filter(c => c.is_active && !c.hidden)))
+      .then(data => setCohorts(data.cohorts || []))
       .catch(() => setCohorts([]))
   }, [isOpen])
 
@@ -153,10 +152,28 @@ export default function ComparePane({
     }
   }
 
-  const visibleCohorts = cohorts.filter(c => !(hiddenCohortIds || []).includes(c.cohort_id))
+  // Visible cohorts: active and not marked as hidden in the cohort data
+  const visibleCohorts = cohorts.filter(
+    c => c.is_active && !c.hidden,
+  )
 
   const cohortsForA = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortB))
   const cohortsForB = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortA))
+
+  // Auto-select default cohorts when the pane opens and when visible cohort count changes.
+  useEffect(() => {
+    if (!isOpen) return
+    // Only auto-select when nothing is selected yet
+    //if (cohortA || cohortB) return
+
+    if (visibleCohorts.length >= 2) {
+      setCohortA(String(visibleCohorts[0].cohort_id))
+      setCohortB(String(visibleCohorts[1].cohort_id))
+    } else if (visibleCohorts.length === 1) {
+      setCohortA(String(visibleCohorts[0].cohort_id))
+      setCohortB('')
+    }
+  }, [isOpen, visibleCohorts.length])
 
   const dayOptions = Array.from({ length: maxDay + 1 }, (_, i) => i)
 
@@ -325,7 +342,11 @@ export default function ComparePane({
               )}
               <div className="compare-stat-row">
                 <span>p-value</span>
-                <span data-testid="compare-p-value">{Number(result.p_value).toFixed(4)}</span>
+                <span data-testid="compare-p-value">
+                  {result.p_value === null || result.p_value === undefined
+                    ? '—'
+                    : Number(result.p_value).toFixed(4)}
+                </span>
               </div>
               <div className="compare-significance-badge">
                 {result.significant
@@ -351,7 +372,11 @@ export default function ComparePane({
                 {result.tests.map(t => (
                   <div key={t.name} className="compare-test-row">
                     <span className="compare-test-name">{t.name.replace(/_/g, ' ')}</span>
-                    <span className="compare-test-pvalue">p = {Number(t.p_value).toFixed(4)}</span>
+                    <span className="compare-test-pvalue">
+                      p = {t.p_value === null || t.p_value === undefined
+                        ? '—'
+                        : Number(t.p_value).toFixed(4)}
+                    </span>
                   </div>
                 ))}
               </div>

@@ -80,6 +80,15 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         </div>
 
         <div className="retention-controls-right">
+          <button
+            type="button"
+            className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
+            onClick={() => setIsComparePaneOpen(prev => !prev)}
+            title="Compare two cohorts statistically"
+            data-testid="open-compare-pane"
+          >
+            🔬 Compare
+          </button>
           <label className="significance-toggle">
             <span className="stat-icon">σ</span>
             <span>Significance</span>
@@ -127,14 +136,12 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
             </button>
           </div>
           <button
-            type="button"
-            className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
-            onClick={() => setIsComparePaneOpen(prev => !prev)}
-            title="Compare two cohorts statistically"
-            data-testid="open-compare-pane"
-          >
-            ⚖ Compare
-          </button>
+              type="button"
+              className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
+              onClick={() => setViewMode('graph')}
+            >
+              Graph
+            </button>
         </div>
       </div>
 
