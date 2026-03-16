@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.routers import (
     analytics_router,
     cohorts_router,
+    comparison_router,
     filters_router,
     mapping_router,
     metadata_router,
@@ -43,6 +44,7 @@ for router in (
     analytics_router.router,
     revenue_router.router,
     metadata_router.router,
+    comparison_router.router,
 ):
     app.include_router(router)
 

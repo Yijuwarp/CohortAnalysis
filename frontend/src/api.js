@@ -196,3 +196,12 @@ export async function getUsageFrequency(event, propertyFilter = null) {
 
   return request(path, { method: 'GET' })
 }
+
+export async function compareCohorts(payload) {
+  return request('/compare-cohorts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+

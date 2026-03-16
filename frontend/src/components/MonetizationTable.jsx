@@ -5,6 +5,7 @@ import { formatCurrency } from '../utils/formatters'
 import { fitPowerLaw, generateProjection } from '../utils/ltvPrediction'
 import MonetizationGraph from './MonetizationGraph'
 import TunePredictionPane from './TunePredictionPane'
+import ComparePane from './ComparePane'
 
 const METRIC_OPTIONS = [
   { value: 'total_revenue', label: 'Total Revenue' },
@@ -27,6 +28,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   const [predictionHorizon, setPredictionHorizon] = useState(90)
   const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
   const [predictionBaseline, setPredictionBaseline] = useState(null)
+  const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)
@@ -189,6 +191,15 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
               >
                 Tune Prediction
               </button>
+              <button
+                type="button"
+                className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
+                onClick={() => setIsComparePaneOpen(prev => !prev)}
+                title="Compare two cohorts statistically"
+                data-testid="open-compare-pane"
+              >
+                🔬 Compare
+              </button>
             </div>
 
             <div className="retention-controls-right">
@@ -282,6 +293,14 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
             }
             setIsTuningPaneOpen(false)
           }}
+        />
+
+        <ComparePane
+          isOpen={isComparePaneOpen}
+          onClose={() => setIsComparePaneOpen(false)}
+          tab="monetization"
+          maxDay={safeMaxDay}
+          defaultMetric={metricType === 'cumulative_revenue' || metricType === 'total_revenue' ? 'revenue_per_acquired_user' : metricType}
         />
       </div>
     </section>
