@@ -40,6 +40,9 @@ const MOCK_RESULT = {
   ],
 }
 
+// p_value 0.02 → formatDynamic yields "0.0200" (4 dp, non-zero)
+const EXPECTED_P_VALUE_TEXT = '0.0200'
+
 beforeEach(() => {
   vi.clearAllMocks()
   listCohorts.mockResolvedValue({ cohorts: MOCK_COHORTS })
@@ -154,8 +157,8 @@ describe('ComparePane', () => {
       expect(screen.getByTestId('compare-results')).toBeInTheDocument()
     })
 
-    // Should show p-value
-    expect(screen.getByTestId('compare-p-value')).toHaveTextContent('0.0200')
+    // Should show p-value (dynamic formatter, 4 dp = '0.0200')
+    expect(screen.getByTestId('compare-p-value')).toHaveTextContent(EXPECTED_P_VALUE_TEXT)
     // Should show significance badge
     expect(screen.getByTestId('compare-significant')).toBeInTheDocument()
   })
@@ -191,5 +194,28 @@ describe('ComparePane', () => {
 
     fireEvent.keyDown(window, { key: 'Escape', bubbles: true })
     expect(onClose).toHaveBeenCalled()
+  })
+
+  test('swap_button_swaps_variant_and_baseline', async () => {
+    renderPane()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compare-cohort-a')).toBeInTheDocument()
+      expect(screen.getByTestId('compare-cohort-b')).toBeInTheDocument()
+    })
+
+    // After auto-select: Variant=1, Baseline=2
+    expect(screen.getByTestId('compare-cohort-a')).toHaveValue('1')
+    expect(screen.getByTestId('compare-cohort-b')).toHaveValue('2')
+
+    // Click swap
+    fireEvent.click(screen.getByTestId('compare-swap-button'))
+
+    // Now Variant=2, Baseline=1
+    expect(screen.getByTestId('compare-cohort-a')).toHaveValue('2')
+    expect(screen.getByTestId('compare-cohort-b')).toHaveValue('1')
+
+    // Run button must NOT have been clicked automatically
+    expect(compareCohorts).not.toHaveBeenCalled()
   })
 })

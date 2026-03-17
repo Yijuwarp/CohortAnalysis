@@ -30,3 +30,22 @@ export function formatShortNumber(value) {
   }
   return String(numericValue)
 }
+
+/**
+ * Dynamic decimal formatter.
+ * Starts at 4 decimal places and increases up to 8 until the formatted
+ * value is non-zero, so that small-but-meaningful differences are always
+ * visible instead of showing as "0.0000".
+ */
+export function formatDynamic(value) {
+  if (value === null || value === undefined) return '—'
+
+  let decimals = 4
+  while (decimals <= 8) {
+    const formatted = Number(value).toFixed(decimals)
+    if (Number(formatted) !== 0 || decimals === 8) {
+      return formatted
+    }
+    decimals++
+  }
+}
