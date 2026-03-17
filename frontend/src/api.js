@@ -205,3 +205,38 @@ export async function compareCohorts(payload) {
   })
 }
 
+// ---------------------------------------------------------------------------
+// Funnels
+// ---------------------------------------------------------------------------
+
+export async function createFunnel(payload) {
+  return request('/funnels', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updateFunnel(funnelId, payload) {
+  return request(`/funnels/${funnelId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function listFunnels() {
+  return request('/funnels', { method: 'GET' })
+}
+
+export async function deleteFunnel(funnelId) {
+  return request(`/funnels/${funnelId}`, { method: 'DELETE' })
+}
+
+export async function runFunnel(funnelId) {
+  return request('/funnels/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ funnel_id: funnelId }),
+  })
+}
