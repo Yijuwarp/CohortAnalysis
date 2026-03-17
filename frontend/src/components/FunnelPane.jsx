@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { createFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
+import { createFunnel, updateFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
 import { formatInteger } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
 
@@ -10,7 +10,7 @@ import { getCohortColor } from '../utils/cohortColors'
 const EMPTY_STEP = () => ({ event_name: '', filters: [] })
 const EMPTY_FILTER = () => ({ property_key: '', property_value: '' })
 
-function FunnelBuilderModal({ events, isOpen, onClose, onCreated }) {
+function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel }) {
   // events is string[] from backend e.g. ["signup", "purchase"]
   const safeEvents = Array.isArray(events) ? events : []
 
@@ -47,16 +47,60 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated }) {
     }
   }, [valuesByProp])
 
-  // Reset on open
+  // Reset or Hydrate on open
   useEffect(() => {
     if (!isOpen) return
-    setName('')
-    setSteps([EMPTY_STEP(), EMPTY_STEP()])
     setError('')
     setSaving(false)
-    setPropsByEvent({})
-    setValuesByProp({})
-  }, [isOpen])
+
+    if (editingFunnel && editingFunnel.steps) {
+      setName(editingFunnel.name)
+      // Render steps without filters purely first while we load
+      const strippedSteps = editingFunnel.steps.map(s => ({ ...s, filters: [] }))
+      setSteps(strippedSteps)
+      
+      const hydrate = async () => {
+        const newProps = {}
+        const newValues = {}
+        
+        // Ensure events are handled.
+        for (const s of editingFunnel.steps) {
+          if (!s.event_name) continue
+          
+          try {
+            const propData = await getEventProperties(s.event_name)
+            newProps[s.event_name] = propData.properties || []
+          } catch {
+            newProps[s.event_name] = []
+          }
+          
+          for (const f of s.filters) {
+            if (!f.property_key) continue
+            try {
+              const cacheKey = `${s.event_name}::${f.property_key}`
+              const valData = await getEventPropertyValues(s.event_name, f.property_key, 50)
+              newValues[cacheKey] = valData.values || []
+            } catch {
+              newValues[`${s.event_name}::${f.property_key}`] = []
+            }
+          }
+        }
+        
+        setPropsByEvent(prev => ({ ...prev, ...newProps }))
+        setValuesByProp(prev => ({ ...prev, ...newValues }))
+        // THEN apply filters
+        setSteps(editingFunnel.steps)
+      }
+      
+      hydrate()
+      
+    } else {
+      setName('')
+      setSteps([EMPTY_STEP(), EMPTY_STEP()])
+      setPropsByEvent({})
+      setValuesByProp({})
+    }
+  }, [isOpen, editingFunnel])
 
   if (!isOpen) return null
 
@@ -119,7 +163,11 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated }) {
           filters: s.filters.filter(f => f.property_key && f.property_value),
         })),
       }
-      await createFunnel(payload)
+      if (editingFunnel) {
+        await updateFunnel(editingFunnel.id, payload)
+      } else {
+        await createFunnel(payload)
+      }
       onCreated()
       onClose()
     } catch (err) {
@@ -130,10 +178,10 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated }) {
   }
 
   return (
-    <div className="funnel-modal-overlay" role="dialog" aria-modal="true" aria-label="Create Funnel">
+    <div className="funnel-modal-overlay" role="dialog" aria-modal="true" aria-label={editingFunnel ? 'Edit Funnel' : 'Create Funnel'}>
       <div className="funnel-modal" data-testid="funnel-builder-modal">
         <div className="funnel-modal-header">
-          <h2>Create New Funnel</h2>
+          <h2>{editingFunnel ? 'Edit Funnel' : 'Create New Funnel'}</h2>
           <button className="funnel-modal-close" onClick={onClose} aria-label="Close">✕</button>
         </div>
 
@@ -280,7 +328,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated }) {
             disabled={saving}
             data-testid="funnel-save-button"
           >
-            {saving ? 'Saving…' : 'Save Funnel'}
+            {saving ? 'Saving…' : (editingFunnel ? 'Update Funnel' : 'Save Funnel')}
           </button>
         </div>
       </div>
@@ -467,6 +515,7 @@ export default function FunnelPane({ refreshToken, events }) {
 
   const [funnels, setFunnels] = useState([])
   const [selectedFunnelId, setSelectedFunnelId] = useState(null)
+  const [editingFunnel, setEditingFunnel] = useState(null)
   const [result, setResult] = useState(null)
   // Issue #6: running flag disables the button and prevents duplicate runs
   const [running, setRunning] = useState(false)
@@ -546,7 +595,10 @@ export default function FunnelPane({ refreshToken, events }) {
       <div className="funnel-topbar">
         <button
           className="button button-primary funnel-new-btn"
-          onClick={() => setShowBuilder(true)}
+          onClick={() => {
+            setEditingFunnel(null)
+            setShowBuilder(true)
+          }}
           data-testid="funnel-new-button"
         >
           + New Funnel
@@ -563,15 +615,29 @@ export default function FunnelPane({ refreshToken, events }) {
         />
 
         {selectedFunnelId && (
-          <button
-            className="button button-secondary funnel-delete-btn"
-            onClick={() => handleDelete(selectedFunnelId)}
-            disabled={deleting === selectedFunnelId || running}
-            data-testid="funnel-delete-button"
-            title="Delete selected funnel"
-          >
-            {deleting === selectedFunnelId ? 'Deleting…' : 'Delete'}
-          </button>
+          <>
+            <button
+              className="button button-secondary funnel-edit-btn"
+              onClick={() => {
+                setEditingFunnel(selectedFunnel)
+                setShowBuilder(true)
+              }}
+              disabled={deleting === selectedFunnelId || running}
+              data-testid="funnel-edit-button"
+              title="Edit selected funnel"
+            >
+              Edit
+            </button>
+            <button
+              className="button button-secondary funnel-delete-btn"
+              onClick={() => handleDelete(selectedFunnelId)}
+              disabled={deleting === selectedFunnelId || running}
+              data-testid="funnel-delete-button"
+              title="Delete selected funnel"
+            >
+              {deleting === selectedFunnelId ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
         )}
 
         {/* Issue #6: disabled while running; Issue #10: disabled when invalid */}
@@ -644,6 +710,7 @@ export default function FunnelPane({ refreshToken, events }) {
         isOpen={showBuilder}
         onClose={() => setShowBuilder(false)}
         onCreated={loadFunnels}
+        editingFunnel={editingFunnel}
       />
     </div>
   )

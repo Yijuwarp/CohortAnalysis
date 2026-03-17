@@ -151,6 +151,42 @@ def test_delete_unknown_funnel_returns_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+def test_update_funnel_returns_id_and_name(client: TestClient) -> None:
+    create = client.post(
+        "/funnels",
+        json={
+            "name": "to_update",
+            "steps": [
+                {"event_name": "signup", "filters": []},
+                {"event_name": "search", "filters": []},
+            ],
+        },
+    )
+    fid = create.json()["id"]
+
+    update = client.put(
+        f"/funnels/{fid}",
+        json={
+            "name": "updated_funnel",
+            "steps": [
+                {"event_name": "signup", "filters": []},
+                {"event_name": "purchase", "filters": [{"property_key": "country", "property_value": "US"}]},
+            ],
+        },
+    )
+    assert update.status_code == 200, update.text
+    assert update.json()["name"] == "updated_funnel"
+
+    # Verify list funnels returns the updated data including steps
+    funnels = client.get("/funnels").json()["funnels"]
+    target = next(f for f in funnels if f["id"] == fid)
+    assert target["name"] == "updated_funnel"
+    assert len(target["steps"]) == 2
+    assert target["steps"][1]["event_name"] == "purchase"
+    assert target["steps"][1]["filters"][0]["property_key"] == "country"
+    assert target["steps"][1]["filters"][0]["property_value"] == "US"
+
+
 # ---------------------------------------------------------------------------
 # 2. Funnel execution correctness
 # ---------------------------------------------------------------------------

@@ -172,6 +172,59 @@ def create_funnel(
     return {"id": int(funnel_id), "name": name}
 
 
+def update_funnel(
+    conn: duckdb.DuckDBPyConnection,
+    funnel_id: int,
+    name: str,
+    steps: list[dict],
+) -> dict:
+    ensure_funnel_tables(conn)
+
+    name = (name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Funnel name is required")
+    if len(steps) < 2:
+        raise HTTPException(status_code=400, detail="Funnels require at least 2 steps")
+    if len(steps) > 5:
+        raise HTTPException(status_code=400, detail="Funnels support at most 5 steps")
+    for idx, step in enumerate(steps):
+        if not step.get("event_name", "").strip():
+            raise HTTPException(
+                status_code=400, detail=f"Step {idx + 1} is missing an event name"
+            )
+
+    row = conn.execute("SELECT id FROM funnels WHERE id = ?", [funnel_id]).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="Funnel not found")
+
+    conn.execute("UPDATE funnels SET name = ? WHERE id = ?", [name, funnel_id])
+
+    # Delete existing steps and filters
+    step_ids = [r[0] for r in conn.execute("SELECT id FROM funnel_steps WHERE funnel_id = ?", [funnel_id]).fetchall()]
+    for sid in step_ids:
+        conn.execute("DELETE FROM funnel_step_filters WHERE step_id = ?", [sid])
+    conn.execute("DELETE FROM funnel_steps WHERE funnel_id = ?", [funnel_id])
+
+    # Insert new steps
+    for order, step in enumerate(steps):
+        step_id = conn.execute(
+            "INSERT INTO funnel_steps (id, funnel_id, step_order, event_name) "
+            "VALUES (nextval('funnel_steps_id_seq'), ?, ?, ?) RETURNING id",
+            [funnel_id, order, step["event_name"].strip()],
+        ).fetchone()[0]
+        for f in step.get("filters", []):
+            key = (f.get("property_key") or "").strip()
+            val = (f.get("property_value") or "").strip()
+            if key and val:
+                conn.execute(
+                    "INSERT INTO funnel_step_filters (id, step_id, property_key, property_value, operator) "
+                    "VALUES (nextval('funnel_step_filters_id_seq'), ?, ?, ?, 'equals')",
+                    [step_id, key, val],
+                )
+
+    return {"id": int(funnel_id), "name": name}
+
+
 def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
     ensure_funnel_tables(conn)
 
@@ -190,11 +243,31 @@ def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
     funnels = []
     for fid, fname, fcreated_at in rows:
         is_valid = _check_funnel_validity(int(fid), conn, event_names, property_keys)
+        # Fetch steps to allow editing on frontend
+        steps_objs = []
+        s_rows = conn.execute(
+            "SELECT id, event_name FROM funnel_steps WHERE funnel_id = ? ORDER BY step_order",
+            [fid],
+        ).fetchall()
+        for sid, s_event in s_rows:
+            f_rows = conn.execute(
+                "SELECT property_key, property_value FROM funnel_step_filters WHERE step_id = ? ORDER BY id",
+                [sid],
+            ).fetchall()
+            steps_objs.append({
+                "event_name": str(s_event),
+                "filters": [
+                    {"property_key": str(fk), "property_value": str(fv)} 
+                    for fk, fv in f_rows
+                ]
+            })
+
         funnels.append({
             "id": int(fid),
             "name": str(fname),
             "created_at": str(fcreated_at) if fcreated_at else None,
             "is_valid": is_valid,
+            "steps": steps_objs,
         })
 
     return {"funnels": funnels}

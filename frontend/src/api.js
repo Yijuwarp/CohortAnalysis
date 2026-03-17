@@ -217,6 +217,14 @@ export async function createFunnel(payload) {
   })
 }
 
+export async function updateFunnel(funnelId, payload) {
+  return request(`/funnels/${funnelId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function listFunnels() {
   return request('/funnels', { method: 'GET' })
 }

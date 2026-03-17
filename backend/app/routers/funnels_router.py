@@ -7,6 +7,7 @@ from app.db.connection import get_connection
 from app.models.funnel_models import CreateFunnelRequest, RunFunnelRequest
 from app.domains.funnels.funnel_service import (
     create_funnel,
+    update_funnel,
     list_funnels,
     delete_funnel,
     run_funnel,
@@ -38,6 +39,25 @@ async def list_funnels_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     return list_funnels(conn)
+
+
+@router.put("/funnels/{funnel_id}")
+async def update_funnel_endpoint(
+    funnel_id: int,
+    request: CreateFunnelRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    steps = [
+        {
+            "event_name": step.event_name,
+            "filters": [
+                {"property_key": f.property_key, "property_value": f.property_value}
+                for f in step.filters
+            ],
+        }
+        for step in request.steps
+    ]
+    return update_funnel(conn, funnel_id, request.name, steps)
 
 
 @router.delete("/funnels/{funnel_id}")

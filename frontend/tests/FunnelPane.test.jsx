@@ -27,18 +27,21 @@ import { listFunnels, runFunnel, createFunnel, deleteFunnel } from '../src/api'
 const MOCK_EVENTS_STR = ['signup', 'search', 'purchase']
 
 const MOCK_FUNNELS_MIXED = [
-  { id: 1, name: 'Valid Funnel A', is_valid: true, created_at: null },
-  { id: 2, name: 'Invalid Funnel B', is_valid: false, created_at: null },
-  { id: 3, name: 'Valid Funnel C', is_valid: true, created_at: null },
-  { id: 4, name: 'Invalid Funnel D', is_valid: false, created_at: null },
+  { id: 1, name: 'Valid Funnel A', is_valid: true, created_at: null, steps: [] },
+  { id: 2, name: 'Invalid Funnel B', is_valid: false, created_at: null, steps: [] },
+  { id: 3, name: 'Valid Funnel C', is_valid: true, created_at: null, steps: [] },
+  { id: 4, name: 'Invalid Funnel D', is_valid: false, created_at: null, steps: [] },
 ]
 
 const MOCK_FUNNELS_VALID_ONLY = [
-  { id: 1, name: 'Signup to Purchase', is_valid: true, created_at: null },
+  { id: 1, name: 'Signup to Purchase', is_valid: true, created_at: null, steps: [
+    { event_name: 'signup', filters: [] },
+    { event_name: 'purchase', filters: [{ property_key: 'category', property_value: 'electronics' }] }
+  ] },
 ]
 
 const MOCK_FUNNELS_INVALID_ONLY = [
-  { id: 1, name: 'Bad Funnel', is_valid: false, created_at: null },
+  { id: 1, name: 'Bad Funnel', is_valid: false, created_at: null, steps: [] },
 ]
 
 const MOCK_RUN_RESULT = {
