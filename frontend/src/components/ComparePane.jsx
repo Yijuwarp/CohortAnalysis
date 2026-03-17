@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { compareCohorts, listCohorts } from '../api'
+import { formatDynamic } from '../utils/formatters'
 
 /**
  * Metric definitions per tab.
@@ -40,15 +41,55 @@ function getBackendTab(tab) {
   return tab
 }
 
+const PERCENT_METRICS = new Set([
+  'retention_rate',
+  'unique_users_percent',
+  'unique_users_cumulative_percent',
+])
+
+/**
+ * Format a metric value for display.
+ * - Percentage metrics → e.g. "42.35%"
+ * - Revenue metrics    → e.g. "$0.00001234" (dynamic decimals)
+ * - All others         → dynamic decimal (4–8 places)
+ */
 function formatValue(value, metric) {
   if (value === null || value === undefined) return '—'
-  if (['retention_rate', 'unique_users_percent', 'unique_users_cumulative_percent'].includes(metric)) {
+  if (PERCENT_METRICS.has(metric)) {
     return `${(Number(value) * 100).toFixed(2)}%`
   }
   if (metric.includes('revenue')) {
-    return `$${Number(value).toFixed(4)}`
+    return `$${formatDynamic(value)}`
   }
-  return Number(value).toFixed(4)
+  return formatDynamic(value)
+}
+
+/**
+ * Given the result object, find which test produced the selected p_value
+ * and return a human-readable label, e.g. "p-value (Mann-Whitney U)".
+ */
+function getPValueLabel(result) {
+  if (!result || result.p_value === null || result.p_value === undefined) {
+    return 'p-value'
+  }
+  if (!result.tests || result.tests.length === 0) {
+    return 'p-value'
+  }
+
+  // First try exact match, then tolerance match (floating-point rounding)
+  const match =
+    result.tests.find(t => t.p_value === result.p_value) ||
+    result.tests.find(t => Math.abs(t.p_value - result.p_value) < 1e-6)
+
+  if (!match) return 'p-value'
+
+  // Convert snake_case name to Title Case
+  const readable = match.name
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+
+  return `p-value (${readable})`
 }
 
 export default function ComparePane({
@@ -61,6 +102,7 @@ export default function ComparePane({
 }) {
   const paneRef = useRef(null)
   const [cohorts, setCohorts] = useState([])
+  // cohortA = Variant, cohortB = Baseline
   const [cohortA, setCohortA] = useState('')
   const [cohortB, setCohortB] = useState('')
   const [selectedMetric, setSelectedMetric] = useState('')
@@ -152,19 +194,32 @@ export default function ComparePane({
     }
   }
 
+  /**
+   * Swap Variant ↔ Baseline.
+   * Captures both values in local consts before any setter fires so
+   * neither setter reads stale/partially-updated state.
+   * Does NOT auto-run — user must click "Run Comparison".
+   */
+  const handleSwap = () => {
+    const a = cohortA
+    const b = cohortB
+    setCohortA(b)
+    setCohortB(a)
+    setResult(null)
+  }
+
   // Visible cohorts: active and not marked as hidden in the cohort data
   const visibleCohorts = cohorts.filter(
     c => c.is_active && !c.hidden,
   )
 
-  const cohortsForA = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortB))
-  const cohortsForB = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortA))
+  // Each dropdown excludes the other's selection
+  const cohortsForVariant  = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortB))
+  const cohortsForBaseline = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortA))
 
   // Auto-select default cohorts when the pane opens and when visible cohort count changes.
   useEffect(() => {
     if (!isOpen) return
-    // Only auto-select when nothing is selected yet
-    //if (cohortA || cohortB) return
 
     if (visibleCohorts.length >= 2) {
       setCohortA(String(visibleCohorts[0].cohort_id))
@@ -176,6 +231,8 @@ export default function ComparePane({
   }, [isOpen, visibleCohorts.length])
 
   const dayOptions = Array.from({ length: maxDay + 1 }, (_, i) => i)
+
+  const pValueLabel = getPValueLabel(result)
 
   return (
     <>
@@ -208,23 +265,9 @@ export default function ComparePane({
           </button>
         </div>
 
-        {/* Cohort selectors */}
+        {/* ── Row 1: Baseline ── */}
         <div className="compare-cohort-row">
-          <label className="compare-cohort-label" htmlFor="compare-cohort-a">A</label>
-          <select
-            id="compare-cohort-a"
-            className="compare-select"
-            value={cohortA}
-            onChange={e => { setCohortA(e.target.value); setResult(null) }}
-            data-testid="compare-cohort-a"
-          >
-            <option value="">Select cohort…</option>
-            {cohortsForA.map(c => (
-              <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
-            ))}
-          </select>
-          <span className="compare-vs">vs</span>
-          <label className="compare-cohort-label" htmlFor="compare-cohort-b">B</label>
+          <label className="compare-cohort-label" htmlFor="compare-cohort-b">Baseline</label>
           <select
             id="compare-cohort-b"
             className="compare-select"
@@ -233,10 +276,37 @@ export default function ComparePane({
             data-testid="compare-cohort-b"
           >
             <option value="">Select cohort…</option>
-            {cohortsForB.map(c => (
+            {cohortsForBaseline.map(c => (
               <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
             ))}
           </select>
+        </div>
+
+        {/* ── Row 2: Variant + Swap ── */}
+        <div className="compare-cohort-row">
+          <label className="compare-cohort-label" htmlFor="compare-cohort-a">Variant</label>
+          <select
+            id="compare-cohort-a"
+            className="compare-select"
+            value={cohortA}
+            onChange={e => { setCohortA(e.target.value); setResult(null) }}
+            data-testid="compare-cohort-a"
+          >
+            <option value="">Select cohort…</option>
+            {cohortsForVariant.map(c => (
+              <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
+            ))}
+          </select>
+          <button
+            type="button"
+            className="compare-swap-button"
+            onClick={handleSwap}
+            aria-label="Swap Variant and Baseline"
+            title="Swap Variant and Baseline"
+            data-testid="compare-swap-button"
+          >
+            ⇄
+          </button>
         </div>
 
         {/* Metric + Day selectors */}
@@ -299,9 +369,10 @@ export default function ComparePane({
             <p className="compare-metric-label">{result.metric_label}</p>
 
             <div className="compare-values-grid">
+              {/* Variant (cohortA) */}
               <div className="compare-value-row">
                 <span className="compare-value-cohort">
-                  Cohort A
+                  Variant
                   {(() => {
                     const c = cohorts.find(c => String(c.cohort_id) === String(cohortA))
                     return c ? ` (${c.cohort_name})` : ''
@@ -311,9 +382,10 @@ export default function ComparePane({
                   {formatValue(result.cohort_a_value, selectedMetric)}
                 </span>
               </div>
+              {/* Baseline (cohortB) */}
               <div className="compare-value-row">
                 <span className="compare-value-cohort">
-                  Cohort B
+                  Baseline
                   {(() => {
                     const c = cohorts.find(c => String(c.cohort_id) === String(cohortB))
                     return c ? ` (${c.cohort_name})` : ''
@@ -341,11 +413,11 @@ export default function ComparePane({
                 </div>
               )}
               <div className="compare-stat-row">
-                <span>p-value</span>
+                <span>{pValueLabel}</span>
                 <span data-testid="compare-p-value">
                   {result.p_value === null || result.p_value === undefined
                     ? '—'
-                    : Number(result.p_value).toFixed(4)}
+                    : formatDynamic(result.p_value)}
                 </span>
               </div>
               <div className="compare-significance-badge">
@@ -375,7 +447,7 @@ export default function ComparePane({
                     <span className="compare-test-pvalue">
                       p = {t.p_value === null || t.p_value === undefined
                         ? '—'
-                        : Number(t.p_value).toFixed(4)}
+                        : formatDynamic(t.p_value)}
                     </span>
                   </div>
                 ))}
