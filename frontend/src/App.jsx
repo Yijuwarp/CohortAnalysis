@@ -7,6 +7,7 @@ import CohortForm from './components/CohortForm'
 import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
 import MonetizationTable from './components/MonetizationTable'
+import FunnelPane from './components/FunnelPane'
 import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
 
@@ -370,6 +371,7 @@ export default function App() {
                 <button className={activeTab === 'retention' ? 'active' : ''} onClick={() => setActiveTab('retention')}>Retention</button>
                 <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
+                <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
@@ -392,6 +394,12 @@ export default function App() {
                 <MonetizationTable
                   refreshToken={retentionRefreshToken}
                   maxDay={globalMaxDay}
+                />
+              )}
+              {activeTab === 'funnels' && (
+                <FunnelPane
+                  refreshToken={retentionRefreshToken}
+                  events={events}
                 />
               )}
             </section>
