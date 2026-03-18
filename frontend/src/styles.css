@@ -2730,3 +2730,45 @@ tbody tr:hover {
   border: 1px dashed var(--color-border);
   border-radius: var(--radius-sm);
 }
+
+/* ---------------------------------------------------------------------------
+ * Flow Explorer
+ * --------------------------------------------------------------------------- */
+
+.flow-row-other {
+  opacity: 0.7;
+  font-style: italic;
+}
+
+.cohort-size {
+  font-size: 11px;
+  color: #777;
+  font-weight: normal;
+}
+
+.flow-path-col {
+  min-width: 300px;
+  max-width: 500px;
+  text-align: left !important;
+  left: 0;
+  white-space: normal;
+  position: sticky;
+  background: var(--color-surface);
+  z-index: 2;
+}
+
+th.flow-path-col {
+  background: #ecfdf3;
+  z-index: 4;
+}
+
+.flow-l2 {
+  padding-left: 24px;
+}
+
+.flow-expand-icon {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-left: auto;
+  line-height: 1;
+}

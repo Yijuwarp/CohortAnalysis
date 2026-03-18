@@ -11,6 +11,7 @@ from app.domains.analytics.usage_service import (
     get_usage_frequency,
 )
 from app.domains.analytics.monetization_service import get_monetization
+from app.domains.analytics.flow_service import get_l1_flows, get_l2_flows
 from app.utils.parsing import parse_max_day
 
 router = APIRouter()
@@ -78,3 +79,20 @@ async def monetization_endpoint(
 ):
     parsed_max_day = parse_max_day(max_day)
     return get_monetization(conn, parsed_max_day)
+
+@router.get("/flow/l1")
+async def flow_l1_endpoint(
+    start_event: str = Query(...),
+    direction: str = Query("forward"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_l1_flows(conn, start_event, direction)
+
+@router.get("/flow/l2")
+async def flow_l2_endpoint(
+    start_event: str = Query(...),
+    parent_event: str = Query(...),
+    direction: str = Query("forward"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_l2_flows(conn, start_event, parent_event, direction)
