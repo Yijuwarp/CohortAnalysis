@@ -91,10 +91,33 @@ def get_retention(
             row["retention_ci"] = retention_ci
         retention_table.append(row)
 
+    THRESHOLD = 1.0
+
+    detected_max_day = 0
+
+    for day_number in range(max_day + 1):
+        all_below_threshold = True
+        
+        for row in retention_table:
+            val = row["retention"].get(str(day_number), 0)
+            if val is None:
+                val = 0
+
+            if val >= THRESHOLD:
+                all_below_threshold = False
+                break
+
+        if all_below_threshold:
+            break
+
+        detected_max_day = day_number
+
+    detected_max_day = max(1, detected_max_day)
+
     end_timer(
-        max_day=max_day,
+        max_day=detected_max_day,
         retention_event=retention_event,
         cohort_count=len(cohorts)
     )
 
-    return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": retention_table}
+    return {"max_day": int(detected_max_day), "retention_event": retention_event or "any", "retention_table": retention_table}

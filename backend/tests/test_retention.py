@@ -45,7 +45,7 @@ def test_retention_basic_case_has_day_zero_and_expected_drop(client: TestClient)
     assert response.status_code == 200, response.text
 
     payload = response.json()
-    assert payload["max_day"] == 7
+    assert payload["max_day"] == 4
 
     by_name = {entry["cohort_name"]: entry for entry in payload["retention_table"]}
     assert "All Users" in by_name
