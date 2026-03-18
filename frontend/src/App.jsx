@@ -166,25 +166,19 @@ export default function App() {
     setDetectedMaxDay(null)
     setGlobalMaxDay(7)
 
-    try {
-      const retData = await getRetention(365, 'any')
-      let maxDetected = 0
-      ;(retData.retention_table || []).forEach(cohort => {
-        Object.entries(cohort.retention || {}).forEach(([day, value]) => {
-          const numeric = Number(value)
-          if (!Number.isNaN(numeric) && numeric > 0) {
-            maxDetected = Math.max(maxDetected, Number(day))
-          }
-        })
-      })
-      if (maxDetected > 0) {
-        setDetectedMaxDay(maxDetected)
-        setGlobalMaxDay(maxDetected)
-      }
-    } catch {
-      // Best effort
-    }
+	try {
+	  const retData = await getRetention(365, "any")
 
+	  const maxDay = retData?.max_day
+
+	  if (typeof maxDay === "number" && !Number.isNaN(maxDay)) {
+		setDetectedMaxDay(maxDay)
+		setGlobalMaxDay(maxDay)
+	  }
+	} catch {
+	  // Best effort
+	}
+	
     refreshRetention()
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
@@ -373,7 +367,7 @@ export default function App() {
                 <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
-                <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flow</button>
+                <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
