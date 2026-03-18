@@ -271,7 +271,23 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   return (
     <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)' }}>
       <div className="modal-content card" style={{ padding: '24px', width: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
-        <h3>{isEditing ? 'Edit Saved Cohort' : 'Create Saved Cohort'}</h3>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+          <h3>{isEditing ? 'Edit Saved Cohort' : 'Create Saved Cohort'}</h3>
+          <button
+            onClick={onCancel}
+            disabled={loading}
+            style={{
+              background: "transparent",
+              border: "none",
+              fontSize: "20px",
+              cursor: "pointer",
+              color: "#666"
+            }}
+            aria-label="Close"
+          >
+            ×
+          </button>
+        </div>
         
         <h4><strong>Name</strong></h4>
         <div className="grid">
@@ -577,9 +593,6 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         </div>
 
         <div className="inline-controls" style={{ marginTop: '24px', justifyContent: 'flex-end', display: 'flex', gap: '8px' }}>
-          <button className="button button-secondary" type="button" onClick={onCancel} disabled={loading}>
-            Cancel
-          </button>
           <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
             {loading ? 'Saving...' : 'Save Cohort'}
           </button>

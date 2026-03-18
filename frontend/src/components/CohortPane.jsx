@@ -117,6 +117,29 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     }
   }
 
+  const handleSplitToggle = async (cohort) => {
+    if (cohort.has_splits) {
+      const children = cohorts.filter(
+        c => c.split_parent_cohort_id === cohort.cohort_id
+      )
+      
+      try {
+        setSplittingId(cohort.cohort_id) // Show loading on parent while deleting
+        for (const child of children) {
+          await deleteCohort(child.cohort_id)
+        }
+        await loadData()
+        onCohortsChanged()
+      } catch (err) {
+        setError(err.message)
+      } finally {
+        setSplittingId(null)
+      }
+    } else {
+      await handleRandomSplit(cohort)
+    }
+  }
+
   // Active Cohorts organization
   const parentCohorts = useMemo(
     () => cohorts.filter((cohort) => !cohort.split_parent_cohort_id),
@@ -141,6 +164,21 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
     return childrenMap
   }, [cohorts])
+
+  const parentIdsWithChildren = useMemo(() => {
+    return new Set(
+      cohorts
+        .filter(c => c.split_parent_cohort_id)
+        .map(c => c.split_parent_cohort_id)
+    )
+  }, [cohorts])
+
+  const enrichedParentCohorts = useMemo(() => {
+    return parentCohorts.map(c => ({
+      ...c,
+      has_splits: parentIdsWithChildren.has(c.cohort_id)
+    }))
+  }, [parentCohorts, parentIdsWithChildren])
 
   const parentDefinitionTooltips = useMemo(
     () => Object.fromEntries(parentCohorts.map((cohort) => [cohort.cohort_id, buildCohortDefinition(cohort)])),
@@ -253,7 +291,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
               <span>Size</span>
               <span>Actions</span>
             </div>
-            {parentCohorts.map((cohort) => {
+            {enrichedParentCohorts.map((cohort) => {
               const isSystemCohort = cohort.cohort_name === 'All Users'
               const childCohorts = cohort.hidden ? [] : (childCohortsByParent[cohort.cohort_id] || [])
               const minSizeForSplit = Number(cohort.size || 0) >= 8
@@ -272,17 +310,31 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
                     <div className="cohort-actions">
                       <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={definitionTooltip}>
-                        ℹ
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10"/>
+                          <path d="M12 16v-4"/>
+                          <path d="M12 8h.01"/>
+                        </svg>
                       </button>
 
                       <button
                         className="cohort-icon-button"
                         type="button"
-                        onClick={() => handleRandomSplit(cohort)}
-                        disabled={!minSizeForSplit || splittingId === cohort.cohort_id}
-                        title={minSizeForSplit ? 'Create random subsets from this cohort' : 'Minimum 8 users required'}
+                        onClick={() => handleSplitToggle(cohort)}
+                        disabled={(!minSizeForSplit && !cohort.has_splits) || splittingId === cohort.cohort_id}
+                        title={cohort.has_splits ? "Remove split" : "Split cohort"}
                       >
-                        {splittingId === cohort.cohort_id ? '⏳' : '🎲'}
+                        <span className={cohort.has_splits ? "split-active" : ""} style={{ display: 'inline-flex' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="6" r="1.5"/>
+                            <circle cx="6" cy="18" r="1.5"/>
+                            <circle cx="12" cy="18" r="1.5"/>
+                            <circle cx="18" cy="18" r="1.5"/>
+                            <path d="M12 7.5v6"/>
+                            <path d="M12 13.5l-6 4.5"/>
+                            <path d="M12 13.5l6 4.5"/>
+                          </svg>
+                        </span>
                       </button>
 
                       <button
@@ -291,7 +343,26 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                         onClick={() => handleToggleHide(cohort.cohort_id)}
                         title={cohort.hidden ? 'Show cohort in charts' : 'Hide cohort from charts'}
                       >
-                        👁
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M1 12s4-6 11-6 11 6 11 6-4 6-11 6S1 12 1 12z"/>
+                          <circle cx="12" cy="12" r="3"/>
+                        </svg>
+                      </button>
+
+                      <button
+                        className="cohort-icon-button"
+                        onClick={() => handleEditSaved(cohort.source_saved_id)}
+                        disabled={!cohort.source_saved_id}
+                        title={
+                          cohort.source_saved_id
+                            ? "Edit saved cohort definition"
+                            : "Cannot edit (not linked to a saved cohort)"
+                        }
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M12 20h9"/>
+                          <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                        </svg>
                       </button>
 
                       <button
@@ -301,7 +372,13 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                         disabled={deletingId === cohort.cohort_id || isSystemCohort}
                         title={isSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
                       >
-                        {deletingId === cohort.cohort_id ? '⏳' : '🗑'}
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18"/>
+                          <path d="M8 6v-2h8v2"/>
+                          <path d="M19 6l-1 14H6L5 6"/>
+                          <path d="M10 11v6"/>
+                          <path d="M14 11v6"/>
+                        </svg>
                       </button>
                     </div>
                   </div>
@@ -312,6 +389,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                     return (
                       <div key={child.cohort_id} className="cohort-list-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
                         <div className="cohort-list-name cohort-left">
+                          <span className="child-prefix">↳</span>
                           <span>{child.cohort_name}</span>
                           {child.hidden && <span className="badge-hidden">Hidden</span>}
                           {!child.is_active && <span className="badge-inactive">Inactive</span>}
@@ -320,9 +398,6 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                         <span className="cohort-list-size">{formatCohortSize(child.size)}</span>
 
                         <div className="cohort-actions">
-                          <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={childDefinitionTooltip}>
-                            ℹ
-                          </button>
                           <button
                             className="cohort-icon-button"
                             type="button"
@@ -330,7 +405,13 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                             disabled={deletingId === child.cohort_id || isChildSystemCohort}
                             title={isChildSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
                           >
-                            {deletingId === child.cohort_id ? '⏳' : '🗑'}
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 6h18"/>
+                              <path d="M8 6v-2h8v2"/>
+                              <path d="M19 6l-1 14H6L5 6"/>
+                              <path d="M10 11v6"/>
+                              <path d="M14 11v6"/>
+                            </svg>
                           </button>
                         </div>
                       </div>
