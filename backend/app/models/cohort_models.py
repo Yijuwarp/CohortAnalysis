@@ -27,6 +27,7 @@ class CreateCohortRequest(BaseModel):
     logic_operator: str
     condition_logic: str | None = None
     join_type: str = "condition_met"
+    source_saved_id: str | None = None
     conditions: list[CohortCondition] = Field(max_length=5)
 
     @field_validator("logic_operator")
@@ -54,3 +55,45 @@ class CreateCohortRequest(BaseModel):
         if normalized not in {"condition_met", "first_event"}:
             raise ValueError("join_type must be 'condition_met' or 'first_event'")
         return normalized
+
+
+class SavedCohortCreate(BaseModel):
+    name: str = Field(min_length=1)
+    logic_operator: str
+    condition_logic: str | None = None
+    join_type: str = "condition_met"
+    conditions: list[CohortCondition] = Field(max_length=5)
+
+    @field_validator("logic_operator")
+    @classmethod
+    def validate_logic_operator(cls, value: str) -> str:
+        normalized = value.upper()
+        if normalized not in {"AND", "OR"}:
+            raise ValueError("logic_operator must be either AND or OR")
+        return normalized
+
+    @field_validator("condition_logic")
+    @classmethod
+    def validate_condition_logic(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        normalized = value.upper()
+        if normalized not in {"AND", "OR"}:
+            raise ValueError("condition_logic must be either AND or OR")
+        return normalized
+
+    @field_validator("join_type")
+    @classmethod
+    def validate_join_type(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in {"condition_met", "first_event"}:
+            raise ValueError("join_type must be 'condition_met' or 'first_event'")
+        return normalized
+
+
+class SavedCohortResponse(BaseModel):
+    id: str
+    name: str
+    definition: dict
+    created_at: str
+    updated_at: str

@@ -37,3 +37,8 @@ This snapshot is used by retention and monetization-related analytics joins.
 ## Additional cohort operations
 - Hide/unhide (`PATCH /cohorts/{id}/hide`)
 - Random split (`POST /cohorts/{id}/random_split`) into two child cohorts
+
+## Saved Cohorts
+Saved Cohorts are global, reusable cohort definitions independent of the active dataset. 
+- Schema: `saved_cohorts` table storing ID, name, definition JSON.
+- Behaviors: When added to a dataset, a materialized `cohort` applies the definition and tracks `source_saved_id`. Editing a saved cohort automatically triggers an update and rebuild for all active cohorts derived from it.

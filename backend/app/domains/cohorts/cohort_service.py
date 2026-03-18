@@ -22,7 +22,19 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             hidden BOOLEAN DEFAULT FALSE,
             split_parent_cohort_id INTEGER,
             split_group_index INTEGER,
-            split_group_total INTEGER
+            split_group_total INTEGER,
+            source_saved_id UUID
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saved_cohorts (
+            id UUID PRIMARY KEY,
+            name TEXT NOT NULL,
+            definition JSON NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """
     )
@@ -123,6 +135,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_index INTEGER")
     if "split_group_total" not in existing_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_total INTEGER")
+    if "source_saved_id" not in existing_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN source_saved_id UUID")
 
     snapshot_columns = {
         row[0]
@@ -167,11 +181,11 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
 
     cohort_id = connection.execute(
         """
-        INSERT INTO cohorts (cohort_id, name, logic_operator, join_type, is_active)
-        VALUES (nextval('cohorts_id_sequence'), ?, ?, ?, TRUE)
+        INSERT INTO cohorts (cohort_id, name, logic_operator, join_type, is_active, source_saved_id)
+        VALUES (nextval('cohorts_id_sequence'), ?, ?, ?, TRUE, ?)
         RETURNING cohort_id
         """,
-        [payload.name, (payload.condition_logic or payload.logic_operator or "AND").upper(), payload.join_type],
+        [payload.name, (payload.condition_logic or payload.logic_operator or "AND").upper(), payload.join_type, payload.source_saved_id],
     ).fetchone()[0]
 
     for condition in payload.conditions:
@@ -232,6 +246,7 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
             c.split_parent_cohort_id,
             c.split_group_index,
             c.split_group_total,
+            c.source_saved_id,
             cc.event_name,
             cc.min_event_count,
             cc.property_column,
@@ -244,7 +259,7 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
     ).fetchall()
 
     cohorts: dict[int, dict[str, object]] = {}
-    for cohort_id, name, is_active, logic_operator, join_type, hidden, split_parent_cohort_id, split_group_index, split_group_total, event_name, min_event_count, property_column, property_operator, property_values in rows:
+    for cohort_id, name, is_active, logic_operator, join_type, hidden, split_parent_cohort_id, split_group_index, split_group_total, source_saved_id, event_name, min_event_count, property_column, property_operator, property_values in rows:
         cohort_id = int(cohort_id)
         if cohort_id not in cohorts:
             logic = str(logic_operator or "AND").upper()
@@ -259,6 +274,7 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
                 "split_parent_cohort_id": int(split_parent_cohort_id) if split_parent_cohort_id is not None else None,
                 "split_group_index": int(split_group_index) if split_group_index is not None else None,
                 "split_group_total": int(split_group_total) if split_group_total is not None else None,
+                "source_saved_id": str(source_saved_id) if source_saved_id is not None else None,
                 "conditions": [],
             }
 

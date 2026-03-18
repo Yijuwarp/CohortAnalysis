@@ -60,6 +60,10 @@ Backend persistence uses one DuckDB file (`backend/cohort_analysis.duckdb`). Req
 7. `cohort_activity_snapshot`
    - Event snapshot for members: `cohort_id`, `user_id`, `event_time`, `event_name`
 
+8. `saved_cohorts`
+   - Global reusable definitions: `id`, `name`, `definition` (JSON)
+   - Independent of specific active datasets, used to instantiate new active cohorts.
+
 ### Scope and metadata tables
 8. `dataset_scope`
    - Singleton metadata row (`id=1`): filters JSON, row counts, total scoped events, updated timestamp

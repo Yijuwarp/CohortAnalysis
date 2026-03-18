@@ -10,6 +10,8 @@ from app.domains.cohorts.cohort_service import (
     random_split_cohort,
     toggle_cohort_hide,
 )
+from app.models.cohort_models import SavedCohortCreate
+from app.domains.cohorts.saved_cohort_service import estimate_cohort
 
 router = APIRouter()
 
@@ -19,6 +21,13 @@ async def create_cohort_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     return create_cohort(conn, request)
+
+@router.post("/cohorts/estimate")
+async def estimate_cohort_endpoint(
+    request: SavedCohortCreate,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return estimate_cohort(conn, request)
 
 @router.get("/cohorts")
 async def list_cohorts_endpoint(

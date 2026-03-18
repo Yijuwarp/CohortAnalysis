@@ -2423,9 +2423,53 @@ tbody tr:hover {
 }
 
 .funnel-table-cohort h4 {
-  margin: 0 0 8px;
+  margin-top: 24px;
   font-size: 14px;
   font-weight: 700;
+}
+
+.searchable-select-option-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: transparent !important;
+}
+
+.cohort-icon-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.cohort-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.cohort-icon-button svg {
+  color: #666;
+  transition: color 0.15s ease;
+}
+
+.cohort-icon-button:hover svg {
+  color: #111;
+}
+
+.cohort-icon-button:disabled svg {
+  color: #bbb;
+}
+
+.split-active {
+  transform: rotate(180deg);
+  display: inline-block;
+}
+
+.child-prefix {
+  margin-right: 6px;
+  color: #999;
+}
+
+.cohort-row.child {
+  padding-left: 12px;
 }
 
 /* --- Modal ---------------------------------------- */

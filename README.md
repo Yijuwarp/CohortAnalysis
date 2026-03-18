@@ -42,6 +42,12 @@ It supports:
 * `GET /date-range`
 * `POST /cohorts`
 * `GET /cohorts`
+* `POST /cohorts/estimate`
+* `GET /saved-cohorts`
+* `POST /saved-cohorts`
+* `GET /saved-cohorts/{id}`
+* `PUT /saved-cohorts/{id}`
+* `DELETE /saved-cohorts/{id}`
 * `PUT /cohorts/{cohort_id}`
 * `DELETE /cohorts/{cohort_id}`
 * `PATCH /cohorts/{cohort_id}/hide`

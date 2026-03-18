@@ -11,13 +11,15 @@ State transitions:
 ## Workspace layout
 - Top bar: dataset summary + navigation actions
 - Left pane (collapsible):
-  - Filters
-  - Analytics Settings
-  - Cohorts
+  - Filters (Date range and property filters)
+  - Analytics Settings (Retention event, global max day, revenue configuration)
+  - Cohorts (Saved cohorts dropdown, Add Cohort, New Cohort modal, and list of materialized dataset cohorts)
 - Main area tabs:
   - Retention
   - Usage
   - Monetization
+  - Funnels
+  - Flows
 
 ## Data dependencies
 Frontend API wrapper: `frontend/src/api.js`.
