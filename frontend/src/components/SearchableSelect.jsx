@@ -8,10 +8,11 @@ const normalizeOption = (option) => {
   return {
     label: String(option?.label ?? option?.value ?? ''),
     value: String(option?.value ?? option?.label ?? ''),
+    disabled: option?.disabled === true,
   }
 }
 
-export default function SearchableSelect({ options, value, onChange, placeholder = 'Select...', disabled = false, className = '' }) {
+export default function SearchableSelect({ options, value, onChange, placeholder = 'Select...', disabled = false, className = '', style = {} }) {
   const rootRef = useRef(null)
   const listboxId = useId()
   const [isOpen, setIsOpen] = useState(false)
@@ -96,7 +97,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
   const hasNoMatches = !hasNoOptions && filteredOptions.length === 0
 
   return (
-    <div className={`searchable-select ${className} ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef}>
+    <div className={`searchable-select ${className} ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef} style={style}>
       <input
         className="searchable-select-input"
         title={selectedOption?.label || value || ''}
@@ -119,7 +120,19 @@ export default function SearchableSelect({ options, value, onChange, placeholder
       />
 
       {isOpen && (
-        <div className="searchable-select-menu">
+        <div 
+          className="searchable-select-dropdown"
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: 0,
+            width: "100%",
+            zIndex: 9999,
+            background: "#fff",
+            border: "1px solid #ddd",
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)"
+          }}
+        >
           <div className="searchable-select-list" role="listbox" id={listboxId}>
             {hasNoOptions && <div className="searchable-select-empty">No options available</div>}
             {hasNoMatches && <div className="searchable-select-empty">No matching results</div>}
@@ -132,13 +145,19 @@ export default function SearchableSelect({ options, value, onChange, placeholder
                   <button
                     className={`searchable-select-option ${isActive ? 'searchable-select-option-active' : ''} ${
                       isSelected ? 'searchable-select-option-selected' : ''
-                    }`}
+                    } ${option.disabled ? 'searchable-select-option-disabled' : ''}`}
                     role="option"
                     aria-selected={isSelected}
+                    aria-disabled={option.disabled}
                     type="button"
                     key={`${option.value}-${index}`}
-                    onMouseEnter={() => setActiveIndex(index)}
-                    onClick={() => handleSelect(option.value)}
+                    disabled={option.disabled}
+                    onMouseEnter={() => !option.disabled && setActiveIndex(index)}
+                    onClick={() => {
+                      if (!option.disabled) {
+                        handleSelect(option.value)
+                      }
+                    }}
                   >
                     <span title={option.label}>{option.label}</span>
                   </button>

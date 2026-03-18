@@ -60,6 +60,38 @@ export async function updateCohort(cohortId, payload) {
   })
 }
 
+export async function createSavedCohort(payload) {
+  return request('/saved-cohorts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function getSavedCohorts() {
+  return request('/saved-cohorts', { method: 'GET' })
+}
+
+export async function updateSavedCohort(id, payload) {
+  return request(`/saved-cohorts/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function deleteSavedCohort(id) {
+  return request(`/saved-cohorts/${id}`, { method: 'DELETE' })
+}
+
+export async function estimateCohort(payload) {
+  return request('/cohorts/estimate', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function applyFilters(payload) {
   return request('/apply-filters', {
     method: 'POST',

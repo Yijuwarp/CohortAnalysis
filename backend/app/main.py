@@ -15,6 +15,7 @@ from app.routers import (
     metadata_router,
     revenue_router,
     upload_router,
+    saved_cohorts_router,
 )
 from app.domains.ingestion.type_detection import detect_column_type
 from app.utils.math_utils import wilson_ci
@@ -47,6 +48,7 @@ for router in (
     metadata_router.router,
     comparison_router.router,
     funnels_router.router,
+    saved_cohorts_router.router,
 ):
     app.include_router(router)
 

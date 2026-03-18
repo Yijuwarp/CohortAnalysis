@@ -2423,9 +2423,15 @@ tbody tr:hover {
 }
 
 .funnel-table-cohort h4 {
-  margin: 0 0 8px;
+  margin-top: 24px;
   font-size: 14px;
   font-weight: 700;
+}
+
+.searchable-select-option-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background-color: transparent !important;
 }
 
 /* --- Modal ---------------------------------------- */

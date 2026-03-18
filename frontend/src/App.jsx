@@ -3,7 +3,7 @@ import { getRetention, getScope, listEvents, uploadCSV } from './api'
 import Mapping from './components/Mapping'
 import FilterData from './components/FilterData'
 import RevenueConfig from './components/RevenueConfig'
-import CohortForm from './components/CohortForm'
+import CohortPane from './components/CohortPane'
 import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
 import MonetizationTable from './components/MonetizationTable'
@@ -354,7 +354,7 @@ export default function App() {
                   {leftPaneTab === 'cohorts' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Create and manage cohorts</p>
-                      <CohortForm refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
+                      <CohortPane refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
                     </section>
                   )}
                 </>

@@ -1,10 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
-import { createCohort, deleteCohort, getColumnValues, getColumns, listCohorts, listEvents, randomSplitCohort, toggleCohortHide, updateCohort } from '../api'
+import { getColumnValues, getColumns, listEvents, createSavedCohort, updateSavedCohort, estimateCohort, createCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
-
-const STRUCTURAL_COLUMNS = new Set(['user_id', 'event_name', 'event_time'])
 
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
@@ -15,32 +13,9 @@ const TYPE_OPERATOR_MAP = {
 
 const normalizeColumnType = (dataType = '') => {
   const upper = String(dataType).toUpperCase()
-  if (upper === 'BOOLEAN' || upper === 'BOOL') {
-    return 'BOOLEAN'
-  }
-  if (upper.includes('TIMESTAMP') || upper === 'DATE') {
-    return 'TIMESTAMP'
-  }
-  if (
-    [
-      'TINYINT',
-      'SMALLINT',
-      'INTEGER',
-      'BIGINT',
-      'HUGEINT',
-      'UTINYINT',
-      'USMALLINT',
-      'UINTEGER',
-      'UBIGINT',
-      'FLOAT',
-      'REAL',
-      'DOUBLE',
-      'DECIMAL',
-    ].includes(upper) ||
-    upper.startsWith('DECIMAL')
-  ) {
-    return 'NUMERIC'
-  }
+  if (upper === 'BOOLEAN' || upper === 'BOOL') return 'BOOLEAN'
+  if (upper.includes('TIMESTAMP') || upper === 'DATE') return 'TIMESTAMP'
+  if (['TINYINT', 'SMALLINT', 'INTEGER', 'BIGINT', 'HUGEINT', 'UTINYINT', 'USMALLINT', 'UINTEGER', 'UBIGINT', 'FLOAT', 'REAL', 'DOUBLE', 'DECIMAL'].includes(upper) || upper.startsWith('DECIMAL')) return 'NUMERIC'
   return 'TEXT'
 }
 
@@ -53,91 +28,66 @@ const createEmptyCondition = (defaultEvent = '') => ({
 
 const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
 
-const formatPropertyFilter = (propertyFilter) => {
-  if (!propertyFilter) {
-    return ''
-  }
-
-  const formattedValues = Array.isArray(propertyFilter.values)
-    ? propertyFilter.values.join(', ')
-    : propertyFilter.values
-
-  if (isMultiOperator(propertyFilter.operator)) {
-    return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} (${formattedValues})`
-  }
-
-  return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`
-}
-
 const formatCohortSize = (size) => {
   const numeric = Number(size || 0)
-  if (numeric >= 1000000) {
-    return `${(numeric / 1000000).toFixed(numeric >= 10000000 ? 0 : 1)}M`
-  }
-  if (numeric >= 1000) {
-    return `${(numeric / 1000).toFixed(numeric >= 100000 ? 0 : 1)}K`
-  }
+  if (numeric >= 1000000) return `${(numeric / 1000000).toFixed(numeric >= 10000000 ? 0 : 1)}M`
+  if (numeric >= 1000) return `${(numeric / 1000).toFixed(numeric >= 100000 ? 0 : 1)}K`
   return String(numeric)
 }
 
-const describeJoinType = (joinType) => (joinType === 'first_event' ? 'Join on first event' : 'Join when condition is met')
-
-const buildCohortDefinition = (cohort) => {
-  const logic = cohort.condition_logic || cohort.logic_operator || 'AND'
-  const conditionLines = (cohort.conditions || []).map((condition) => {
-    const property = condition.property_filter ? formatPropertyFilter(condition.property_filter) : ''
-    return `${condition.event_name} ≥ ${condition.min_event_count}${property}`
-  })
-  return [`Logic: ${logic}`, ...conditionLines, describeJoinType(cohort.join_type)].join(' • ')
-}
-
 function generateCohortName(currentConditions, currentLogicOperator) {
-  if (!currentConditions || currentConditions.length === 0) {
-    return 'Untitled Cohort'
-  }
-
+  if (!currentConditions || currentConditions.length === 0) return 'Untitled Cohort'
   const parts = currentConditions.map((cond) => {
     const event = cond.event_name || 'event'
     const count = cond.min_event_count ?? 1
     const propertyFilter = cond.property_filter
 
-    let base = ''
-
-    if (count > 1) {
-      base = `Triggered ${event} more than ${count} times`
-    } else {
-      base = `Triggered ${event}`
-    }
-
+    let base = count > 1 ? `Triggered ${event} more than ${count} times` : `Triggered ${event}`
     if (propertyFilter) {
-      const values = Array.isArray(propertyFilter.values)
-        ? propertyFilter.values.join(', ')
-        : propertyFilter.values
-
+      const values = Array.isArray(propertyFilter.values) ? propertyFilter.values.join(', ') : propertyFilter.values
       base += ` where ${propertyFilter.column} ${propertyFilter.operator} ${values}`
     }
-
     return base
   })
-
   return parts.join(` ${currentLogicOperator} `)
 }
 
-export default function CohortForm({ refreshToken, onCohortsChanged }) {
-  const [name, setName] = useState('')
-  const [conditions, setConditions] = useState([createEmptyCondition('')])
-  const [logicOperator, setLogicOperator] = useState('AND')
-  const [joinType, setJoinType] = useState('condition_met')
-  const [result, setResult] = useState(null)
+export default function CohortForm({ mode, initialData, onCancel, onSave, refreshToken }) {
+  const isEditing = mode === 'edit_saved'
+  const [name, setName] = useState(initialData?.name || '')
+  
+  const initialLogic = initialData?.definition?.logic_operator || 'AND'
+  const initialJoin = initialData?.definition?.join_type || 'condition_met'
+  const [logicOperator, setLogicOperator] = useState(initialLogic)
+  const [joinType, setJoinType] = useState(initialJoin)
+  
+  const [conditions, setConditions] = useState(() => {
+    if (initialData?.definition?.conditions?.length > 0) {
+      return initialData.definition.conditions.map((condition) => {
+        const pf = condition.property_filter || null
+        const hasValues = Array.isArray(pf?.values) ? pf.values.length > 0 : pf?.values !== null && pf?.values !== undefined && pf?.values !== ''
+        return {
+          ...condition,
+          property_filter: pf,
+          property_filter_expanded: !!pf && hasValues,
+          property_column: pf?.column || '',
+          property_operator: pf?.operator || '',
+          property_values: Array.isArray(pf?.values) ? pf.values : (pf?.values ? [pf.values] : []),
+        }
+      })
+    }
+    return [createEmptyCondition('')]
+  })
+
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const [cohorts, setCohorts] = useState([])
-  const [deletingId, setDeletingId] = useState(null)
+  
   const [events, setEvents] = useState([])
   const [columns, setColumns] = useState([])
   const [valueCache, setValueCache] = useState({})
-  const [editingCohortId, setEditingCohortId] = useState(null)
-  const [splittingId, setSplittingId] = useState(null)
+  
+  const [estimating, setEstimating] = useState(false)
+  const [estimatedSize, setEstimatedSize] = useState(null)
 
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
 
@@ -153,80 +103,42 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   )
 
   const getAllowedOperators = (columnName, map = columnByName) => {
-    if (!columnName || !map[columnName]) {
-      return OPERATOR_ORDER
-    }
+    if (!columnName || !map[columnName]) return OPERATOR_ORDER
     const type = normalizeColumnType(map[columnName]?.data_type)
     return TYPE_OPERATOR_MAP[type] || OPERATOR_ORDER
   }
 
   const getDefaultValuesForOperator = (operator, columnType) => {
-    if (isMultiOperator(operator)) {
-      return []
-    }
-    if (columnType === 'BOOLEAN') {
-      return true
-    }
+    if (isMultiOperator(operator)) return []
+    if (columnType === 'BOOLEAN') return true
     return ''
   }
 
   const getValueCacheKey = (eventName, columnName) => `${eventName || ''}__${columnName || ''}`
 
   const ensureColumnValuesLoaded = async (columnName, eventName) => {
-    if (!columnName || !eventName) {
-      return
-    }
-
+    if (!columnName || !eventName) return
     const cacheKey = getValueCacheKey(eventName, columnName)
-    if (valueCache[cacheKey]) {
-      return
-    }
+    if (valueCache[cacheKey]) return
 
     try {
       const response = await getColumnValues(columnName, eventName)
       setValueCache((prev) => ({
         ...prev,
-        [cacheKey]: {
-          values: (response.values || []).map((value) => String(value)),
-        },
+        [cacheKey]: { values: (response.values || []).map((value) => String(value)) },
       }))
     } catch {
-      setValueCache((prev) => ({
-        ...prev,
-        [cacheKey]: {
-          values: [],
-        },
-      }))
+      setValueCache((prev) => ({ ...prev, [cacheKey]: { values: [] } }))
     }
   }
-
-  const resetForm = () => {
-    setEditingCohortId(null)
-    setName('')
-    setConditions([createEmptyCondition(events[0] || '')])
-    setLogicOperator('AND')
-    setJoinType('condition_met')
-  }
-
-  const loadCohorts = async () => {
-    try {
-      const response = await listCohorts()
-      setCohorts(response.cohorts || [])
-    } catch {
-      setCohorts([])
-    }
-  }
-
-  useEffect(() => {
-    loadCohorts()
-  }, [refreshToken])
 
   useEffect(() => {
     conditions.forEach((cond) => {
-      if (cond.property_column && cond.event_name) {
-        const cacheKey = `${cond.event_name}__${cond.property_column}`
+      const pfCol = cond.property_filter?.column || cond.property_column
+      if (pfCol && cond.event_name) {
+        const cacheKey = getValueCacheKey(cond.event_name, pfCol)
         if (!valueCache[cacheKey]) {
-          ensureColumnValuesLoaded(cond.property_column, cond.event_name)
+          ensureColumnValuesLoaded(pfCol, cond.event_name)
         }
       }
     })
@@ -239,39 +151,72 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
         const eventList = eventsResponse.events || []
         setEvents(eventList)
         setColumns(columnsResponse.columns || [])
-        setConditions((prev) =>
-          prev.map((condition) => {
-            if (eventList.length === 0) {
-              return { ...condition, event_name: '', property_filter: null, property_filter_expanded: false }
-            }
-
-            if (condition.event_name && eventList.includes(condition.event_name)) {
-              return condition
-            }
-
-            return { ...condition, event_name: eventList[0], property_filter: null, property_filter_expanded: false }
-          })
-        )
+        
+        if (!initialData) {
+          setConditions((prev) =>
+            prev.map((condition) => {
+              if (eventList.length === 0) return { ...condition, event_name: '', property_filter: null, property_filter_expanded: false }
+              if (condition.event_name && eventList.includes(condition.event_name)) return condition
+              return { ...condition, event_name: eventList[0], property_filter: null, property_filter_expanded: false }
+            })
+          )
+        }
       } catch {
         setEvents([])
         setColumns([])
-        setConditions((prev) =>
-          prev.map((condition) => ({ ...condition, event_name: '', property_filter: null, property_filter_expanded: false }))
-        )
       }
     }
     load()
-  }, [refreshToken])
+  }, [refreshToken, initialData])
+
+  // Estimation effect
+  useEffect(() => {
+    const delayDebounceFn = setTimeout(() => {
+      if (events.length === 0 || conditions.some((c) => !c.event_name)) {
+        setEstimatedSize(null)
+        return
+      }
+
+      const hasEmptyNumericFilter = conditions.some((condition) => {
+        const propertyFilter = condition.property_filter
+        if (!propertyFilter || isMultiOperator(propertyFilter.operator)) return false
+        const columnType = normalizeColumnType(columnByName[propertyFilter.column]?.data_type)
+        return columnType === 'NUMERIC' && propertyFilter.values === ''
+      })
+      if (hasEmptyNumericFilter) {
+        setEstimatedSize(null)
+        return
+      }
+
+      setEstimating(true)
+      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => condition)
+      
+      const payload = {
+        name: name.trim() || generateCohortName(payloadConditions, logicOperator),
+        logic_operator: logicOperator,
+        join_type: joinType,
+        conditions: payloadConditions,
+      }
+      
+      estimateCohort(payload).then(res => {
+        setEstimatedSize(res.estimated_users)
+      }).catch(err => {
+        setEstimatedSize(null)
+      }).finally(() => {
+        setEstimating(false)
+      })
+
+    }, 300)
+
+    return () => clearTimeout(delayDebounceFn)
+  }, [conditions, logicOperator, joinType, name, events, columnByName])
 
   const handleSubmit = async () => {
     setError('')
-    setResult(null)
-
     if (events.length === 0) {
-      setError('No events available under current filters')
+      setError('No events available')
       return
     }
-
     if (conditions.some((condition) => !condition.event_name)) {
       setError('Event name is required')
       return
@@ -279,12 +224,11 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
 
     const hasEmptyNumericFilter = conditions.some((condition) => {
       const propertyFilter = condition.property_filter
-      if (!propertyFilter || isMultiOperator(propertyFilter.operator)) {
-        return false
-      }
+      if (!propertyFilter || isMultiOperator(propertyFilter.operator)) return false
       const columnType = normalizeColumnType(columnByName[propertyFilter.column]?.data_type)
       return columnType === 'NUMERIC' && propertyFilter.values === ''
     })
+    
     if (hasEmptyNumericFilter) {
       setError('Numeric property filters require a value')
       return
@@ -293,22 +237,30 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setLoading(true)
 
     try {
-      const payloadConditions = conditions.map(({ property_filter_expanded, ...condition }) => condition)
+      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => condition)
       const finalName = name.trim() || generateCohortName(payloadConditions, logicOperator)
       const payload = {
         name: finalName,
         logic_operator: logicOperator,
-        condition_logic: logicOperator,
         join_type: joinType,
         conditions: payloadConditions,
       }
 
-      const isEditing = Boolean(editingCohortId)
-      const data = isEditing ? await updateCohort(editingCohortId, payload) : await createCohort(payload)
-      setResult({ ...data, mode: isEditing ? 'updated' : 'created' })
-      resetForm()
-      await loadCohorts()
-      onCohortsChanged()
+      if (isEditing) {
+        await updateSavedCohort(initialData.id, payload)
+        onSave()
+      } else {
+        const saved = await createSavedCohort(payload)
+        if (saved.is_valid === false) {
+          setError('Saved globally, but definition is invalid for this dataset (not auto-added).')
+          return
+        }
+        await createCohort({
+          ...payload,
+          source_saved_id: saved.id
+        })
+        onSave()
+      }
     } catch (err) {
       setError(err.message)
     } finally {
@@ -316,132 +268,14 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     }
   }
 
-  const handleToggleHide = async (cohortId) => {
-    setError('')
-    setResult(null)
-
-    try {
-      await toggleCohortHide(cohortId)
-      await loadCohorts()
-      onCohortsChanged()
-    } catch (err) {
-      setError(err.message)
-    }
-  }
-
-  const handleDelete = async (cohortId) => {
-    setDeletingId(cohortId)
-    setError('')
-    setResult(null)
-
-    try {
-      await deleteCohort(cohortId)
-      setCohorts((prev) => prev.filter((cohort) => cohort.cohort_id !== cohortId))
-      onCohortsChanged()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setDeletingId(null)
-    }
-  }
-
-  const handleRandomSplit = async (cohort) => {
-    setError('')
-    setResult(null)
-    setSplittingId(cohort.cohort_id)
-
-    try {
-      await randomSplitCohort(cohort.cohort_id)
-      await loadCohorts()
-      onCohortsChanged()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSplittingId(null)
-    }
-  }
-
-  const parentCohorts = useMemo(
-    () => cohorts.filter((cohort) => !cohort.split_parent_cohort_id),
-    [cohorts]
-  )
-
-  const childCohortsByParent = useMemo(() => {
-    const childrenMap = {}
-    cohorts.forEach((cohort) => {
-      if (!cohort.split_parent_cohort_id) {
-        return
-      }
-      if (!childrenMap[cohort.split_parent_cohort_id]) {
-        childrenMap[cohort.split_parent_cohort_id] = []
-      }
-      childrenMap[cohort.split_parent_cohort_id].push(cohort)
-    })
-
-    Object.keys(childrenMap).forEach((parentId) => {
-      childrenMap[parentId].sort((a, b) => (a.split_group_index ?? 0) - (b.split_group_index ?? 0))
-    })
-
-    return childrenMap
-  }, [cohorts])
-
-  const parentDefinitionTooltips = useMemo(
-    () => Object.fromEntries(parentCohorts.map((cohort) => [cohort.cohort_id, buildCohortDefinition(cohort)])),
-    [parentCohorts]
-  )
-
-  const childDefinitionTooltips = useMemo(() => {
-    const map = {}
-    Object.values(childCohortsByParent).forEach((children) => {
-      children.forEach((child) => {
-        map[child.cohort_id] = buildCohortDefinition(child)
-      })
-    })
-    return map
-  }, [childCohortsByParent])
-
-
-  const handleEdit = (cohort) => {
-    setEditingCohortId(cohort.cohort_id)
-    setName(cohort.cohort_name)
-    setLogicOperator(cohort.condition_logic || cohort.logic_operator || 'AND')
-    setJoinType(cohort.join_type || 'condition_met')
-    
-    const mappedConditions = cohort.conditions?.length
-      ? cohort.conditions.map((condition) => {
-          const pf = condition.property_filter || null
-          
-          const hasValues = Array.isArray(pf?.values)
-            ? pf.values.length > 0
-            : pf?.values !== null && pf?.values !== undefined && pf?.values !== ''
-          
-          const expanded = !!pf && hasValues
-
-          return {
-            ...condition,
-            property_filter: pf,
-            property_filter_expanded: expanded,
-            property_column: pf?.column || '',
-            property_operator: pf?.operator || '',
-            property_values: Array.isArray(pf?.values)
-              ? pf.values
-              : pf?.values
-                ? [pf.values]
-                : [],
-          }
-        })
-      : [createEmptyCondition(events[0] || '')]
-
-    setConditions(mappedConditions)
-  }
-
   return (
-    <section>
-      <div className="cohorts-section-card create-cohorts-card">
-        <h3>{editingCohortId ? 'Edit Cohort' : 'Create Cohort'}</h3>
+    <div className="modal-overlay" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)' }}>
+      <div className="modal-content card" style={{ padding: '24px', width: '800px', maxHeight: '90vh', overflowY: 'auto' }}>
+        <h3>{isEditing ? 'Edit Saved Cohort' : 'Create Saved Cohort'}</h3>
+        
         <h4><strong>Name</strong></h4>
         <div className="grid">
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional)" />
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cohort name (optional, defaults to description)" />
         </div>
 
         <h4><strong>Conditions</strong></h4>
@@ -452,6 +286,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
             <option value="OR">ANY conditions (OR)</option>
           </select>
         </div>
+        
         {conditions.map((condition, index) => {
           const propertyFilter = condition.property_filter
           const selectedColumn = propertyFilter?.column || ''
@@ -482,7 +317,6 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                   </div>
                   <div className="cohort-condition-row">
                     <span className="cohort-rule-text">at least</span>
-
                     <input
                       className="cohort-count-input"
                       type="number"
@@ -494,7 +328,6 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                         setConditions(updated)
                       }}
                     />
-
                     <span className="cohort-rule-text">times</span>
                   </div>
 
@@ -616,9 +449,7 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
                               disabled={isValueSelectionDisabled}
                               onChange={(selected) => {
                                 const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
-                                if (existing.includes(selected) || existing.length >= 100) {
-                                  return
-                                }
+                                if (existing.includes(selected) || existing.length >= 100) return
                                 const updated = [...conditions]
                                 updated[index].property_filter = {
                                   ...updated[index].property_filter,
@@ -726,145 +557,37 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
           + Add Condition
         </button>
 
-        <h4><strong>Users join the cohort</strong></h4>
+        <h4><strong>Materialization logic</strong></h4>
         <div className="cohort-join-time">
           <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
-            <option value="condition_met">When condition is met</option>
-            <option value="first_event">On first event</option>
+             <option value="condition_met">Join when condition is met</option>
+             <option value="first_event">Join on first qualifying event</option>
           </select>
         </div>
-
-        <div className="inline-controls">
-          <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
-            {loading ? (editingCohortId ? 'Updating...' : 'Creating...') : editingCohortId ? 'Update Cohort' : 'Create Cohort'}
-          </button>
-
-          {editingCohortId && (
-            <button className="button button-secondary" type="button" onClick={resetForm} disabled={loading}>
-              Cancel
-            </button>
+        
+        <div style={{ marginTop: '16px', padding: '12px', backgroundColor: '#f5f5f5', borderRadius: '4px', display: 'flex', alignItems: 'center' }}>
+          <span style={{ fontWeight: 'bold', marginRight: '8px' }}>Estimated matching users:</span>
+          {estimating ? (
+            <span style={{ color: '#666' }}>Estimating...</span>
+          ) : estimatedSize !== null ? (
+            <span style={{ color: '#1a73e8' }}>{formatCohortSize(estimatedSize)}</span>
+          ) : (
+            <span style={{ color: '#999' }}>-</span>
           )}
         </div>
-        {events.length === 0 && <p className="error">No events available under current filters</p>}
-        {error && <p className="error">{error}</p>}
-        {result && (
-          <p className="success">
-            {result.mode === 'updated' ? 'Updated' : 'Created'} cohort #{result.cohort_id} with {result.users_joined} users joined.
-          </p>
-        )}
 
+        <div className="inline-controls" style={{ marginTop: '24px', justifyContent: 'flex-end', display: 'flex', gap: '8px' }}>
+          <button className="button button-secondary" type="button" onClick={onCancel} disabled={loading}>
+            Cancel
+          </button>
+          <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
+            {loading ? 'Saving...' : 'Save Cohort'}
+          </button>
+        </div>
+
+        {events.length === 0 && <p className="error" style={{marginTop: '8px'}}>No events available under current filters</p>}
+        {error && <p className="error" style={{marginTop: '8px'}}>{error}</p>}
       </div>
-
-      <div className="cohorts-section-card existing-cohorts-card">
-        <h3>Existing Cohorts</h3>
-        {cohorts.length === 0 ? (
-          <p className="secondary-text">No cohorts created yet.</p>
-        ) : (
-          <div className="cohort-list-table">
-            <div className="cohort-list-header cohort-list-row">
-              <span>Name</span>
-              <span>Size</span>
-              <span>Actions</span>
-            </div>
-            {parentCohorts.map((cohort) => {
-              const isSystemCohort = cohort.cohort_name === 'All Users'
-              const childCohorts = cohort.hidden ? [] : (childCohortsByParent[cohort.cohort_id] || [])
-              const minSizeForSplit = Number(cohort.size || 0) >= 8
-              const definitionTooltip = parentDefinitionTooltips[cohort.cohort_id]
-
-              return (
-                <Fragment key={cohort.cohort_id}>
-                  <div className="cohort-list-row cohort-row" title={cohort.is_active ? '' : 'No matching members under current filters'}>
-                    <div className="cohort-list-name cohort-left">
-                      <span>{cohort.cohort_name}</span>
-                      {cohort.hidden && <span className="badge-hidden">Hidden</span>}
-                      {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
-                    </div>
-
-                    <span className="cohort-list-size">{formatCohortSize(cohort.size)}</span>
-
-                    <div className="cohort-actions">
-                      <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={definitionTooltip}>
-                        ℹ
-                      </button>
-
-                      <button
-                        className="cohort-icon-button"
-                        type="button"
-                        onClick={() => handleRandomSplit(cohort)}
-                        disabled={!minSizeForSplit || splittingId === cohort.cohort_id}
-                        title={minSizeForSplit ? 'Create random subsets from this cohort' : 'Minimum 8 users required'}
-                      >
-                        {splittingId === cohort.cohort_id ? '⏳' : '🎲'}
-                      </button>
-
-                      <button
-                        className="cohort-icon-button"
-                        type="button"
-                        onClick={() => handleToggleHide(cohort.cohort_id)}
-                        title={cohort.hidden ? 'Show cohort in charts' : 'Hide cohort from charts'}
-                      >
-                        👁
-                      </button>
-
-                      <button
-                        className="cohort-icon-button"
-                        type="button"
-                        onClick={() => handleEdit(cohort)}
-                        disabled={isSystemCohort}
-                        title={isSystemCohort ? 'System cohort cannot be modified' : 'Edit cohort'}
-                      >
-                        ✏
-                      </button>
-
-                      <button
-                        className="cohort-icon-button"
-                        type="button"
-                        onClick={() => handleDelete(cohort.cohort_id)}
-                        disabled={deletingId === cohort.cohort_id || isSystemCohort}
-                        title={isSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
-                      >
-                        {deletingId === cohort.cohort_id ? '⏳' : '🗑'}
-                      </button>
-                    </div>
-                  </div>
-
-                  {childCohorts.map((child) => {
-                    const isChildSystemCohort = child.cohort_name === 'All Users'
-                    const childDefinitionTooltip = childDefinitionTooltips[child.cohort_id]
-                    return (
-                      <div key={child.cohort_id} className="cohort-list-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
-                        <div className="cohort-list-name cohort-left">
-                          <span>{child.cohort_name}</span>
-                          {child.hidden && <span className="badge-hidden">Hidden</span>}
-                          {!child.is_active && <span className="badge-inactive">Inactive</span>}
-                        </div>
-
-                        <span className="cohort-list-size">{formatCohortSize(child.size)}</span>
-
-                        <div className="cohort-actions">
-                          <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={childDefinitionTooltip}>
-                            ℹ
-                          </button>
-                          <button
-                            className="cohort-icon-button"
-                            type="button"
-                            onClick={() => handleDelete(child.cohort_id)}
-                            disabled={deletingId === child.cohort_id || isChildSystemCohort}
-                            title={isChildSystemCohort ? 'System cohort cannot be deleted' : 'Delete cohort'}
-                          >
-                            {deletingId === child.cohort_id ? '⏳' : '🗑'}
-                          </button>
-                        </div>
-                      </div>
-                    )
-                  })}
-                </Fragment>
-              )
-            })}
-          </div>
-        )}
-      </div>
-    </section>
+    </div>
   )
 }
