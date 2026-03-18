@@ -222,6 +222,17 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
   }, [refreshToken])
 
   useEffect(() => {
+    conditions.forEach((cond) => {
+      if (cond.property_column && cond.event_name) {
+        const cacheKey = `${cond.event_name}__${cond.property_column}`
+        if (!valueCache[cacheKey]) {
+          ensureColumnValuesLoaded(cond.property_column, cond.event_name)
+        }
+      }
+    })
+  }, [conditions, valueCache])
+
+  useEffect(() => {
     const load = async () => {
       try {
         const [eventsResponse, columnsResponse] = await Promise.all([listEvents(), getColumns()])
@@ -395,11 +406,33 @@ export default function CohortForm({ refreshToken, onCohortsChanged }) {
     setName(cohort.cohort_name)
     setLogicOperator(cohort.condition_logic || cohort.logic_operator || 'AND')
     setJoinType(cohort.join_type || 'condition_met')
-    setConditions(
-      cohort.conditions?.length
-        ? cohort.conditions.map((condition) => ({ ...condition, property_filter: condition.property_filter || null, property_filter_expanded: false }))
-        : [createEmptyCondition(events[0] || '')]
-    )
+    
+    const mappedConditions = cohort.conditions?.length
+      ? cohort.conditions.map((condition) => {
+          const pf = condition.property_filter || null
+          
+          const hasValues = Array.isArray(pf?.values)
+            ? pf.values.length > 0
+            : pf?.values !== null && pf?.values !== undefined && pf?.values !== ''
+          
+          const expanded = !!pf && hasValues
+
+          return {
+            ...condition,
+            property_filter: pf,
+            property_filter_expanded: expanded,
+            property_column: pf?.column || '',
+            property_operator: pf?.operator || '',
+            property_values: Array.isArray(pf?.values)
+              ? pf.values
+              : pf?.values
+                ? [pf.values]
+                : [],
+          }
+        })
+      : [createEmptyCondition(events[0] || '')]
+
+    setConditions(mappedConditions)
   }
 
   return (
