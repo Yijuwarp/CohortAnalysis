@@ -135,13 +135,6 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
               Graph
             </button>
           </div>
-          <button
-              type="button"
-              className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
-              onClick={() => setViewMode('graph')}
-            >
-              Graph
-            </button>
         </div>
       </div>
 

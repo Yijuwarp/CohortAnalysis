@@ -10,6 +10,7 @@ import MonetizationTable from './components/MonetizationTable'
 import FunnelPane from './components/FunnelPane'
 import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
+import FlowTable from './components/FlowTable'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
@@ -372,6 +373,7 @@ export default function App() {
                 <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
+                <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flow</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
@@ -401,6 +403,9 @@ export default function App() {
                   refreshToken={retentionRefreshToken}
                   events={events}
                 />
+              )}
+              {activeTab === 'flow' && (
+                <FlowTable refreshToken={retentionRefreshToken} />
               )}
             </section>
           </div>

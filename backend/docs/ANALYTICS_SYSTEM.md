@@ -48,3 +48,71 @@ Response:
 Computation notes:
 - Includes only events marked `is_included = TRUE` in `revenue_event_selection`.
 - Uses `modified_revenue` and `modified_event_count` from `events_scoped`.
+
+## Flow Analytics
+
+### Endpoints
+
+#### `GET /flow/l1`
+Query params:
+- `start_event` (required) – the anchor event to compute flows from/to
+- `direction` – `forward` (default) or `reverse`
+
+Response:
+```json
+{
+  "rows": [
+    {
+      "path": ["start_event", "next_event"],
+      "values": {
+        "<cohort_id>": { "count": 42, "pct": 0.42 }
+      },
+      "expandable": true
+    }
+  ]
+}
+```
+
+#### `GET /flow/l2`
+Query params:
+- `start_event` (required) – the original anchor event
+- `parent_event` (required) – the L1 step to expand (i.e., the event clicked at L1)
+- `direction` – `forward` (default) or `reverse`
+
+Response:
+```json
+{
+  "parent_path": ["start_event", "parent_event"],
+  "rows": [
+    {
+      "path": ["start_event", "parent_event", "next_event"],
+      "values": {
+        "<cohort_id>": { "count": 22, "pct": 0.22 }
+      }
+    }
+  ]
+}
+```
+
+### Behavior
+
+- **Event-anchored flow analysis**: All flows are anchored to the first occurrence of `start_event` per user per cohort.
+- **First-occurrence-per-user**: Only the earliest `start_event` per user is used as the anchor — repeated occurrences are ignored.
+- **User-based percentages**: `pct = users_following_path / users_who_performed_start_event` (per cohort).
+- **Top-3 + Other**: Only the top-3 events by user count are returned as named rows. The rest are collapsed into a single "Other" row.
+- **"Other" row**: Computed in Python (not SQL). Never expandable. Only included when count > 0.
+- **Self-loop exclusion**: Transitions from an event to itself are excluded.
+- **Forward direction**: `start_event → next_event → second_event`
+- **Reverse direction**: `second_event → prev_event → start_event` (looks backward in time)
+- **Expandable flag**: `true` for named top-3 rows (potential L2 expansion), always `false` for "Other".
+- **Sorting**: Rows sorted by pct of the first visible cohort (descending), secondary sort by count.
+
+### Computation Notes
+
+- Uses `cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)`.
+- All non-hidden active cohorts are included; results returned in a single response.
+- L2 denominator = users who performed `start_event` (same as L1).
+- L2 computation is lazy — only triggered by an explicit `GET /flow/l2` request.
+- Window functions (`ROW_NUMBER`) are used instead of `DISTINCT` for correctness on multi-event users.
+- All returned numeric types are Python-native `int` / `float` (no numpy).
+

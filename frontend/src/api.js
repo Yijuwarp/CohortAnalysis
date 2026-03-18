@@ -240,3 +240,21 @@ export async function runFunnel(funnelId) {
     body: JSON.stringify({ funnel_id: funnelId }),
   })
 }
+
+// ---------------------------------------------------------------------------
+// Flow Analytics
+// ---------------------------------------------------------------------------
+
+export async function getFlowL1(startEvent, direction = 'forward') {
+  return request(
+    `/flow/l1?start_event=${encodeURIComponent(startEvent)}&direction=${encodeURIComponent(direction)}`,
+    { method: 'GET' }
+  )
+}
+
+export async function getFlowL2(startEvent, parentEvent, direction = 'forward') {
+  return request(
+    `/flow/l2?start_event=${encodeURIComponent(startEvent)}&parent_event=${encodeURIComponent(parentEvent)}&direction=${encodeURIComponent(direction)}`,
+    { method: 'GET' }
+  )
+}
