@@ -11,21 +11,23 @@ import {
 } from 'recharts'
 import { getCohortColor } from '../utils/cohortColors'
 
-export default function RetentionGraph({ data, maxDay, includeCI }) {
+export default function RetentionGraph({ data, maxDay, includeCI, mode = 'day' }) {
   if (!data || data.length === 0) return null
 
-  const days = Array.from({ length: maxDay + 1 }, (_, i) => i)
+  const labelPrefix = mode === "hour" ? "H" : "D"
+  const totalBuckets = mode === "hour" ? (maxDay * 24) : (Number(maxDay) + 1)
+  const buckets = Array.from({ length: totalBuckets }, (_, i) => i)
 
-  const chartData = days.map((day) => {
-    const row = { day: `D${day}` }
+  const chartData = buckets.map((b) => {
+    const row = { label: `${labelPrefix}${b}` }
 
     data.forEach((cohort) => {
-      const retentionValue = cohort.retention?.[String(day)]
+      const retentionValue = cohort.retention?.[String(b)]
       row[`cohort_${cohort.cohort_id}`] = retentionValue ?? null
 
       if (includeCI && cohort.retention_ci) {
-        row[`cohort_${cohort.cohort_id}_lower`] = cohort.retention_ci?.[String(day)]?.lower ?? null
-        row[`cohort_${cohort.cohort_id}_upper`] = cohort.retention_ci?.[String(day)]?.upper ?? null
+        row[`cohort_${cohort.cohort_id}_lower`] = cohort.retention_ci?.[String(b)]?.lower ?? null
+        row[`cohort_${cohort.cohort_id}_upper`] = cohort.retention_ci?.[String(b)]?.upper ?? null
       }
     })
 
@@ -37,7 +39,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="day" />
+          <XAxis dataKey="label" />
           <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
           <Tooltip formatter={(value) => (value !== null ? `${Number(value).toFixed(2)}%` : '—')} />
           <Legend />
@@ -50,7 +52,7 @@ export default function RetentionGraph({ data, maxDay, includeCI }) {
               name={cohort.cohort_name}
               stroke={getCohortColor(cohort.cohort_id, index)}
               strokeWidth={2}
-              dot={{ r: 3 }}
+              dot={mode === 'hour' ? false : { r: 3 }}
               isAnimationActive
             />
           ))}

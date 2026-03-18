@@ -139,14 +139,34 @@ export async function randomSplitCohort(cohortId) {
   })
 }
 
-export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95) {
+export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95, retentionType = 'classic') {
   const query = new URLSearchParams({
     max_day: String(maxDay),
     include_ci: String(includeCI),
     confidence: String(confidence),
+    retention_type: retentionType,
   })
 
   let path = `/retention?${query.toString()}`
+
+  if (retentionEvent !== 'any') {
+    path += `&retention_event=${encodeURIComponent(retentionEvent)}`
+  }
+
+  return request(path, {
+    method: 'GET',
+  })
+}
+
+export async function getRetentionHourly(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95, retentionType = 'classic') {
+  const query = new URLSearchParams({
+    max_day: String(maxDay),
+    include_ci: String(includeCI),
+    confidence: String(confidence),
+    retention_type: retentionType,
+  })
+
+  let path = `/retention-hourly?${query.toString()}`
 
   if (retentionEvent !== 'any') {
     path += `&retention_event=${encodeURIComponent(retentionEvent)}`

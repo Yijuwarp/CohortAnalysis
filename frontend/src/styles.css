@@ -343,23 +343,82 @@ button:disabled {
 .retention-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-end;
-  gap: 16px;
-  margin-top: var(--space-4);
+  align-items: center;
   margin-bottom: var(--space-4);
 }
 
-.retention-controls-left {
+.retention-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.ci-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.ci-control input {
+  width: auto;
+}
+
+.ci-control select {
+  width: auto;
+  padding: 2px 4px;
+  height: 28px;
+}
+
+.granularity-toggle {
+  display: flex;
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.granularity-toggle button {
+  border: none;
+  background: #f9fafb;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.granularity-toggle button:hover {
+  background: #f3f4f6;
+}
+
+.granularity-toggle button.active {
+  background: #2E7D32;
+  color: white;
+}
+
+.retention-sub-controls {
   display: flex;
   gap: 16px;
   align-items: flex-end;
-  flex-wrap: wrap;
+  margin-bottom: var(--space-4);
+  padding: 12px;
+  background: #f9fafb;
+  border-radius: 8px;
 }
 
-.retention-controls-right {
-  display: flex;
-  gap: 12px;
-  align-items: center;
+.retention-sub-controls label {
+  flex: 0 1 auto;
+}
+
+.retention-sub-controls input,
+.retention-sub-controls .searchable-select {
+  width: 200px;
+}
+
+.loader {
+  padding: 40px;
+  text-align: center;
+  color: var(--color-text-secondary);
+  font-style: italic;
 }
 
 .revenue-config-panel {

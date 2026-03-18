@@ -264,31 +264,40 @@ def _compute_retention_vectors(
     cohort_id: int,
     day: int,
     retention_event: str | None = None,
+    granularity: str = "day",
+    retention_type: str = "classic",
 ) -> tuple[list[float], int, int]:
     """
     Returns (binary_vector, n_success, n_total) for retention on given day.
     binary_vector[i] = 1 if user retained on day, 0 otherwise.
     """
+    unit = "day" if granularity == "day" else "hour"
+    
+    event_filter = ""
+    params: list = [cohort_id, day]
     if retention_event and retention_event != "any":
         event_filter = "AND es.event_name = ?"
-        params: list = [cohort_id, retention_event, day]
-    else:
-        event_filter = ""
-        params = [cohort_id, day]
+        params = [cohort_id, retention_event, day]
+
+    # Switch operator based on retention_type
+    operator = "=" if retention_type == "classic" else ">="
 
     retained_users = conn.execute(
         f"""
         SELECT DISTINCT cm.user_id
         FROM cohort_membership cm
-        JOIN cohort_activity_snapshot cas
-          ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
-        JOIN events_scoped es
-          ON es.user_id = cas.user_id
-         AND es.event_time = cas.event_time
-         AND es.event_name = cas.event_name
         WHERE cm.cohort_id = ?
-          {event_filter}
-          AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) = ?
+          AND EXISTS (
+              SELECT 1 FROM cohort_activity_snapshot cas
+              JOIN events_scoped es
+                ON es.user_id = cas.user_id
+               AND es.event_time = cas.event_time
+               AND es.event_name = cas.event_name
+              WHERE cas.cohort_id = cm.cohort_id
+                AND cas.user_id = cm.user_id
+                {event_filter}
+                AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) {operator} ?
+          )
         """,
         params,
     ).fetchall()
@@ -306,13 +315,15 @@ def _compute_retention_vectors(
 def _compute_usage_volume_vectors(
     conn: duckdb.DuckDBPyConnection,
     cohort_id: int,
-    event: str,
+    event: str | None,
     day: int,
     metric: str,
+    granularity: str = "day",
 ) -> list[float]:
     """
     Returns per-user metric vector for volume-based usage metrics.
     """
+    unit = "day" if granularity == "day" else "hour"
     cumulative = metric in ("cumulative_per_installed_user",)
     day_condition = "<= ?" if cumulative else "= ?"
 
@@ -323,8 +334,8 @@ def _compute_usage_volume_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) {day_condition}
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) >= 0
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -353,7 +364,7 @@ def _compute_usage_volume_vectors(
              AND es.event_time = cas.event_time
              AND es.event_name = cas.event_name
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) = ?
+              AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -371,13 +382,15 @@ def _compute_usage_volume_vectors(
 def _compute_unique_users_vectors(
     conn: duckdb.DuckDBPyConnection,
     cohort_id: int,
-    event: str,
+    event: str | None,
     day: int,
     metric: str,
+    granularity: str = "day",
 ) -> tuple[list[float], int, int]:
     """
     Returns (binary_vector, n_success, n_total) for unique user proportion metrics.
     """
+    unit = "day" if granularity == "day" else "hour"
     cumulative = metric == "unique_users_cumulative_percent"
     day_condition = "<= ?" if cumulative else "= ?"
 
@@ -388,8 +401,8 @@ def _compute_unique_users_vectors(
         JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) {day_condition}
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) >= 0
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
         WHERE cm.cohort_id = ?
         """,
         [event, day, cohort_id],
@@ -410,10 +423,12 @@ def _compute_revenue_vectors(
     cohort_id: int,
     day: int,
     metric: str,
+    granularity: str = "day",
 ) -> list[float]:
     """
     Returns per-user metric vector for monetization metrics.
     """
+    unit = "day" if granularity == "day" else "hour"
     cumulative = metric == "cumulative_revenue_per_acquired_user"
     day_condition = "<= ?" if cumulative else "= ?"
 
@@ -424,8 +439,8 @@ def _compute_revenue_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name IN (SELECT event_name FROM revenue_event_selection WHERE is_included = TRUE)
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) {day_condition}
-         AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) >= 0
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
+         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -447,7 +462,7 @@ def _compute_revenue_vectors(
              AND es.event_time = cas.event_time
              AND es.event_name = cas.event_name
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE) = ?
+              AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -469,7 +484,12 @@ def compare_cohorts(
     metric: str,
     day: int,
     event: str | None = None,
+    granularity: str = "day",
+    retention_type: str = "classic",
 ) -> dict:
+    if metric != "retention_rate":
+        granularity = "day"
+
     if cohort_a == cohort_b:
         raise HTTPException(status_code=400, detail="cohort_a and cohort_b must be different")
 
@@ -504,32 +524,32 @@ def compare_cohorts(
     # Compute vectors
     # ------------------------------------------------------------------
     if metric == "retention_rate":
-        vec_a, s_a, n_a = _compute_retention_vectors(conn, cohort_a, day, event)
-        vec_b, s_b, n_b = _compute_retention_vectors(conn, cohort_b, day, event)
+        vec_a, s_a, n_a = _compute_retention_vectors(conn, cohort_a, day, event, granularity, retention_type)
+        vec_b, s_b, n_b = _compute_retention_vectors(conn, cohort_b, day, event, granularity, retention_type)
         val_a = s_a / n_a if n_a > 0 else 0.0
         val_b = s_b / n_b if n_b > 0 else 0.0
 
     elif metric in ("unique_users_percent", "unique_users_cumulative_percent"):
         if not event:
             raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a, s_a, n_a = _compute_unique_users_vectors(conn, cohort_a, event, day, metric)
-        vec_b, s_b, n_b = _compute_unique_users_vectors(conn, cohort_b, event, day, metric)
+        vec_a, s_a, n_a = _compute_unique_users_vectors(conn, cohort_a, event, day, metric, granularity)
+        vec_b, s_b, n_b = _compute_unique_users_vectors(conn, cohort_b, event, day, metric, granularity)
         val_a = s_a / n_a if n_a > 0 else 0.0
         val_b = s_b / n_b if n_b > 0 else 0.0
 
     elif metric in {"per_installed_user", "cumulative_per_installed_user", "per_retained_user", "per_event_firer"}:
         if not event:
             raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a = _compute_usage_volume_vectors(conn, cohort_a, event, day, metric)
-        vec_b = _compute_usage_volume_vectors(conn, cohort_b, event, day, metric)
+        vec_a = _compute_usage_volume_vectors(conn, cohort_a, event, day, metric, granularity)
+        vec_b = _compute_usage_volume_vectors(conn, cohort_b, event, day, metric, granularity)
         n_a, n_b = len(vec_a), len(vec_b)
         s_a = s_b = None
         val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
         val_b = sum(vec_b) / n_b if n_b > 0 else 0.0
 
     elif metric in MONETIZATION_METRICS:
-        vec_a = _compute_revenue_vectors(conn, cohort_a, day, metric)
-        vec_b = _compute_revenue_vectors(conn, cohort_b, day, metric)
+        vec_a = _compute_revenue_vectors(conn, cohort_a, day, metric, granularity)
+        vec_b = _compute_revenue_vectors(conn, cohort_b, day, metric, granularity)
         n_a, n_b = len(vec_a), len(vec_b)
         s_a = s_b = None
         val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
@@ -558,14 +578,14 @@ def compare_cohorts(
             # For large sample sizes rely on the z-test only.
             if (n_a + n_b) > 5000:
                 tests = [
-                    {"name": "two_proportion_z_test", "p_value": round(p_z, 6)},
+                    {"name": "two_proportion_z_test", "p_value": round(float(p_z), 6)},
                 ]
                 p_value = float(p_z)
             else:
                 p_fish = _fisher_exact(s_a, n_a, s_b, n_b)
                 tests = [
-                    {"name": "two_proportion_z_test", "p_value": round(p_z, 6)},
-                    {"name": "fisher_exact", "p_value": round(p_fish, 6)},
+                    {"name": "two_proportion_z_test", "p_value": round(float(p_z), 6)},
+                    {"name": "fisher_exact", "p_value": round(float(p_fish), 6)},
                 ]
                 p_value = float(min(p_z, p_fish))
         else:
@@ -575,8 +595,8 @@ def compare_cohorts(
             p_t = float(t_res.pvalue)
             p_mw = float(mw_res.pvalue)
             tests = [
-                {"name": "welch_t_test", "p_value": round(p_t, 6)},
-                {"name": "mann_whitney_u", "p_value": round(p_mw, 6)},
+                {"name": "welch_t_test", "p_value": round(float(p_t), 6)},
+                {"name": "mann_whitney_u", "p_value": round(float(p_mw), 6)},
             ]
             p_value = float(min(p_t, p_mw))
 
@@ -590,7 +610,16 @@ def compare_cohorts(
     significant = bool(p_value is not None and p_value < 0.05)
 
     label = METRIC_LABELS.get(metric, metric)
-    metric_label = f"Day {day} {label}"
+    if metric == "retention_rate" and retention_type == "ever_after":
+        label = "Ever-After Retention %"
+
+    if granularity == "hour":
+        label_prefix = "Hour"
+        day_ref = f" (D{day // 24})" if day % 24 == 0 and day > 0 else ""
+        metric_label = f"{label_prefix} {day}{day_ref} {label}"
+    else:
+        label_prefix = "Day"
+        metric_label = f"{label_prefix} {day} {label}"
 
     return {
         "metric_label": metric_label,

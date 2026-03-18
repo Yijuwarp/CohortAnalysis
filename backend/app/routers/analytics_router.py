@@ -22,10 +22,23 @@ async def retention_endpoint(
     retention_event: str | None = Query(None),
     include_ci: bool = Query(False),
     confidence: float = Query(0.95),
+    retention_type: str = Query("classic"),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     parsed_max_day = parse_max_day(max_day)
-    return get_retention(conn, parsed_max_day, retention_event, include_ci, confidence)
+    return get_retention(conn, parsed_max_day, retention_event, include_ci, confidence, granularity="day", retention_type=retention_type)
+
+@router.get("/retention-hourly")
+async def retention_hourly_endpoint(
+    max_day: Any = Query(7),
+    retention_event: str | None = Query(None),
+    include_ci: bool = Query(False),
+    confidence: float = Query(0.95),
+    retention_type: str = Query("classic"),
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    parsed_max_day = parse_max_day(max_day)
+    return get_retention(conn, parsed_max_day, retention_event, include_ci, confidence, granularity="hour", retention_type=retention_type)
 
 @router.get("/events")
 async def list_events_endpoint(

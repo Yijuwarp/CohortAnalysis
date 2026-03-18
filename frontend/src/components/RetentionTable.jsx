@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react'
-import { getRetention, listEvents } from '../api'
+import { getRetention, getRetentionHourly, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
 import ComparePane from './ComparePane'
+
+function formatNumber(n) {
+  return new Intl.NumberFormat().format(n);
+}
 
 export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true }) {
   const [isPinned, setIsPinned] = useState(true)
@@ -14,14 +18,17 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [confidence, setConfidence] = useState(0.95)
   const [viewMode, setViewMode] = useState('table')
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
+  const [mode, setMode] = useState("day") // "day" | "hour"
+  const [retentionType, setRetentionType] = useState("classic") // "classic" | "ever_after"
 
-  const loadRetention = async (overrideMaxDay) => {
+  const loadRetention = async () => {
     setLoading(true)
     setError('')
 
     try {
-      const response = await getRetention(Number(maxDay), retentionEvent, includeCI, confidence)
-      setData(response.retention_table)
+      const fetchFn = mode === 'hour' ? getRetentionHourly : getRetention
+      const response = await fetchFn(Number(maxDay), retentionEvent, includeCI, confidence, retentionType)
+      setData(response.retention_table || [])
     } catch (err) {
       setError(err.message)
       setData([])
@@ -41,66 +48,39 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
 
   useEffect(() => {
     loadEvents()
+  }, [])
+
+  useEffect(() => {
     loadRetention()
-  }, [refreshToken, retentionEvent, maxDay, includeCI, confidence])
+  }, [refreshToken, retentionEvent, maxDay, includeCI, confidence, mode, retentionType])
 
-
-
-  const dayColumns = Array.from({ length: Number(maxDay) + 1 }, (_, index) => index)
+  const labelPrefix = mode === "hour" ? "H" : "D"
+  const totalBuckets = mode === "hour" ? (maxDay * 24) : (Number(maxDay) + 1)
+  const bucketColumns = Array.from({ length: totalBuckets }, (_, index) => index)
 
   return (
     <section className="card">
-      <h2>Retention</h2>
       <div className="retention-header">
-        <div className="retention-controls-left">
-          {showGlobalControls && (
-            <>
-              <label>
-                Max Day
-                <input
-                  type="number"
-                  min="0"
-                  value={maxDay}
-                  onChange={(e) => {
-                    setMaxDay(Number(e.target.value))
-                  }}
-                />
-              </label>
-              <label>
-                Retention Event
-                <SearchableSelect
-                  options={[{ label: 'Any Event', value: 'any' }, ...events]}
-                  value={retentionEvent}
-                  onChange={onRetentionEventChange}
-                  placeholder="Select retention event"
-                />
-              </label>
-            </>
-          )}
-        </div>
+        <h2>Retention</h2>
 
-        <div className="retention-controls-right">
+        <div className="retention-controls">
           <button
             type="button"
             className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
             onClick={() => setIsComparePaneOpen(prev => !prev)}
             title="Compare two cohorts statistically"
-            data-testid="open-compare-pane"
           >
             🔬 Compare
           </button>
-          <label className="significance-toggle">
-            <span className="stat-icon">σ</span>
-            <span>Significance</span>
+
+          <div className="ci-control">
+            <label>CI</label>
             <input
               type="checkbox"
               checked={includeCI}
               onChange={(e) => setIncludeCI(e.target.checked)}
             />
-          </label>
-          {includeCI && (
-            <label className="retention-aligned-control">
-              CI Level
+            {includeCI && (
               <select
                 value={confidence}
                 onChange={(e) => setConfidence(Number(e.target.value))}
@@ -109,9 +89,36 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
                 <option value={0.95}>95%</option>
                 <option value={0.99}>99%</option>
               </select>
-            </label>
-          )}
-          <div className="view-toggle retention-aligned-control">
+            )}
+          </div>
+
+          <div className="granularity-toggle">
+            <button
+              className={mode === "day" ? "active" : ""}
+              onClick={() => setMode("day")}
+            >
+              Day
+            </button>
+            <button
+              className={mode === "hour" ? "active" : ""}
+              onClick={() => setMode("hour")}
+            >
+            Hour
+            </button>
+          </div>
+
+          <div className="retention-type-selector">
+              <select
+                value={retentionType}
+                onChange={(e) => setRetentionType(e.target.value)}
+                title={retentionType === 'classic' ? 'Classic: Users active on this period' : 'Ever-After: Users who will return at any point after this period'}
+              >
+                <option value="classic">Classic Retention</option>
+                <option value="ever_after">Ever-After Retention</option>
+              </select>
+          </div>
+
+          <div className="view-toggle">
             <button
               type="button"
               className={`view-button ${isPinned ? 'active' : ''}`}
@@ -138,56 +145,87 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         </div>
       </div>
 
-      {error && <p className="error">{error}</p>}
-
-      {viewMode === 'table' && data.length > 0 && (
-        <div className="analytics-table table-responsive">
-          <table>
-            <thead>
-              <tr>
-                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
-                {dayColumns.map((day) => (
-                  <th key={day}>D{day}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {data.map((row) => (
-                <tr key={row.cohort_id}>
-                  <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
-                    title={row.cohort_name}
-                  >
-                    {row.cohort_name}
-                  </td>
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
-                  {dayColumns.map((day) => {
-                    const rawValue = row.retention[String(day)]
-                    const hasValue = rawValue !== null && rawValue !== undefined
-                    const value = hasValue ? Number(rawValue) : null
-                    const ci = row.retention_ci?.[String(day)]
-
-                    return (
-                      <td key={day}>
-                        <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
-                        {includeCI && ci && ci.lower !== null && ci.upper !== null && (
-                          <div className="retention-ci">
-                            {Number(ci.lower).toFixed(2)}% - {Number(ci.upper).toFixed(2)}%
-                          </div>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      {showGlobalControls && (
+        <div className="retention-sub-controls">
+          <label>
+            Max Day
+            <input
+              type="number"
+              min="0"
+              value={maxDay}
+              onChange={(e) => setMaxDay(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            Retention Event
+            <SearchableSelect
+              options={[{ label: 'Any Event', value: 'any' }, ...events]}
+              value={retentionEvent}
+              onChange={onRetentionEventChange}
+              placeholder="Select retention event"
+            />
+          </label>
         </div>
       )}
 
-      {viewMode === 'graph' && (
-        <RetentionGraph data={data} maxDay={maxDay} includeCI={includeCI} />
+      {error && <p className="error">{error}</p>}
+
+      {loading ? (
+        <div className="loader">Loading {mode === "hour" ? "hourly" : "daily"} retention...</div>
+      ) : (
+        <>
+          {viewMode === 'table' && data.length > 0 && (
+            <div className="analytics-table table-responsive">
+              <table>
+                <thead>
+                  <tr>
+                    <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
+                    <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                    {bucketColumns.map((b) => (
+                      <th key={b}>{labelPrefix}{b}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.map((row) => (
+                    <tr key={row.cohort_id}>
+                      <td
+                        className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                        title={row.cohort_name}
+                      >
+                        {row.cohort_name}
+                      </td>
+                      <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>
+                        {formatNumber(row.size)}
+                      </td>
+                      {bucketColumns.map((b) => {
+                        const rawValue = row.retention[String(b)]
+                        const hasValue = rawValue !== null && rawValue !== undefined
+                        const value = hasValue ? Number(rawValue) : null
+                        const ci = row.retention_ci?.[String(b)]
+
+                        return (
+                          <td key={b}>
+                            <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
+                            {includeCI && ci && ci.lower !== null && ci.upper !== null && (
+                              <div className="retention-ci">
+                                {Number(ci.lower).toFixed(2)}% - {Number(ci.upper).toFixed(2)}%
+                              </div>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {viewMode === 'graph' && (
+            <RetentionGraph data={data} maxDay={maxDay} includeCI={includeCI} mode={mode} />
+          )}
+        </>
       )}
 
       <ComparePane
@@ -195,6 +233,8 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         onClose={() => setIsComparePaneOpen(false)}
         tab="retention"
         maxDay={maxDay}
+        granularity={mode}
+        retentionType={retentionType}
         defaultMetric="retention_rate"
       />
     </section>

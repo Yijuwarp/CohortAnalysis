@@ -99,6 +99,8 @@ export default function ComparePane({
   maxDay,
   defaultMetric,    // optional initial metric value
   currentEvent,     // for usage tab: the event that's currently selected in UsageTable
+  granularity = 'day',
+  retentionType = 'classic',
 }) {
   const paneRef = useRef(null)
   const [cohorts, setCohorts] = useState([])
@@ -106,13 +108,20 @@ export default function ComparePane({
   const [cohortA, setCohortA] = useState('')
   const [cohortB, setCohortB] = useState('')
   const [selectedMetric, setSelectedMetric] = useState('')
-  const [selectedDay, setSelectedDay] = useState(maxDay)
+  const [selectedDay, setSelectedDay] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState(null)
   const [showTestDetails, setShowTestDetails] = useState(false)
 
   const metrics = getMetricsForTab(tab)
+  const labelPrefix = granularity === 'hour' ? 'Hour' : 'Day'
+  const maxBucket = Math.max(
+    0,
+    granularity === 'hour'
+      ? (maxDay * 24) - 1
+      : maxDay
+  )
 
   // Load cohorts on mount / open
   useEffect(() => {
@@ -130,7 +139,12 @@ export default function ComparePane({
     setResult(null)
     setError('')
     setShowTestDetails(false)
-    setSelectedDay(maxDay)
+    setSelectedDay(
+      granularity === 'hour'
+        ? Math.min(24, maxBucket)
+        : maxDay
+    )
+    
     // Default metric: use the provided one or the first available
     const availableMetrics = getMetricsForTab(tab)
     if (defaultMetric && availableMetrics.some(m => m.value === defaultMetric)) {
@@ -138,12 +152,12 @@ export default function ComparePane({
     } else {
       setSelectedMetric(availableMetrics[0]?.value || '')
     }
-  }, [isOpen, tab, defaultMetric, maxDay])
+  }, [isOpen, tab, defaultMetric, maxDay, granularity])
 
-  // Keep day capped within 0..maxDay
+  // Keep day capped within 0..maxBucket
   useEffect(() => {
-    setSelectedDay(prev => Math.min(prev, maxDay))
-  }, [maxDay])
+    setSelectedDay(prev => Math.min(prev, maxBucket < 0 ? 0 : maxBucket))
+  }, [maxBucket])
 
   // ESC key handler
   useEffect(() => {
@@ -185,6 +199,8 @@ export default function ComparePane({
         metric: selectedMetric,
         day: Number(selectedDay),
         event: needsEvent ? currentEvent : null,
+        granularity: tab === 'retention' ? granularity : 'day',
+        retention_type: tab === 'retention' ? retentionType : 'classic',
       })
       setResult(res)
     } catch (err) {
@@ -194,12 +210,6 @@ export default function ComparePane({
     }
   }
 
-  /**
-   * Swap Variant ↔ Baseline.
-   * Captures both values in local consts before any setter fires so
-   * neither setter reads stale/partially-updated state.
-   * Does NOT auto-run — user must click "Run Comparison".
-   */
   const handleSwap = () => {
     const a = cohortA
     const b = cohortB
@@ -208,16 +218,13 @@ export default function ComparePane({
     setResult(null)
   }
 
-  // Visible cohorts: active and not marked as hidden in the cohort data
   const visibleCohorts = cohorts.filter(
     c => c.is_active && !c.hidden,
   )
 
-  // Each dropdown excludes the other's selection
   const cohortsForVariant  = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortB))
   const cohortsForBaseline = visibleCohorts.filter(c => String(c.cohort_id) !== String(cohortA))
 
-  // Auto-select default cohorts when the pane opens and when visible cohort count changes.
   useEffect(() => {
     if (!isOpen) return
 
@@ -230,7 +237,7 @@ export default function ComparePane({
     }
   }, [isOpen, visibleCohorts.length])
 
-  const dayOptions = Array.from({ length: maxDay + 1 }, (_, i) => i)
+  const bucketOptions = Array.from({ length: maxBucket + 1 }, (_, i) => i)
 
   const pValueLabel = getPValueLabel(result)
 
@@ -328,15 +335,15 @@ export default function ComparePane({
           )}
 
           <label className="compare-control-label">
-            Day
+            {labelPrefix}
             <select
               className="compare-select"
               value={selectedDay}
               onChange={e => { setSelectedDay(Number(e.target.value)); setResult(null) }}
               data-testid="compare-day-select"
             >
-              {dayOptions.map(d => (
-                <option key={d} value={d}>Day {d}</option>
+              {bucketOptions.map(d => (
+                <option key={d} value={d}>{labelPrefix} {d}</option>
               ))}
             </select>
           </label>

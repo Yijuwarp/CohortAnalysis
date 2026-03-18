@@ -20,6 +20,8 @@ class CompareCohortRequest(BaseModel):
     metric: str
     day: int
     event: str | None = None
+    granularity: str = "day"
+    retention_type: str = "classic"
 
 
 @router.post("/compare-cohorts")
@@ -35,4 +37,6 @@ async def compare_cohorts_endpoint(
         metric=payload.metric,
         day=payload.day,
         event=payload.event,
+        granularity=payload.granularity,
+        retention_type=payload.retention_type,
     )

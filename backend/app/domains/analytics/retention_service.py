@@ -2,6 +2,7 @@
 Short summary: service for computing user retention across cohorts.
 """
 import duckdb
+from typing import Any
 from fastapi import HTTPException
 from app.utils.perf import time_block
 from app.utils.math_utils import Z_SCORES, wilson_ci
@@ -39,8 +40,10 @@ def get_retention(
     retention_event: str | None = None,
     include_ci: bool = False,
     confidence: float = 0.95,
-) -> dict[str, int | str | list[dict[str, object]]]:
-    confidence = round(confidence, 2)
+    granularity: str = "day",
+    retention_type: str = "classic",
+) -> dict[str, Any]:
+    confidence = round(float(confidence), 2)
     if confidence not in Z_SCORES:
         raise HTTPException(status_code=400, detail="confidence must be one of: 0.90, 0.95, 0.99")
 
@@ -48,40 +51,50 @@ def get_retention(
     scoped_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
+    
+    total_buckets = max_day + 1 if granularity == "day" else (max_day * 24)
+    
     if not scoped_exists:
-        return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
+        res: dict[str, Any] = {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
+        if granularity == "hour":
+            res["max_hour"] = total_buckets
+        return res
 
     end_timer = time_block("retention_query")
     cohorts, cohort_sizes = build_active_cohort_base(connection)
     if not cohorts:
         end_timer(max_day=max_day, retention_event=retention_event, cohort_count=0)
-        return {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
+        res = {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
+        if granularity == "hour":
+            res["max_hour"] = total_buckets
+        return res
 
-    active_rows = fetch_retention_active_rows(connection, max_day, retention_event)
+    active_rows = fetch_retention_active_rows(connection, max_day, retention_event, granularity, retention_type)
 
-    active_by_day = {(int(c), int(d)): int(a) for c, d, a in active_rows}
+    active_by_bucket = {(int(c), int(b)): int(a) for c, b, a in active_rows}
 
-    retention_table = []
+    retention_table: list[dict[str, Any]] = []
     for cohort_id, cohort_name in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
-        retention = {}
-        retention_ci = {}
-        for day_number in range(max_day + 1):
-            active_users = active_by_day.get((cohort_id, day_number), 0)
-            if cohort_size == 0:
-                percent = None
-            else:
+        retention: dict[str, float | None] = {}
+        retention_ci: dict[str, dict[str, float | None]] = {}
+        for bucket_number in range(total_buckets):
+            active_users = active_by_bucket.get((cohort_id, bucket_number), 0)
+            percent: float | None = None
+            if cohort_size > 0:
                 percent = active_users / cohort_size * 100.0
-            retention[str(day_number)] = float(percent) if percent is not None else None
+            
+            retention[str(bucket_number)] = float(percent) if percent is not None else None
+            
             if include_ci:
                 lower, upper = wilson_ci(active_users, cohort_size, confidence)
-                retention_ci[str(day_number)] = {
+                retention_ci[str(bucket_number)] = {
                     "lower": (float(lower) * 100.0) if lower is not None else None,
                     "upper": (float(upper) * 100.0) if upper is not None else None,
                 }
 
-        row = {
+        row: dict[str, Any] = {
             "cohort_id": cohort_id,
             "cohort_name": str(cohort_name),
             "size": int(cohort_size),
@@ -91,28 +104,23 @@ def get_retention(
             row["retention_ci"] = retention_ci
         retention_table.append(row)
 
-    THRESHOLD = 1.0
-
-    detected_max_day = 0
-
-    for day_number in range(max_day + 1):
-        all_below_threshold = True
-        
-        for row in retention_table:
-            val = row["retention"].get(str(day_number), 0)
-            if val is None:
-                val = 0
-
-            if val >= THRESHOLD:
-                all_below_threshold = False
+    detected_max_day = max_day
+    if granularity == "day":
+        THRESHOLD = 1.0
+        detected_max_day = 0
+        for day_number in range(max_day + 1):
+            all_below_threshold = True
+            for row_data in retention_table:
+                val = row_data["retention"].get(str(day_number))
+                if val is None:
+                    val = 0.0
+                if val >= THRESHOLD:
+                    all_below_threshold = False
+                    break
+            if all_below_threshold:
                 break
-
-        if all_below_threshold:
-            break
-
-        detected_max_day = day_number
-
-    detected_max_day = max(1, detected_max_day)
+            detected_max_day = day_number
+        detected_max_day = max(1, detected_max_day)
 
     end_timer(
         max_day=detected_max_day,
@@ -120,4 +128,11 @@ def get_retention(
         cohort_count=len(cohorts)
     )
 
-    return {"max_day": int(detected_max_day), "retention_event": retention_event or "any", "retention_table": retention_table}
+    result_payload: dict[str, Any] = {
+        "max_day": int(detected_max_day),
+        "retention_event": retention_event or "any",
+        "retention_table": retention_table
+    }
+    if granularity == "hour":
+        result_payload["max_hour"] = total_buckets
+    return result_payload
