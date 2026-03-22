@@ -69,20 +69,58 @@ function fallbackLayout(nodes) {
   return result
 }
 
-function compactVertical(nodes) {
-  const levels = {}
+function flowBasedVerticalLayout(nodes, edges) {
+  const LEVEL_GAP_Y = 150
 
-  nodes.forEach((n) => {
-    const level = n.rank || 1
-    if (!levels[level]) levels[level] = []
-    levels[level].push(n)
+  const parentsMap = {}
+  edges.forEach((edge) => {
+    if (!parentsMap[edge.target]) parentsMap[edge.target] = []
+    parentsMap[edge.target].push(edge.source)
   })
 
-  Object.values(levels).forEach((levelNodes) => {
-    levelNodes.sort((a, b) => (b.data.users || 0) - (a.data.users || 0))
+  const levels = {}
+  nodes.forEach((node) => {
+    const level = node.rank || 1
+    if (!levels[level]) levels[level] = []
+    levels[level].push(node)
+  })
 
-    levelNodes.forEach((node, i) => {
-      node.position.y = i * 150
+  const positioned = {}
+
+  const sortedLevels = Object.keys(levels)
+    .map(Number)
+    .sort((a, b) => a - b)
+
+  sortedLevels.forEach((level) => {
+    const levelNodes = levels[level]
+
+    if (level === 1) {
+      levelNodes.forEach((node, i) => {
+        node.position.y = i * LEVEL_GAP_Y
+        positioned[node.id] = node.position.y
+      })
+      return
+    }
+
+    const nodesWithScore = levelNodes.map((node) => {
+      const parents = parentsMap[node.id] || []
+
+      if (parents.length === 0) {
+        return { node, score: Infinity }
+      }
+
+      const avgY =
+        parents.reduce((sum, p) => sum + (positioned[p] || 0), 0) /
+        parents.length
+
+      return { node, score: avgY }
+    })
+
+    nodesWithScore.sort((a, b) => a.score - b.score)
+
+    nodesWithScore.forEach((entry, i) => {
+      entry.node.position.y = i * LEVEL_GAP_Y
+      positioned[entry.node.id] = entry.node.position.y
     })
   })
 
@@ -312,14 +350,14 @@ export default function FlowDiagram({ data }) {
         node.position.x = (level - 1) * LEVEL_GAP_X
       })
 
-      const compactedNodes = compactVertical(layoutedNodes)
-      const minY = Math.min(...compactedNodes.map((n) => n.position.y))
-      compactedNodes.forEach((n) => {
+      const flowNodes = flowBasedVerticalLayout(layoutedNodes, edges)
+      const minY = Math.min(...flowNodes.map((n) => n.position.y))
+      flowNodes.forEach((n) => {
         n.position.y -= minY
       })
 
       if (!cancelled) {
-        setGraph({ nodes: compactedNodes, edges })
+        setGraph({ nodes: flowNodes, edges })
       }
     }
 
