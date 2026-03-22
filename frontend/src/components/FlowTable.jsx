@@ -86,6 +86,9 @@ export default function FlowTable({
   const renderValueCell = (row, cid) => {
     const val = row.values[cid]
     if (!val) return <td key={cid}>—</td>
+    if (val.has_event === false) {
+      return <td key={cid}>—</td>
+    }
     const pct = computePct(val.user_count, val.parent_users)
 
     return (
@@ -133,7 +136,7 @@ export default function FlowTable({
     }
 
     const noFurtherActionRow = buildNoFurtherActionRow(row, children || [])
-    const contextRow = (
+    const contextRow = basedOnUsers > 0 ? (
       <tr key={`${key}-context`}>
         <td className="sticky-col flow-path-col">
           <div style={{ paddingLeft: `${indentPx + 16}px` }} className="flow-subtle-label">
@@ -142,17 +145,17 @@ export default function FlowTable({
         </td>
         {cohorts.map(cid => <td key={cid}></td>)}
       </tr>
-    )
+    ) : null
 
     if (!children || children.length === 0) {
       return [
         own,
-        contextRow,
+        ...(contextRow ? [contextRow] : []),
         ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : []),
       ]
     }
 
-    return [own, contextRow, ...renderRows(children), ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : [])]
+    return [own, ...(contextRow ? [contextRow] : []), ...renderRows(children), ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : [])]
   })
 
   if (!rootRows || rootRows.length === 0) return <p style={{ marginTop: 16 }}>No transitions found</p>
