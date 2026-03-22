@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 
@@ -29,6 +29,44 @@ function getEdgeWidth(pct) {
     MIN,
     Math.min(MAX, pct * 12)
   )
+}
+
+function distanceToLine(p, a, b) {
+  const A = p.x - a.x
+  const B = p.y - a.y
+  const C = b.x - a.x
+  const D = b.y - a.y
+
+  const dot = A * C + B * D
+  const lenSq = C * C + D * D
+  const param = lenSq === 0 ? -1 : dot / lenSq
+
+  let xx
+  let yy
+
+  if (param < 0) {
+    xx = a.x
+    yy = a.y
+  } else if (param > 1) {
+    xx = b.x
+    yy = b.y
+  } else {
+    xx = a.x + param * C
+    yy = a.y + param * D
+  }
+
+  const dx = p.x - xx
+  const dy = p.y - yy
+  return Math.sqrt(dx * dx + dy * dy)
+}
+
+function getNearbyEdges(edges, edgePositions, mouse, threshold = 20) {
+  return edges.filter((edge) => {
+    const pos = edgePositions[edge.id]
+    if (!pos) return false
+    const dist = distanceToLine(mouse, { x: pos.sourceX, y: pos.sourceY }, { x: pos.targetX, y: pos.targetY })
+    return dist < threshold
+  })
 }
 
 let dagreLib = null
@@ -287,7 +325,53 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
 export default function FlowDiagram({ data }) {
   const [graph, setGraph] = useState({ nodes: [], edges: [] })
+  const [hoverPos, setHoverPos] = useState(null)
   const [tooltip, setTooltip] = useState(null)
+  const [rfInstance, setRfInstance] = useState(null)
+  const containerRef = useRef(null)
+
+  const edgePositions = graph.edges.reduce((acc, edge) => {
+    const sourceNode = graph.nodes.find((n) => n.id === edge.source)
+    const targetNode = graph.nodes.find((n) => n.id === edge.target)
+    if (!sourceNode || !targetNode) return acc
+
+    acc[edge.id] = {
+      sourceX: sourceNode.position.x + (sourceNode.width || 220),
+      sourceY: sourceNode.position.y + ((sourceNode.height || 60) / 2),
+      targetX: targetNode.position.x,
+      targetY: targetNode.position.y + ((targetNode.height || 60) / 2),
+    }
+    return acc
+  }, {})
+
+  useEffect(() => {
+    if (!hoverPos || !rfInstance || !graph.edges.length) {
+      setTooltip(null)
+      return
+    }
+
+    const bounds = containerRef.current?.getBoundingClientRect()
+    if (!bounds) return
+
+    const graphPos = rfInstance.project({
+      x: hoverPos.x - bounds.left,
+      y: hoverPos.y - bounds.top,
+    })
+
+    const hoveredEdges = getNearbyEdges(graph.edges, edgePositions, graphPos)
+      .sort((a, b) => (b.data?.users || 0) - (a.data?.users || 0))
+
+    if (!hoveredEdges.length) {
+      setTooltip(null)
+      return
+    }
+
+    setTooltip({
+      x: hoverPos.clientX,
+      y: hoverPos.clientY,
+      edges: hoveredEdges.slice(0, 5),
+    })
+  }, [hoverPos, rfInstance, graph.edges, edgePositions])
 
   useEffect(() => {
     let cancelled = false
@@ -327,23 +411,37 @@ export default function FlowDiagram({ data }) {
 
   if (!graph.nodes.length || !graph.edges.length) return <p>No transitions found</p>
 
+  const highlightedEdgeIds = new Set((tooltip?.edges || []).map((e) => e.id))
+  const renderedEdges = graph.edges.map((edge) => ({
+    ...edge,
+    style: {
+      ...edge.style,
+      opacity: tooltip ? (highlightedEdgeIds.has(edge.id) ? 1 : 0.2) : edge.style?.opacity,
+    },
+  }))
+
   return (
-    <div style={{ height: 520, width: '100%', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
+    <div
+      ref={containerRef}
+      style={{ height: 520, width: '100%', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}
+      onMouseMove={(e) => {
+        setHoverPos({
+          x: e.clientX,
+          y: e.clientY,
+          clientX: e.clientX,
+          clientY: e.clientY,
+        })
+      }}
+      onMouseLeave={() => setTooltip(null)}
+    >
       <ReactFlow
         nodes={graph.nodes}
-        edges={graph.edges}
+        edges={renderedEdges}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         panOnScroll
         panOnDrag
-        onEdgeMouseEnter={(event, edge) => {
-          setTooltip({
-            x: event.clientX,
-            y: event.clientY,
-            content: `${edge.data?.sourceLabel} → ${edge.data?.targetLabel}\n${(Number(edge.data?.pct || 0) * 100).toFixed(1)}% (${Number(edge.data?.users || 0).toLocaleString()} users)`,
-          })
-        }}
-        onEdgeMouseLeave={() => setTooltip(null)}
+        onInit={setRfInstance}
       >
         <Background gap={20} size={1} />
         <Controls />
@@ -360,11 +458,17 @@ export default function FlowDiagram({ data }) {
             borderRadius: '6px',
             fontSize: '12px',
             pointerEvents: 'none',
-            whiteSpace: 'pre-line',
+            whiteSpace: 'normal',
             zIndex: 50,
+            minWidth: 220,
           }}
         >
-          {tooltip.content}
+          <div style={{ fontWeight: 700, marginBottom: 4 }}>{tooltip.edges[0].data?.sourceLabel} →</div>
+          {tooltip.edges.map((edge) => (
+            <div key={edge.id}>
+              {edge.data?.targetLabel} — {(Number(edge.data?.pct || 0) * 100).toFixed(1)}% ({Number(edge.data?.users || 0).toLocaleString()})
+            </div>
+          ))}
         </div>
       )}
     </div>
