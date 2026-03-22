@@ -279,7 +279,7 @@ export async function runFunnel(funnelId) {
 // Flow Analytics
 // ---------------------------------------------------------------------------
 
-export async function getFlowL1(startEvent, direction = 'forward', depth = 2, propertyFilter = null, includeTopK = true) {
+export async function getFlowL1(startEvent, direction = 'forward', depth = 2, propertyFilter = null) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
@@ -293,12 +293,10 @@ export async function getFlowL1(startEvent, direction = 'forward', depth = 2, pr
       query.append('property_values', String(v))
     })
   }
-  query.set('include_top_k', String(includeTopK))
-
   return request(`/flow/l1?${query.toString()}`, { method: 'GET' })
 }
 
-export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 2, propertyFilter = null, includeTopK = true) {
+export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 2, propertyFilter = null) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
@@ -313,7 +311,5 @@ export async function getFlowL2(startEvent, parentPath, direction = 'forward', d
       query.append('property_values', String(v))
     })
   }
-  query.set('include_top_k', String(includeTopK))
-
   return request(`/flow/l2?${query.toString()}`, { method: 'GET' })
 }

@@ -30,6 +30,7 @@ export default function FlowPane({ refreshToken }) {
   const [graphLoading, setGraphLoading] = useState(false)
 
   const reqIdRef = useRef(0)
+  const graphReqIdRef = useRef(0)
 
   useEffect(() => {
     listCohorts().then(resp => {
@@ -83,7 +84,7 @@ export default function FlowPane({ refreshToken }) {
     setExpandedNodes(new Set())
     setCache({})
 
-    getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter, true)
+    getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
       .then(resp => {
         if (rid !== reqIdRef.current) return
         setFlowTree(resp.rows || [])
@@ -121,7 +122,7 @@ export default function FlowPane({ refreshToken }) {
 
     setLoadingNodes(prev => ({ ...prev, [key]: true }))
     try {
-      const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter, true)
+      const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
       setCache(prev => ({ ...prev, [key]: resp.rows || [] }))
     } finally {
       setLoadingNodes(prev => ({ ...prev, [key]: false }))
@@ -130,15 +131,19 @@ export default function FlowPane({ refreshToken }) {
 
   const loadFullTreeForGraph = async () => {
     if (!controls.event) return
+    const graphReqId = ++graphReqIdRef.current
     setGraphLoading(true)
     try {
-      const rootResp = await getFlowL1(controls.event, controls.direction, graphDepth, propertyFilter, false)
+      const rootResp = await getFlowL1(controls.event, controls.direction, graphDepth, propertyFilter)
+      if (graphReqId !== graphReqIdRef.current) return
       const rootRows = removeOtherRows(rootResp.rows || [])
       const treeMap = {}
 
       const walk = async (path) => {
+        if (graphReqId !== graphReqIdRef.current) return
         if (path.length - 1 >= graphDepth) return
-        const resp = await getFlowL2(controls.event, path, controls.direction, graphDepth, propertyFilter, false)
+        const resp = await getFlowL2(controls.event, path, controls.direction, graphDepth, propertyFilter)
+        if (graphReqId !== graphReqIdRef.current) return
         const rows = removeOtherRows(resp.rows || [])
         treeMap[nodeKey(path)] = rows
         await Promise.all(rows.map(r => walk(r.path)))
@@ -148,12 +153,20 @@ export default function FlowPane({ refreshToken }) {
 
       const byCohort = {}
       for (const cid of cohorts) {
-        byCohort[cid] = buildGraphFromTree(rootRows, treeMap, graphDepth, cid)
+        byCohort[cid] = buildGraphFromTree(rootRows, controls.event, controls.direction, {
+          cohortId: cid,
+          graphDepth,
+          treeMap,
+        })
       }
 
-      setGraphData({ rootRows, treeMap, byCohort })
+      if (graphReqId === graphReqIdRef.current) {
+        setGraphData({ rootRows, treeMap, byCohort })
+      }
     } finally {
-      setGraphLoading(false)
+      if (graphReqId === graphReqIdRef.current) {
+        setGraphLoading(false)
+      }
     }
   }
 

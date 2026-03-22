@@ -59,7 +59,7 @@ export default function FlowTable({
     const key = nodeKey(row.path)
     const depth = row.path.length - 1
     const expanded = expandedNodes.has(key)
-    const canExpand = row.path[row.path.length - 1] !== 'Other' && depth < maxDepth
+    const canExpand = depth < maxDepth && row.path[row.path.length - 1] !== 'Other'
     const children = getChildren(row.path)
 
     const own = (
