@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import math
 import duckdb
+import numpy as np
 from fastapi import HTTPException
 from scipy import stats
 
@@ -615,15 +616,27 @@ def compare_cohorts(
                 p_value = float(min(p_z, p_fish))
         else:
             # Continuous metrics: Welch t-test and Mann-Whitney U via scipy.stats
-            t_res = stats.ttest_ind(vec_a, vec_b, equal_var=False, alternative="two-sided")
-            mw_res = stats.mannwhitneyu(vec_a, vec_b, alternative="two-sided", method="asymptotic")
-            p_t = float(t_res.pvalue)
-            p_mw = float(mw_res.pvalue)
-            tests = [
-                {"name": "welch_t_test", "p_value": round(float(p_t), 6)},
-                {"name": "mann_whitney_u", "p_value": round(float(p_mw), 6)},
-            ]
-            p_value = float(min(p_t, p_mw))
+            var_a = np.var(vec_a)
+            var_b = np.var(vec_b)
+
+            if var_a == 0 and var_b == 0:
+                p_value = None
+                tests = [
+                    {"name": "mann_whitney_u", "p_value": None},
+                    {"name": "welch_t_test", "p_value": None},
+                ]
+            else:
+                t_res = stats.ttest_ind(vec_a, vec_b, equal_var=False, alternative="two-sided")
+                mw_res = stats.mannwhitneyu(vec_a, vec_b, alternative="two-sided", method="asymptotic")
+
+                p_t = float(t_res.pvalue) if not np.isnan(t_res.pvalue) else None
+                p_mw = float(mw_res.pvalue) if not np.isnan(mw_res.pvalue) else None
+
+                tests = [
+                    {"name": "mann_whitney_u", "p_value": round(p_mw, 6) if p_mw is not None else None},
+                    {"name": "welch_t_test", "p_value": round(p_t, 6) if p_t is not None else None},
+                ]
+                p_value = p_mw
 
     # ------------------------------------------------------------------
     # Derive summary statistics
