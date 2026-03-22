@@ -1,6 +1,10 @@
 import { useMemo } from 'react'
 import dagre from 'dagre'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
+import 'reactflow/dist/style.css'
+
+const NODE_WIDTH = 220
+const NODE_HEIGHT = 80
 
 function formatPct(v) {
   return `${((v || 0) * 100).toFixed(1)}%`
@@ -20,19 +24,25 @@ function buildLayout(nodes, edges) {
   dagreGraph.setGraph({
     rankdir: 'LR',
     align: 'UL',
-    nodesep: 80,
-    ranksep: 140,
-    marginx: 20,
-    marginy: 20,
+    nodesep: 100,
+    ranksep: 180,
+    marginx: 40,
+    marginy: 40,
   })
 
-  nodes.forEach((node) => dagreGraph.setNode(node.id, { width: 220, height: 80, rank: node.rank || 1 }))
+  nodes.forEach((node) => dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT, rank: node.rank || 1 }))
   edges.forEach((edge) => dagreGraph.setEdge(edge.source, edge.target))
   dagre.layout(dagreGraph)
 
   return nodes.map((node) => {
     const pos = dagreGraph.node(node.id) || { x: 0, y: 0 }
-    return { ...node, position: { x: pos.x, y: pos.y } }
+    return {
+      ...node,
+      position: {
+        x: pos.x - NODE_WIDTH / 2,
+        y: pos.y - NODE_HEIGHT / 2,
+      },
+    }
   })
 }
 
@@ -144,11 +154,12 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'smoothstep',
+    type: 'default',
     markerEnd: { type: MarkerType.ArrowClosed },
     label: formatPct(edge.pct),
     style: {
-      strokeWidth: Math.max(1, edge.pct * 8),
+      strokeWidth: Math.max(1, edge.pct * 6),
+      zIndex: 1,
       strokeDasharray: edge.source === edge.target ? '5 4' : undefined,
     },
     data: edge,
@@ -177,7 +188,7 @@ export default function FlowDiagram({ data }) {
     return { nodes: buildLayout(nodes, edges), edges }
   }, [data])
 
-  if (!graph.nodes.length) return <p>No transitions found</p>
+  if (!graph.nodes.length || !graph.edges.length) return <p>No transitions found</p>
 
   return (
     <div style={{ height: 520, width: '100%', overflow: 'auto', border: '1px solid #e5e7eb', borderRadius: 8 }}>
@@ -185,6 +196,7 @@ export default function FlowDiagram({ data }) {
         nodes={graph.nodes}
         edges={graph.edges}
         fitView
+        fitViewOptions={{ padding: 0.2 }}
         panOnScroll
         panOnDrag
       >

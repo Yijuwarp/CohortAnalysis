@@ -9,7 +9,6 @@ export default defineConfig({
       '@dnd-kit/core': fileURLToPath(new URL('./src/shims/dnd-core.js', import.meta.url)),
       '@dnd-kit/sortable': fileURLToPath(new URL('./src/shims/dnd-sortable.js', import.meta.url)),
       '@dnd-kit/utilities': fileURLToPath(new URL('./src/shims/dnd-utilities.js', import.meta.url)),
-      reactflow: fileURLToPath(new URL('./src/shims/reactflow.jsx', import.meta.url)),
     },
   },
 })
