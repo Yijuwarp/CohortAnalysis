@@ -15,10 +15,15 @@ function formatTime(sec) {
 }
 
 function getNodeWidth(label) {
-  return Math.min(
-    260,
-    Math.max(180, label.length * 7)
-  )
+  if (typeof document === 'undefined') {
+    return Math.max(160, (label.length * 8) + 40)
+  }
+  const canvas = getNodeWidth._canvas || (getNodeWidth._canvas = document.createElement('canvas'))
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return Math.max(160, (label.length * 8) + 40)
+  ctx.font = '600 14px Inter, system-ui, sans-serif'
+  const textWidth = ctx.measureText(label).width
+  return Math.max(160, Math.ceil(textWidth + 40))
 }
 
 function getEdgeWidth(pct) {
@@ -64,8 +69,9 @@ function getNearbyEdges(edges, edgePositions, mouse, threshold = 20) {
   return edges.filter((edge) => {
     const pos = edgePositions[edge.id]
     if (!pos) return false
+    const edgeThreshold = Number(edge.interactionWidth || threshold)
     const dist = distanceToLine(mouse, { x: pos.sourceX, y: pos.sourceY }, { x: pos.targetX, y: pos.targetY })
-    return dist < threshold
+    return dist < edgeThreshold
   })
 }
 
@@ -136,9 +142,9 @@ async function buildLayout(nodes, edges) {
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
     rankdir: 'LR',
-    nodesep: 120,
+    nodesep: 140,
     ranksep: 260,
-    edgesep: 40,
+    edgesep: 80,
     marginx: 40,
     marginy: 40,
   })
@@ -208,11 +214,12 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       const parentUsers = Number(val?.parent_users ?? 0)
       if (parentUsers <= 0) return
 
-      const key = `${source}→${target}`
+      const key = `${source}|${target}`
       const existing = edgeAgg.get(key)
       if (existing) {
         existing.users += users
         existing.parentUsers = Math.max(existing.parentUsers, parentUsers)
+        existing.isLoop = existing.isLoop || isLoop
       } else {
         edgeAgg.set(key, {
           id: key,
@@ -220,6 +227,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
           target,
           users,
           parentUsers,
+          isLoop,
           median_time_sec: val?.median_time_sec ?? null,
           p20_time_sec: val?.p20_time_sec ?? null,
           p80_time_sec: val?.p80_time_sec ?? null,
@@ -229,7 +237,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       nodeUsage.set(source, Math.max(nodeUsage.get(source) || 0, Math.round(parentUsers)))
       nodeUsage.set(target, Math.max(nodeUsage.get(target) || 0, users))
 
-      const children = treeMap[row.path.join('||')] || []
+      const children = treeMap[row.path.join('>')] || []
       walk(children)
     })
   }
@@ -264,7 +272,6 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     const childUsers = childUsersBySource[source] || 0
     const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
     if (parentUsers <= 0) return
-    if ((noFurtherActionUsers / parentUsers) < 0.01) return
 
     const sourceLabel = source.split('__')[0]
     const sourceDepth = Number(source.split('__')[1] || 1)
@@ -349,13 +356,16 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     source: edge.source,
     target: edge.target,
     type: 'smoothstep',
+    pathOptions: edge.isLoop ? { borderRadius: 36 } : undefined,
     markerEnd: { type: MarkerType.ArrowClosed },
     title: `${sourceLabel} → ${targetLabel}\n${(pct * 100).toFixed(1)}% (${users.toLocaleString()} users)`,
     style: {
       strokeWidth: getEdgeWidth(pct),
       stroke: '#3b82f6',
+      strokeDasharray: edge.isLoop ? '4 2' : undefined,
       opacity: Math.max(0.3, pct / 20),
     },
+    interactionWidth: getEdgeWidth(pct) + 10,
     data: { ...edge, pct, users, sourceLabel, targetLabel, parentUsers: edge.parentUsers },
   })})
 
@@ -371,6 +381,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
         strokeDasharray: '4 2',
         opacity: 0.7,
       },
+      interactionWidth: getEdgeWidth(edge.pct) + 10,
       data: {
         sourceLabel: edge.sourceLabel,
         targetLabel: 'No further action',
@@ -429,29 +440,10 @@ export default function FlowDiagram({ data }) {
       return
     }
 
-    const unique = {}
-    hoveredEdges.forEach((edge) => {
-      const sourceLabel = edge.data?.sourceLabel || ''
-      const targetLabel = edge.data?.targetLabel || ''
-      const key = `${sourceLabel}→${targetLabel}`
-      if (!unique[key]) {
-        unique[key] = {
-          ...edge,
-          data: { ...edge.data },
-        }
-      } else {
-        unique[key].data.users += edge.data?.users || 0
-        unique[key].data.parentUsers += edge.data?.parentUsers || 0
-      }
-    })
-
-    const dedupedEdges = Object.values(unique)
-      .sort((a, b) => (b.data?.users || 0) - (a.data?.users || 0))
-
     setTooltip({
       x: hoverPos.clientX,
       y: hoverPos.clientY,
-      edges: dedupedEdges.slice(0, 6),
+      edges: hoveredEdges,
     })
   }, [hoverPos, rfInstance, graph.edges, edgePositions])
 

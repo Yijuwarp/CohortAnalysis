@@ -18,7 +18,7 @@ function computePct(userCount, parentUsers) {
 }
 
 function nodeKey(path) {
-  return path.join('||')
+  return path.join('>')
 }
 
 export default function FlowTable({
@@ -43,8 +43,7 @@ export default function FlowTable({
       const childUsers = namedChildren.reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
       const otherUsers = otherRow?.values?.[cid]?.user_count || 0
       const noFurtherActionUsers = Math.max(0, parentUsers - childUsers - otherUsers)
-      const pct = computePct(noFurtherActionUsers, parentUsers)
-      const show = parentUsers > 0 && pct >= 0.01
+      const show = parentUsers > 0
 
       if (process.env.NODE_ENV === 'development') {
         const total = childUsers + otherUsers + noFurtherActionUsers

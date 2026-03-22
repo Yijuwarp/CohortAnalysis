@@ -4,7 +4,18 @@ import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
 import FlowDiagram, { buildGraphFromTree } from './FlowDiagram'
 
-const TABLE_MAX_DEPTH = 7
+const TABLE_MAX_DEPTH = 20
+
+function makeCacheKey(path, controls, propertyFilter, depth) {
+  return JSON.stringify({
+    start_event: controls.event,
+    direction: controls.direction,
+    property: propertyFilter?.column || null,
+    property_value: propertyFilter?.values?.[0] || null,
+    depth,
+    parent_path: path,
+  })
+}
 
 function removeOtherRows(rows) {
   return (rows || []).filter(row => row.path[row.path.length - 1] !== 'Other')
@@ -104,10 +115,11 @@ export default function FlowPane({ refreshToken }) {
     return first ? Object.keys(first.values || {}) : Object.keys(cohortMap)
   }, [flowTree, cohortMap, graphData])
 
-  const getChildren = (path) => cache[nodeKey(path)] || []
+  const getChildren = (path) => cache[makeCacheKey(path, controls, propertyFilter, TABLE_MAX_DEPTH)] || []
 
   const onToggle = async (path) => {
     const key = nodeKey(path)
+    const cacheKey = makeCacheKey(path, controls, propertyFilter, TABLE_MAX_DEPTH)
     const depth = path.length - 1
     if (depth >= TABLE_MAX_DEPTH) return
 
@@ -118,12 +130,12 @@ export default function FlowPane({ refreshToken }) {
       return next
     })
 
-    if (cache[key]) return
+    if (cache[cacheKey]) return
 
     setLoadingNodes(prev => ({ ...prev, [key]: true }))
     try {
       const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
-      setCache(prev => ({ ...prev, [key]: resp.rows || [] }))
+      setCache(prev => ({ ...prev, [cacheKey]: resp.rows || [] }))
     } finally {
       setLoadingNodes(prev => ({ ...prev, [key]: false }))
     }
@@ -134,15 +146,13 @@ export default function FlowPane({ refreshToken }) {
     const graphReqId = ++graphReqIdRef.current
     setGraphLoading(true)
     try {
-      const rootResp = await getFlowL1(controls.event, controls.direction, graphDepth, propertyFilter)
-      if (graphReqId !== graphReqIdRef.current) return
-      const rootRows = removeOtherRows(rootResp.rows || [])
+      const rootRows = removeOtherRows(flowTree || [])
       const treeMap = {}
 
       const walk = async (path) => {
         if (graphReqId !== graphReqIdRef.current) return
-        if (path.length - 1 >= graphDepth) return
-        const resp = await getFlowL2(controls.event, path, controls.direction, graphDepth, propertyFilter)
+        if (path.length - 1 >= TABLE_MAX_DEPTH) return
+        const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
         if (graphReqId !== graphReqIdRef.current) return
         const rows = removeOtherRows(resp.rows || [])
         treeMap[nodeKey(path)] = rows
