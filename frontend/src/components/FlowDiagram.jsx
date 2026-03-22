@@ -183,6 +183,57 @@ async function buildLayout(nodes, edges) {
   })
 }
 
+function buildGraphFromNestedTree(tree, maxDepth = 3) {
+  if (!tree) return { nodes: [], edges: [] }
+  const nodes = []
+  const edges = []
+
+  const dfs = (node, level = 0, parentId = null) => {
+    if (!node || level > maxDepth) return
+    const nodeId = `${node.name}__L${level}__${parentId || 'root'}`
+    const users = Number(node.user_count || 0)
+    nodes.push({
+      id: nodeId,
+      data: {
+        label: node.name,
+        users,
+        isRoot: level === 0,
+      },
+      width: getNodeWidth(node.name),
+      height: 60,
+      position: { x: 0, y: 0 },
+      rank: level + 1,
+    })
+    if (parentId) {
+      const pct = Number(node.parent_users || 0) > 0
+        ? users / Number(node.parent_users)
+        : 0
+      edges.push({
+        id: `${parentId}|${nodeId}`,
+        source: parentId,
+        target: nodeId,
+        type: 'smoothstep',
+        markerEnd: { type: MarkerType.ArrowClosed },
+        style: {
+          strokeWidth: getEdgeWidth(pct),
+          stroke: '#3b82f6',
+        },
+        interactionWidth: getEdgeWidth(pct) + 8,
+        data: {
+          sourceLabel: parentId.split('__L')[0],
+          targetLabel: node.name,
+          users,
+          parentUsers: Number(node.parent_users || 0),
+          pct,
+        },
+      })
+    }
+    ;(node.children || []).forEach((child) => dfs(child, level + 1, nodeId))
+  }
+  dfs(tree, 0, null)
+  return { nodes, edges }
+}
+
 export function buildGraphFromTree(flowTree, rootEvent, direction, options = {}) {
   const { cohortId, graphDepth = 7, treeMap = {} } = options
 
@@ -404,7 +455,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   return { nodes, edges, rootEvent, direction }
 }
 
-export default function FlowDiagram({ data }) {
+export default function FlowDiagram({ data, tree, maxDepth = 3 }) {
   const [graph, setGraph] = useState({ nodes: [], edges: [] })
   const [hoverPos, setHoverPos] = useState(null)
   const [tooltip, setTooltip] = useState(null)
@@ -458,12 +509,13 @@ export default function FlowDiagram({ data }) {
     let cancelled = false
 
     async function compute() {
-      if (!data?.nodes?.length) {
+      const sourceGraph = tree ? buildGraphFromNestedTree(tree, maxDepth) : data
+      if (!sourceGraph?.nodes?.length) {
         setGraph({ nodes: [], edges: [] })
         return
       }
 
-      const nodes = data.nodes.map((node) => ({
+      const nodes = sourceGraph.nodes.map((node) => ({
         ...node,
         data: {
           ...node.data,
@@ -471,7 +523,7 @@ export default function FlowDiagram({ data }) {
         },
       }))
 
-      const edges = data.edges.map((edge) => ({
+      const edges = (sourceGraph.edges || []).map((edge) => ({
         ...edge,
         title: `${formatPct(edge.data?.pct)} (${Number(edge.data?.users || 0).toLocaleString()} users) | Median ${formatTime(edge.data?.median_time_sec)} | P20 ${formatTime(edge.data?.p20_time_sec)} | P80 ${formatTime(edge.data?.p80_time_sec)}`,
       }))
@@ -488,7 +540,7 @@ export default function FlowDiagram({ data }) {
     return () => {
       cancelled = true
     }
-  }, [data])
+  }, [data, tree, maxDepth])
 
   if (!graph.nodes.length || !graph.edges.length) return <p>No transitions found</p>
 

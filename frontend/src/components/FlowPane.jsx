@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getEventProperties, getEventPropertyValues, getFlowL1, getFlowL2, listCohorts, listEvents } from '../api'
+import { getEventProperties, getEventPropertyValues, getFlowGraph, getFlowL1, getFlowL2, listCohorts, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
-import FlowDiagram, { buildGraphFromTree } from './FlowDiagram'
+import FlowDiagram from './FlowDiagram'
 
 const TABLE_MAX_DEPTH = 20
 
@@ -146,40 +146,25 @@ export default function FlowPane({ refreshToken }) {
     const graphReqId = ++graphReqIdRef.current
     setGraphLoading(true)
     try {
-      const rootResp = await getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
+      const tree = await getFlowGraph(controls.event, controls.direction, graphDepth, propertyFilter)
       if (graphReqId !== graphReqIdRef.current) return
-      const rootRows = removeOtherRows(rootResp.rows || [])
-      const treeMap = {}
-      const walk = (rows) => {
-        ;(rows || []).forEach((row) => {
-          const children = removeOtherRows(row.children || [])
-          treeMap[nodeKey(row.path)] = children
-          if (children.length > 0) {
-            walk(children)
-          }
-        })
-      }
-      walk(rootRows)
-
-      const byCohort = {}
-      for (const cid of cohorts) {
-        byCohort[cid] = buildGraphFromTree(rootRows, controls.event, controls.direction, {
-          cohortId: cid,
-          graphDepth,
-          treeMap,
-        })
-      }
       if (import.meta.env.DEV) {
-        const graphNodes = Object.values(byCohort).flatMap((g) => g?.nodes || [])
+        const graphNodes = []
+        const walk = (node, level = 0) => {
+          if (!node || level > graphDepth) return
+          graphNodes.push(level)
+          ;(node.children || []).forEach((child) => walk(child, level + 1))
+        }
+        walk(tree, 0)
         const levels = [...new Set(graphNodes
-          .map((n) => Number(n.id.match(/__L(\d+)__/)?.[1]))
+          .map((n) => Number(n))
           .filter((lvl) => Number.isFinite(lvl)))]
           .sort((a, b) => a - b)
         console.log('Graph levels:', levels)
       }
 
       if (graphReqId === graphReqIdRef.current) {
-        setGraphData({ rootRows, treeMap, byCohort })
+        setGraphData({ tree })
       }
     } finally {
       if (graphReqId === graphReqIdRef.current) {
@@ -271,12 +256,7 @@ export default function FlowPane({ refreshToken }) {
         <p style={{ marginTop: 16 }}>Select graph depth and click Generate Graph</p>
       ) : (
         <div style={{ display: 'grid', gap: 16 }}>
-          {cohorts.map(cid => (
-            <div key={cid}>
-              <h3 style={{ marginBottom: 8 }}>{cohortMap[cid]?.name || `Cohort ${cid}`}</h3>
-              <FlowDiagram cohortId={cid} data={graphData.byCohort[cid]} />
-            </div>
-          ))}
+          <FlowDiagram tree={graphData.tree} maxDepth={graphDepth} />
         </div>
       )}
     </section>

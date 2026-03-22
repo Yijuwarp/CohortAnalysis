@@ -315,3 +315,18 @@ export async function getFlowL2(startEvent, parentPath, direction = 'forward', d
   }
   return request(`/flow/l2?${query.toString()}`, { method: 'GET' })
 }
+
+export async function getFlowGraph(startEvent, direction = 'forward', depth = 3, propertyFilter = null) {
+  const query = new URLSearchParams({
+    start_event: startEvent,
+    direction,
+    depth: String(depth),
+    include_top_k: 'true',
+  })
+  query.set('property_operator', propertyFilter?.operator || '=')
+  if (propertyFilter?.column && propertyFilter?.values?.length) {
+    query.set('property_column', propertyFilter.column)
+    ;(propertyFilter.values || []).forEach(v => query.append('property_values', String(v)))
+  }
+  return request(`/flow/graph?${query.toString()}`, { method: 'GET' })
+}
