@@ -93,7 +93,7 @@ def test_retention_returns_null_retention_and_ci_for_zero_sized_cohort(
     monkeypatch.setattr(main, 'get_connection', lambda: _FakeConnection())
     monkeypatch.setattr(retention_service, 'ensure_cohort_tables', lambda _connection: None)
     monkeypatch.setattr(retention_service, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort')], {99: 0}))
-    monkeypatch.setattr(retention_service, 'fetch_retention_active_rows', lambda _connection, _max_day, _retention_event: [])
+    monkeypatch.setattr(retention_service, 'fetch_retention_active_rows', lambda *args, **kwargs: [])
 
     # The router might also need its dependency patched if it's already bound
     # But usually TestClient(main.app) will use the patched main.get_connection if called that way.

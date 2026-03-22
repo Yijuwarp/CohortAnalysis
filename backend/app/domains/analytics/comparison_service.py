@@ -279,11 +279,28 @@ def _compute_retention_vectors(
         event_filter = "AND es.event_name = ?"
         params = [cohort_id, retention_event, day]
 
-    # Switch operator based on retention_type
-    operator = "=" if retention_type == "classic" else ">="
-
-    retained_users = conn.execute(
-        f"""
+    # NOTE:
+    # Day = calendar day difference (DATE_TRUNC)
+    # Hour = calendar hour bucket (NOT rolling duration)
+    # Classic retention MUST match previous implementation exactly.
+    # Do not modify query structure without updating regression tests.
+    
+    if retention_type == "classic":
+        query = f"""
+        SELECT DISTINCT cm.user_id
+        FROM cohort_membership cm
+        JOIN cohort_activity_snapshot cas
+          ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
+        JOIN events_scoped es
+          ON es.user_id = cas.user_id
+         AND es.event_time = cas.event_time
+         AND es.event_name = cas.event_name
+        WHERE cm.cohort_id = ?
+          {event_filter}
+          AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) = ?
+        """
+    else:
+        query = f"""
         SELECT DISTINCT cm.user_id
         FROM cohort_membership cm
         WHERE cm.cohort_id = ?
@@ -296,11 +313,11 @@ def _compute_retention_vectors(
               WHERE cas.cohort_id = cm.cohort_id
                 AND cas.user_id = cm.user_id
                 {event_filter}
-                AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) {operator} ?
+                AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) >= ?
           )
-        """,
-        params,
-    ).fetchall()
+        """
+
+    retained_users = conn.execute(query, params).fetchall()
     retained_set = {row[0] for row in retained_users}
 
     all_users = conn.execute(
@@ -334,8 +351,8 @@ def _compute_usage_volume_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -364,7 +381,7 @@ def _compute_usage_volume_vectors(
              AND es.event_time = cas.event_time
              AND es.event_name = cas.event_name
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) = ?
+              AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -401,8 +418,8 @@ def _compute_unique_users_vectors(
         JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
         WHERE cm.cohort_id = ?
         """,
         [event, day, cohort_id],
@@ -439,8 +456,8 @@ def _compute_revenue_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name IN (SELECT event_name FROM revenue_event_selection WHERE is_included = TRUE)
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) {day_condition}
-         AND DATE_DIFF('{unit}', cm.join_time, es.event_time) >= 0
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
+         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -487,8 +504,16 @@ def compare_cohorts(
     granularity: str = "day",
     retention_type: str = "classic",
 ) -> dict:
-    if metric != "retention_rate":
-        granularity = "day"
+    if metric != "retention_rate" and granularity != "day":
+        raise HTTPException(
+            status_code=400,
+            detail="Hourly granularity is only supported for retention_rate"
+        )
+    if retention_type not in {"classic", "ever_after"}:
+        raise HTTPException(
+            status_code=400,
+            detail="retention_type must be classic or ever_after"
+        )
 
     if cohort_a == cohort_b:
         raise HTTPException(status_code=400, detail="cohort_a and cohort_b must be different")

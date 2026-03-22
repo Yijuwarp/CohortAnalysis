@@ -43,6 +43,11 @@ def get_retention(
     granularity: str = "day",
     retention_type: str = "classic",
 ) -> dict[str, Any]:
+    if granularity not in {"day", "hour"}:
+        raise HTTPException(status_code=400, detail="granularity must be day or hour")
+    if retention_type not in {"classic", "ever_after"}:
+        raise HTTPException(status_code=400, detail="retention_type must be classic or ever_after")
+
     confidence = round(float(confidence), 2)
     if confidence not in Z_SCORES:
         raise HTTPException(status_code=400, detail="confidence must be one of: 0.90, 0.95, 0.99")
