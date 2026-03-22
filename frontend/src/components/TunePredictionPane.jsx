@@ -78,7 +78,7 @@ export default function TunePredictionPane({
     <aside className="tuning-pane-inline open">
       <div className="tuning-pane-header">
         <h3>Tune Prediction</h3>
-        <button type="button" className="tuning-close" onClick={onClose}>&times;</button>
+        <button type="button" className="tuning-close" onClick={onCancel}>&times;</button>
       </div>
 
       <div className="tuning-pane-content">
@@ -105,7 +105,7 @@ export default function TunePredictionPane({
           </div>
 
       <div className="tuning-actions">
-        <button type="button" className="button button-secondary" onClick={onCancel}>Cancel</button>
+        <button type="button" className="button button-primary" onClick={onClose}>Apply</button>
       </div>
     </aside>
   )

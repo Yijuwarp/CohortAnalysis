@@ -92,6 +92,7 @@ export default function MonetizationGraph({
                   strokeWidth={2}
                   dot={false}
                   isAnimationActive
+                  legendType="none"
                 />
               </React.Fragment>
             )
