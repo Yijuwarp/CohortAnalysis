@@ -366,10 +366,28 @@ export default function FlowDiagram({ data }) {
       return
     }
 
+    const unique = {}
+    hoveredEdges.forEach((edge) => {
+      const sourceLabel = edge.data?.sourceLabel || ''
+      const targetLabel = edge.data?.targetLabel || ''
+      const key = `${sourceLabel}→${targetLabel}`
+      if (!unique[key]) {
+        unique[key] = {
+          ...edge,
+          data: { ...edge.data },
+        }
+      } else {
+        unique[key].data.users += edge.data?.users || 0
+      }
+    })
+
+    const dedupedEdges = Object.values(unique)
+      .sort((a, b) => (b.data?.users || 0) - (a.data?.users || 0))
+
     setTooltip({
       x: hoverPos.clientX,
       y: hoverPos.clientY,
-      edges: hoveredEdges.slice(0, 5),
+      edges: dedupedEdges.slice(0, 6),
     })
   }, [hoverPos, rfInstance, graph.edges, edgePositions])
 
@@ -463,10 +481,9 @@ export default function FlowDiagram({ data }) {
             minWidth: 220,
           }}
         >
-          <div style={{ fontWeight: 700, marginBottom: 4 }}>{tooltip.edges[0].data?.sourceLabel} →</div>
           {tooltip.edges.map((edge) => (
             <div key={edge.id}>
-              {edge.data?.targetLabel} — {(Number(edge.data?.pct || 0) * 100).toFixed(1)}% ({Number(edge.data?.users || 0).toLocaleString()})
+              {edge.data?.sourceLabel} → {edge.data?.targetLabel} — {(Number(edge.data?.pct || 0) * 100).toFixed(1)}% ({Number(edge.data?.users || 0).toLocaleString()})
             </div>
           ))}
         </div>
