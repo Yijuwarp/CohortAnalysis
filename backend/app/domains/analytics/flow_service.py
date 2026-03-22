@@ -216,8 +216,10 @@ def _root_user_count(
     property_column: str | None,
     property_operator: str | None,
     property_values: list[str] | None,
+    cohort_id: int | None = None,
 ) -> int:
     property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
+    cohort_clause = " AND cohort_id = ?" if cohort_id is not None else ""
     sql = f"""
         WITH root_step AS (
             SELECT cohort_id, user_id
@@ -228,13 +230,14 @@ def _root_user_count(
                     event_time,
                     ROW_NUMBER() OVER (PARTITION BY cohort_id, user_id ORDER BY event_time) AS rn
                 FROM cohort_activity_snapshot
-                WHERE event_name = ?{property_clause}
+                WHERE event_name = ?{property_clause}{cohort_clause}
             ) r
             WHERE rn = 1
         )
         SELECT COUNT(*) FROM root_step
     """
-    return int(connection.execute(sql, [start_event, *property_params]).fetchone()[0] or 0)
+    params = [start_event, *property_params, *([cohort_id] if cohort_id is not None else [])]
+    return int(connection.execute(sql, params).fetchone()[0] or 0)
 
 
 def _rows_payload(
@@ -426,56 +429,64 @@ def get_flow_graph(
 
     ensure_cohort_tables(connection)
     if not _snapshot_exists(connection):
-        return {"name": start_event, "user_count": 0, "children": []}
+        return {"cohorts": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
-        return {"name": start_event, "user_count": 0, "children": []}
+        return {"cohorts": []}
 
-    root_count = _root_user_count(connection, start_event, property_column, property_operator, property_values)
-    root = {"name": start_event, "user_count": root_count, "children": []}
-    if depth == 0:
-        return root
+    cohort_trees = []
+    for cohort_id, cohort_name in cohorts:
+        cohort_scope = [(cohort_id, cohort_name)]
+        root_count = _root_user_count(connection, start_event, property_column, property_operator, property_values, cohort_id=cohort_id)
+        root = {"name": start_event, "user_count": root_count, "children": []}
 
-    node_map: dict[tuple[str, ...], dict] = {(start_event,): root}
-    frontier: list[list[str]] = [[start_event]]
+        node_map: dict[tuple[str, ...], dict] = {(start_event,): root}
+        frontier: list[list[str]] = [[start_event]]
 
-    for _level in range(1, depth + 1):
-        if not frontier:
-            break
-        next_frontier: list[list[str]] = []
-        for parent_path in frontier:
-            raw_rows, parent_depth = _run_level_query(
-                connection,
-                start_event,
-                parent_path,
-                direction,
-                depth + 1,
-                property_column,
-                property_operator,
-                property_values,
-            )
-            if parent_depth >= depth + 1:
-                continue
-            rows = _rows_payload(raw_rows, cohorts, parent_path, include_expandable=False, top_k_enabled=include_top_k)
-            rows.sort(key=lambda r: (
-                2 if r["path"][-1] == "No further action" else 1 if r["path"][-1] == "Other" else 0,
-                -(sum((v or {}).get("user_count", 0) for v in (r.get("values") or {}).values()))
-            ))
-            children = []
-            for row in rows:
-                event_name = row["path"][-1]
-                values = row.get("values", {})
-                users = int(sum((values.get(str(cid), {}) or {}).get("user_count", 0) for cid, _ in cohorts))
-                child_path = tuple(row["path"])
-                child_node = {"name": event_name, "user_count": users, "children": []}
-                node_map[child_path] = child_node
-                children.append(child_node)
-                if event_name not in {"Other", "No further action"} and len(row["path"]) <= depth and users > 0:
-                    next_frontier.append(list(row["path"]))
-            parent_node = node_map.get(tuple(parent_path))
-            if parent_node is not None:
-                parent_node["children"] = children
-        frontier = next_frontier
+        for _level in range(1, depth + 1):
+            if not frontier:
+                break
+            next_frontier: list[list[str]] = []
+            for parent_path in frontier:
+                raw_rows, parent_depth = _run_level_query(
+                    connection,
+                    start_event,
+                    parent_path,
+                    direction,
+                    depth + 1,
+                    property_column,
+                    property_operator,
+                    property_values,
+                )
+                if parent_depth >= depth + 1:
+                    continue
+                rows = _rows_payload(raw_rows, cohort_scope, parent_path, include_expandable=False, top_k_enabled=include_top_k)
+                rows.sort(key=lambda r: (
+                    2 if r["path"][-1] == "No further action" else 1 if r["path"][-1] == "Other" else 0,
+                    -((r.get("values", {}).get(str(cohort_id), {}) or {}).get("user_count", 0))
+                ))
+                children = []
+                for row in rows:
+                    event_name = row["path"][-1]
+                    values = row.get("values", {})
+                    users = int((values.get(str(cohort_id), {}) or {}).get("user_count", 0))
+                    child_path = tuple(row["path"])
+                    child_node = {"name": event_name, "user_count": users, "children": []}
+                    node_map[child_path] = child_node
+                    children.append(child_node)
+                    if event_name not in {"Other", "No further action"} and len(row["path"]) <= depth and users > 0:
+                        next_frontier.append(list(row["path"]))
+                parent_node = node_map.get(tuple(parent_path))
+                if parent_node is not None:
+                    parent_node["children"] = children
+            frontier = next_frontier
 
-    return root
+        cohort_trees.append({
+            "cohort_id": cohort_id,
+            "cohort_name": cohort_name,
+            "user_count": root_count,
+            "tree": root,
+        })
+
+    return {"cohorts": cohort_trees}

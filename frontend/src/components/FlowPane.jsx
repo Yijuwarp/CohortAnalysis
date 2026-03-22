@@ -21,6 +21,16 @@ function removeOtherRows(rows) {
   return (rows || []).filter(row => row.path[row.path.length - 1] !== 'Other')
 }
 
+function cleanTree(node) {
+  if (!node) return null
+  return {
+    ...node,
+    children: (node.children || [])
+      .filter((child) => child.name !== 'Other' && child.name !== 'No further action')
+      .map(cleanTree),
+  }
+}
+
 export default function FlowPane({ refreshToken }) {
   const [events, setEvents] = useState([])
   const [controls, setControls] = useState({ event: null, property: null, direction: 'forward' })
@@ -148,6 +158,7 @@ export default function FlowPane({ refreshToken }) {
     try {
       const tree = await getFlowGraph(controls.event, controls.direction, graphDepth, propertyFilter)
       if (graphReqId !== graphReqIdRef.current) return
+      const cohortTrees = tree?.cohorts || []
       if (import.meta.env.DEV) {
         const graphNodes = []
         const walk = (node, level = 0) => {
@@ -155,7 +166,7 @@ export default function FlowPane({ refreshToken }) {
           graphNodes.push(level)
           ;(node.children || []).forEach((child) => walk(child, level + 1))
         }
-        walk(tree, 0)
+        cohortTrees.forEach((cohort) => walk(cohort.tree, 0))
         const levels = [...new Set(graphNodes
           .map((n) => Number(n))
           .filter((lvl) => Number.isFinite(lvl)))]
@@ -164,7 +175,7 @@ export default function FlowPane({ refreshToken }) {
       }
 
       if (graphReqId === graphReqIdRef.current) {
-        setGraphData({ tree })
+        setGraphData({ cohorts: cohortTrees })
       }
     } finally {
       if (graphReqId === graphReqIdRef.current) {
@@ -256,7 +267,12 @@ export default function FlowPane({ refreshToken }) {
         <p style={{ marginTop: 16 }}>Select graph depth and click Generate Graph</p>
       ) : (
         <div style={{ display: 'grid', gap: 16 }}>
-          <FlowDiagram tree={graphData.tree} maxDepth={graphDepth} />
+          {graphData.cohorts.map((cohort) => (
+            <div key={cohort.cohort_id} className="flow-cohort">
+              <h3 style={{ marginBottom: 8 }}>{cohort.cohort_name} ({Number(cohort.user_count || 0).toLocaleString()})</h3>
+              <FlowDiagram tree={cleanTree(cohort.tree)} maxDepth={graphDepth} />
+            </div>
+          ))}
         </div>
       )}
     </section>

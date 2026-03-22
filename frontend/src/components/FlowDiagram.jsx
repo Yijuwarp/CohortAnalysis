@@ -3,7 +3,9 @@ import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
 
 function formatPct(v) {
-  return `${((v || 0) * 100).toFixed(1)}%`
+  const pct = (v || 0) * 100
+  if (pct > 0 && pct < 0.1) return '<0.1%'
+  return `${pct.toFixed(1)}%`
 }
 
 function formatTime(sec) {
@@ -188,7 +190,7 @@ function buildGraphFromNestedTree(tree, maxDepth = 3) {
   const nodes = []
   const edges = []
 
-  const dfs = (node, level = 0, parentId = null) => {
+  const dfs = (node, level = 0, parentId = null, parentUsers = 0) => {
     if (!node || level > maxDepth) return
     const nodeId = `${node.name}__L${level}__${parentId || 'root'}`
     const users = Number(node.user_count || 0)
@@ -205,8 +207,8 @@ function buildGraphFromNestedTree(tree, maxDepth = 3) {
       rank: level + 1,
     })
     if (parentId) {
-      const pct = Number(node.parent_users || 0) > 0
-        ? users / Number(node.parent_users)
+      const pct = parentUsers > 0
+        ? users / parentUsers
         : 0
       edges.push({
         id: `${parentId}|${nodeId}`,
@@ -223,14 +225,14 @@ function buildGraphFromNestedTree(tree, maxDepth = 3) {
           sourceLabel: parentId.split('__L')[0],
           targetLabel: node.name,
           users,
-          parentUsers: Number(node.parent_users || 0),
+          parentUsers,
           pct,
         },
       })
     }
-    ;(node.children || []).forEach((child) => dfs(child, level + 1, nodeId))
+    ;(node.children || []).forEach((child) => dfs(child, level + 1, nodeId, users))
   }
-  dfs(tree, 0, null)
+  dfs(tree, 0, null, 0)
   return { nodes, edges }
 }
 
