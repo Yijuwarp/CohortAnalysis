@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { getRetention, getRetentionHourly, listEvents } from '../api'
+import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
 import ComparePane from './ComparePane'
@@ -26,8 +26,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
     setError('')
 
     try {
-      const fetchFn = mode === 'hour' ? getRetentionHourly : getRetention
-      const response = await fetchFn(Number(maxDay), retentionEvent, includeCI, confidence, retentionType)
+      const response = await getRetention(Number(maxDay), retentionEvent, includeCI, confidence, retentionType, mode)
       setData(response.retention_table || [])
     } catch (err) {
       setError(err.message)

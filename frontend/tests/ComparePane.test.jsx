@@ -131,14 +131,38 @@ describe('ComparePane', () => {
     fireEvent.click(screen.getByTestId('compare-run-button'))
 
     await waitFor(() => {
-      expect(compareCohorts).toHaveBeenCalledWith({
-        cohort_a: 1,
-        cohort_b: 2,
-        tab: 'retention',
-        metric: 'retention_rate',
-        day: 7,
-        event: null,
-      })
+      expect(compareCohorts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cohort_a: 1,
+          cohort_b: 2,
+          tab: 'retention',
+          metric: 'retention_rate',
+          day: 7,
+          event: null,
+        })
+      )
+    })
+  })
+
+  test('compare_api_payload_includes_granularity_and_retention_type', async () => {
+    renderPane()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('compare-cohort-a')).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByTestId('compare-cohort-a'), { target: { value: '1' } })
+    fireEvent.change(screen.getByTestId('compare-cohort-b'), { target: { value: '2' } })
+
+    fireEvent.click(screen.getByTestId('compare-run-button'))
+
+    await waitFor(() => {
+      expect(compareCohorts).toHaveBeenCalledWith(
+        expect.objectContaining({
+          granularity: 'day',
+          retention_type: 'classic',
+        })
+      )
     })
   })
 
