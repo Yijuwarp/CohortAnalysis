@@ -38,13 +38,29 @@ export default function FlowTable({
     cohorts.forEach((cid) => {
       const parentVal = parentRow.values?.[cid]
       const parentUsers = parentVal?.parent_users || 0
-      const hasChildren = children && children.length > 0
-      const childUsers = hasChildren
-        ? children.reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
-        : 0
-      const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
+      const namedChildren = (children || []).filter((row) => row.path[row.path.length - 1] !== 'Other')
+      const otherRow = (children || []).find((row) => row.path[row.path.length - 1] === 'Other')
+      const childUsers = namedChildren.reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
+      const otherUsers = otherRow?.values?.[cid]?.user_count || 0
+      const noFurtherActionUsers = Math.max(0, parentUsers - childUsers - otherUsers)
       const pct = computePct(noFurtherActionUsers, parentUsers)
       const show = parentUsers > 0 && pct >= 0.01
+
+      if (process.env.NODE_ENV === 'development') {
+        const total = childUsers + otherUsers + noFurtherActionUsers
+        if (Math.abs(total - parentUsers) > 1) {
+          console.error('Flow math broken', {
+            parentUsers,
+            childUsers,
+            otherUsers,
+            noFurtherActionUsers,
+            total,
+            path: parentRow.path,
+            cohort: cid,
+          })
+        }
+      }
+
       if (show) {
         hasAny = true
         values[cid] = {
@@ -83,14 +99,16 @@ export default function FlowTable({
   const renderRows = (rows) => rows.flatMap(row => {
     const key = nodeKey(row.path)
     const depth = row.path.length - 1
+    const indentPx = depth * 16
     const expanded = expandedNodes.has(key)
     const canExpand = !row.isNoFurtherAction && depth < maxDepth && row.path[row.path.length - 1] !== 'Other'
     const children = getChildren(row.path)
+    const basedOnUsers = Math.round(Number(row.values?.[cohorts[0]]?.parent_users || 0))
 
     const own = (
       <tr key={key} data-testid={`flow-row-d${depth}`}>
         <td className="sticky-col flow-path-col" onClick={() => canExpand && onToggle(row.path)} style={{ cursor: canExpand ? 'pointer' : 'default' }}>
-          <div style={{ paddingLeft: (depth - 1) * 18, display: 'flex', gap: 8, alignItems: 'center' }}>
+          <div style={{ paddingLeft: `${indentPx}px`, display: 'flex', gap: 8, alignItems: 'center' }}>
             {canExpand && <span>{expanded ? '▼' : '▶'}</span>}
             <div>
               <div style={{ fontWeight: 600, color: row.isNoFurtherAction ? '#9ca3af' : undefined, fontStyle: row.isNoFurtherAction ? 'italic' : 'normal' }}>{row.path[row.path.length - 1]}</div>
@@ -108,15 +126,26 @@ export default function FlowTable({
     }
 
     const noFurtherActionRow = buildNoFurtherActionRow(row, children || [])
+    const contextRow = (
+      <tr key={`${key}-context`}>
+        <td className="sticky-col flow-path-col">
+          <div style={{ paddingLeft: `${indentPx + 16}px` }} className="flow-subtle-label">
+            Based on {basedOnUsers.toLocaleString()} users
+          </div>
+        </td>
+        {cohorts.map(cid => <td key={cid}></td>)}
+      </tr>
+    )
 
     if (!children || children.length === 0) {
       return [
         own,
+        contextRow,
         ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : []),
       ]
     }
 
-    return [own, ...renderRows(children), ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : [])]
+    return [own, contextRow, ...renderRows(children), ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : [])]
   })
 
   if (!rootRows || rootRows.length === 0) return <p style={{ marginTop: 16 }}>No transitions found</p>
