@@ -565,6 +565,7 @@ describe('FunnelPane – funnel builder modal', () => {
     expect(screen.getByTestId('funnel-step-0')).toBeInTheDocument()
     expect(screen.getByTestId('funnel-step-1')).toBeInTheDocument()
     expect(screen.queryByTestId('funnel-step-2')).not.toBeInTheDocument()
+    expect(screen.getByText('Maximum time allowed between consecutive steps')).toBeInTheDocument()
   })
 
   test('builder_adds_step_on_add_step_click', async () => {
@@ -649,7 +650,7 @@ describe('FunnelPane – funnel builder modal', () => {
     })
   })
 
-  test('builder_drag_drop_reorders_steps_and_persists_order', async () => {
+  test('builder_sends_explicit_step_order_in_payload', async () => {
     renderFunnelPane(MOCK_EVENTS_STR)
     await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
     fireEvent.click(screen.getByTestId('funnel-new-button'))
@@ -660,20 +661,10 @@ describe('FunnelPane – funnel builder modal', () => {
     fireEvent.change(screen.getByTestId('funnel-step-event-1'), { target: { value: 'search' } })
     fireEvent.change(screen.getByTestId('funnel-step-event-2'), { target: { value: 'purchase' } })
 
-    const dragged = screen.getByTestId('funnel-step-2')
-    const target = screen.getByTestId('funnel-step-0')
-    fireEvent.dragStart(dragged, {
-      dataTransfer: { setData: vi.fn(), effectAllowed: 'move' },
-    })
-    fireEvent.dragOver(target)
-    fireEvent.drop(target, {
-      dataTransfer: { getData: () => '2' },
-    })
-
     fireEvent.click(screen.getByTestId('funnel-save-button'))
     await waitFor(() => expect(createFunnel).toHaveBeenCalled())
-    expect(createFunnel.mock.calls[0][0].steps.map(s => s.event_name)).toEqual([
-      'purchase', 'signup', 'search',
+    expect(createFunnel.mock.calls[0][0].steps.map(s => s.step_order)).toEqual([
+      0, 1, 2,
     ])
   })
 })

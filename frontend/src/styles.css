@@ -2779,6 +2779,12 @@ tbody tr:hover {
   width: 110px;
 }
 
+.funnel-window-help {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: -4px 0 10px;
+}
+
 .funnel-steps-scroll {
   max-height: 420px;
   overflow-y: auto;
@@ -2787,6 +2793,10 @@ tbody tr:hover {
   gap: 8px;
   padding-right: 4px;
   margin-bottom: 8px;
+}
+
+.funnel-sortable-step {
+  width: 100%;
 }
 
 .funnel-step-block {

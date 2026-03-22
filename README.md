@@ -89,6 +89,7 @@ It supports:
 * `max_day` defaults to 7 for retention/usage/monetization.
 * Funnels:
   * step count must be between 2 and 10
+  * steps may include optional explicit `step_order` (frontend sends sequential 0-based order)
   * optional `conversion_window` supports minutes (`{"value": <int>, "unit": "minute"}`) or `null` for lifetime
 
 ## Run locally

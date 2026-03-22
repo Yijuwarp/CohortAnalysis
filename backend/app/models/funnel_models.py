@@ -2,7 +2,7 @@
 Short summary: Pydantic models for funnel request/response payloads.
 """
 from __future__ import annotations
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from typing import Optional
 
 MIN_FUNNEL_STEPS = 2
@@ -18,11 +18,12 @@ class FunnelStepFilter(BaseModel):
 
 class FunnelStep(BaseModel):
     event_name: str
+    step_order: Optional[int] = None
     filters: list[FunnelStepFilter] = Field(default_factory=list)
 
 
 class ConversionWindow(BaseModel):
-    value: int = Field(ge=1)
+    value: StrictInt = Field(ge=1, le=10080)
     unit: str = Field(default="minute")
 
 

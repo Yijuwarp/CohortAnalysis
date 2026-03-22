@@ -9,6 +9,8 @@ from fastapi import HTTPException
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.models.funnel_models import MAX_FUNNEL_STEPS, MIN_FUNNEL_STEPS
 
+MAX_WINDOW_MINUTES = 10080
+
 
 # ---------------------------------------------------------------------------
 # Table bootstrap
@@ -52,6 +54,18 @@ def ensure_funnel_tables(conn: duckdb.DuckDBPyConnection) -> None:
     conn.execute(
         "ALTER TABLE funnels ADD COLUMN IF NOT EXISTS conversion_window_unit TEXT NULL"
     )
+    # Enforce conversion window invariants at DB level when supported.
+    try:
+        conn.execute(
+            "ALTER TABLE funnels ADD CONSTRAINT check_conversion_window "
+            "CHECK ("
+            "  conversion_window_value IS NULL OR "
+            "  (conversion_window_value > 0 AND conversion_window_unit = 'minute')"
+            ")"
+        )
+    except Exception:
+        # Constraint may already exist or backend may not support ADD CONSTRAINT.
+        pass
     # Performance for funnel execution scans
     normalized_exists = conn.execute(
         "SELECT COUNT(*) FROM information_schema.tables "
@@ -62,6 +76,31 @@ def ensure_funnel_tables(conn: duckdb.DuckDBPyConnection) -> None:
             "CREATE INDEX IF NOT EXISTS idx_events_normalized_user_time "
             "ON events_normalized(user_id, event_time)"
         )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_user_event_time "
+            "ON events_normalized(user_id, event_name, event_time)"
+        )
+
+
+def _validate_conversion_window(conversion_window: dict | None) -> tuple[int | None, str | None]:
+    if conversion_window is None:
+        return None, None
+    if not isinstance(conversion_window, dict):
+        raise HTTPException(status_code=400, detail="conversion_window must be an object or null")
+    value = conversion_window.get("value")
+    unit = conversion_window.get("unit")
+    if not isinstance(value, int):
+        raise HTTPException(status_code=400, detail="Conversion window value must be an integer")
+    if value <= 0:
+        raise HTTPException(status_code=400, detail="Conversion window value must be greater than 0")
+    if value > MAX_WINDOW_MINUTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Conversion window value must be at most {MAX_WINDOW_MINUTES} minutes",
+        )
+    if not isinstance(unit, str) or unit.strip().lower() != "minute":
+        raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
+    return value, "minute"
 
 
 # ---------------------------------------------------------------------------
@@ -161,15 +200,7 @@ def create_funnel(
     if len(steps) > MAX_FUNNEL_STEPS:
         raise HTTPException(status_code=400, detail=f"Funnels support at most {MAX_FUNNEL_STEPS} steps")
 
-    conversion_window_value: int | None = None
-    conversion_window_unit: str | None = None
-    if conversion_window is not None:
-        conversion_window_value = int(conversion_window.get("value", 0))
-        conversion_window_unit = (conversion_window.get("unit") or "").strip().lower()
-        if conversion_window_value <= 0:
-            raise HTTPException(status_code=400, detail="Conversion window value must be greater than 0")
-        if conversion_window_unit != "minute":
-            raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
+    conversion_window_value, conversion_window_unit = _validate_conversion_window(conversion_window)
 
     for idx, step in enumerate(steps):
         if not step.get("event_name", "").strip():
@@ -184,7 +215,12 @@ def create_funnel(
         [name, created_at, conversion_window_value, conversion_window_unit],
     ).fetchone()[0]
 
-    for order, step in enumerate(steps):
+    for idx, step in enumerate(steps):
+        order = step.get("step_order")
+        if order is None:
+            order = idx
+        if not isinstance(order, int):
+            raise HTTPException(status_code=400, detail=f"Step {idx + 1} has invalid step_order")
         step_id = conn.execute(
             "INSERT INTO funnel_steps (id, funnel_id, step_order, event_name) "
             "VALUES (nextval('funnel_steps_id_seq'), ?, ?, ?) RETURNING id",
@@ -229,15 +265,7 @@ def update_funnel(
     if not row:
         raise HTTPException(status_code=404, detail="Funnel not found")
 
-    conversion_window_value: int | None = None
-    conversion_window_unit: str | None = None
-    if conversion_window is not None:
-        conversion_window_value = int(conversion_window.get("value", 0))
-        conversion_window_unit = (conversion_window.get("unit") or "").strip().lower()
-        if conversion_window_value <= 0:
-            raise HTTPException(status_code=400, detail="Conversion window value must be greater than 0")
-        if conversion_window_unit != "minute":
-            raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
+    conversion_window_value, conversion_window_unit = _validate_conversion_window(conversion_window)
 
     conn.execute(
         "UPDATE funnels "
@@ -253,7 +281,12 @@ def update_funnel(
     conn.execute("DELETE FROM funnel_steps WHERE funnel_id = ?", [funnel_id])
 
     # Insert new steps
-    for order, step in enumerate(steps):
+    for idx, step in enumerate(steps):
+        order = step.get("step_order")
+        if order is None:
+            order = idx
+        if not isinstance(order, int):
+            raise HTTPException(status_code=400, detail=f"Step {idx + 1} has invalid step_order")
         step_id = conn.execute(
             "INSERT INTO funnel_steps (id, funnel_id, step_order, event_name) "
             "VALUES (nextval('funnel_steps_id_seq'), ?, ?, ?) RETURNING id",
@@ -414,7 +447,7 @@ def _build_step_cte(
         f"  JOIN {prev_alias} p ON e.user_id = p.user_id\n"
         f"  WHERE e.event_name = '{safe_event}'"
         f"{filter_clauses}\n"
-        f"  AND e.event_time > p.ts\n"
+        f"  AND e.event_time >= p.ts\n"
         f"{window_clause}"
         f"  GROUP BY e.user_id\n"
         f")"

@@ -2,6 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFunnel, updateFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
 import { formatInteger } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 // ---------------------------------------------------------------------------
 // Funnel Builder Modal
@@ -14,6 +17,19 @@ const STEP_WINDOW_CUSTOM = 'custom'
 
 const EMPTY_STEP = (id) => ({ id, event_name: '', filters: [] })
 const EMPTY_FILTER = () => ({ property_key: '', property_value: '' })
+
+function SortableStep({ id, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className="funnel-sortable-step">
+      {children({ attributes, listeners })}
+    </div>
+  )
+}
 
 function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel }) {
   // events is string[] from backend e.g. ["signup", "purchase"]
@@ -30,6 +46,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
   const [propsByEvent, setPropsByEvent] = useState({})
   // { "eventName::propKey" -> string[] } — value lists per event+prop combo
   const [valuesByProp, setValuesByProp] = useState({})
+  const sensors = useSensors(useSensor(PointerSensor))
 
   const loadProps = useCallback(async (eventName) => {
     if (!eventName || propsByEvent[eventName] !== undefined) return
@@ -134,13 +151,14 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
     setSteps(prev => prev.filter((_, i) => i !== idx))
   }
 
-  const moveStep = (fromIndex, toIndex) => {
-    if (fromIndex === toIndex || toIndex < 0 || toIndex >= steps.length) return
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
     setSteps(prev => {
-      const copy = [...prev]
-      const [moved] = copy.splice(fromIndex, 1)
-      copy.splice(toIndex, 0, moved)
-      return copy
+      const oldIndex = prev.findIndex(step => step.id === active.id)
+      const newIndex = prev.findIndex(step => step.id === over.id)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      return arrayMove(prev, oldIndex, newIndex)
     })
   }
 
@@ -194,8 +212,9 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
     try {
       const payload = {
         name: trimmedName,
-        steps: steps.map(s => ({
+        steps: steps.map((s, idx) => ({
           event_name: s.event_name,
+          step_order: idx,
           filters: s.filters.filter(f => f.property_key && f.property_value),
         })),
         conversion_window: conversionWindow,
@@ -263,28 +282,18 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                 </div>
               )}
             </div>
+            <p className="funnel-window-help">Maximum time allowed between consecutive steps</p>
             <p className="funnel-steps-label">Steps (2–10 required)</p>
 
             <div className="funnel-steps-scroll">
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={steps.map(s => s.id)} strategy={verticalListSortingStrategy}>
             {steps.map((step, stepIdx) => {
               const props = propsByEvent[step.event_name] || []
               return (
-                <div
-                  key={step.id}
-                  className="funnel-step-block"
-                  data-testid={`funnel-step-${stepIdx}`}
-                  draggable
-                  onDragStart={e => {
-                    e.dataTransfer.setData('text/plain', String(stepIdx))
-                    e.dataTransfer.effectAllowed = 'move'
-                  }}
-                  onDragOver={e => e.preventDefault()}
-                  onDrop={e => {
-                    e.preventDefault()
-                    const fromIndex = Number(e.dataTransfer.getData('text/plain'))
-                    moveStep(fromIndex, stepIdx)
-                  }}
-                >
+                <SortableStep key={step.id} id={step.id}>
+                {({ attributes, listeners }) => (
+                <div className="funnel-step-block" data-testid={`funnel-step-${stepIdx}`}>
                   <div className="funnel-step-header">
                     <span className="funnel-step-number">{stepIdx + 1}</span>
                     <button
@@ -292,6 +301,8 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                       className="funnel-drag-handle"
                       aria-label={`Drag step ${stepIdx + 1}`}
                       title="Drag to reorder"
+                      {...attributes}
+                      {...listeners}
                     >
                       ⋮⋮
                     </button>
@@ -388,8 +399,12 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                     data-testid={`funnel-add-filter-${stepIdx}`}
                   >+ Add filter</button>
                 </div>
+                )}
+                </SortableStep>
               )
             })}
+            </SortableContext>
+            </DndContext>
             </div>
 
             {steps.length < MAX_FUNNEL_STEPS && (
@@ -452,10 +467,9 @@ function FunnelChart({ result }) {
           <div className="funnel-bars">
             {cohorts.map((cohort, cohortIdx) => {
               const stepData = cohort.steps[stepIdx] || { users: 0, conversion_pct: 0, dropoff_pct: 0 }
-              // 1. Cast to Number (guards null / undefined / string from bad data)
-              // 2. Clamp to [0, 100] (guards backend rounding overflow)
-              // 3. Round to 1 decimal so bar width matches the displayed label exactly
-              const barWidth = Math.round(Math.max(0, Math.min(100, Number(stepData.conversion_pct) || 0)) * 10) / 10
+              const baseUsers = Number(cohort.steps[0]?.users) || 0
+              const users = Number(stepData.users) || 0
+              const barWidth = Math.max(0, Math.min(100, baseUsers > 0 ? (users / baseUsers) * 100 : 0))
               // 2px minimum so tiny values (e.g. 0.1%) are still visible
               const minWidthPx = barWidth > 0 ? 2 : 0
               return (

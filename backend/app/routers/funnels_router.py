@@ -24,6 +24,7 @@ async def create_funnel_endpoint(
     steps = [
         {
             "event_name": step.event_name,
+            "step_order": step.step_order,
             "filters": [
                 {"property_key": f.property_key, "property_value": f.property_value}
                 for f in step.filters
@@ -55,6 +56,7 @@ async def update_funnel_endpoint(
     steps = [
         {
             "event_name": step.event_name,
+            "step_order": step.step_order,
             "filters": [
                 {"property_key": f.property_key, "property_value": f.property_value}
                 for f in step.filters
