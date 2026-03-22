@@ -32,6 +32,9 @@ export default function FlowTable({
   maxDepth,
 }) {
   const buildNoFurtherActionRow = (parentRow, children) => {
+    if ((children || []).some((row) => row.path[row.path.length - 1] === 'No further action')) {
+      return null
+    }
     const values = {}
     let hasAny = false
 

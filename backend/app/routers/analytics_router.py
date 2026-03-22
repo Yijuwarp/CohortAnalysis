@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 import duckdb
 from typing import Any
+import logging
 from app.db.connection import get_connection
 from app.domains.analytics.retention_service import get_retention
 from app.domains.analytics.usage_service import (
@@ -15,6 +16,8 @@ from app.domains.analytics.flow_service import get_l1_flows, get_l2_flows
 from app.utils.parsing import parse_max_day
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
+MAX_DEPTH = 20
 
 @router.get("/retention")
 async def retention_endpoint(
@@ -88,12 +91,19 @@ async def flow_l1_endpoint(
     direction: str = Query("forward"),
     depth: int = Query(2),
     property_column: str | None = Query(None),
-    property_operator: str | None = Query("="),
+    property_operator: str = Query("="),
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
+    depth = min(max(2, depth), MAX_DEPTH)
+    if not property_column:
+        property_values = None
+    try:
+        return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
+    except Exception as e:
+        logger.exception("flow_l1 failed")
+        raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/flow/l2")
 async def flow_l2_endpoint(
@@ -101,22 +111,34 @@ async def flow_l2_endpoint(
     parent_path: list[str] | None = Query(None),
     parent_event: str | None = Query(None),
     direction: str = Query("forward"),
-    depth: int = Query(7),
+    depth: int = Query(2),
     property_column: str | None = Query(None),
-    property_operator: str | None = Query("="),
+    property_operator: str = Query("="),
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    resolved_parent_path = parent_path or ([start_event, parent_event] if parent_event else [start_event])
-    return get_l2_flows(
-        conn,
-        start_event,
-        resolved_parent_path,
-        direction,
-        depth,
-        property_column,
-        property_operator,
-        property_values,
-        include_top_k,
-    )
+    if not property_column:
+        property_values = None
+    if parent_path:
+        resolved_parent_path = parent_path
+    elif parent_event:
+        resolved_parent_path = [start_event, parent_event]
+    else:
+        resolved_parent_path = [start_event]
+    depth = min(max(max(2, depth), len(resolved_parent_path) + 1), MAX_DEPTH)
+    try:
+        return get_l2_flows(
+            conn,
+            start_event,
+            resolved_parent_path,
+            direction,
+            depth,
+            property_column,
+            property_operator,
+            property_values,
+            include_top_k,
+        )
+    except Exception as e:
+        logger.exception("flow_l2 failed")
+        raise HTTPException(status_code=400, detail=str(e))

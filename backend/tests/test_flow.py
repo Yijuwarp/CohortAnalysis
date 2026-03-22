@@ -396,13 +396,16 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
     assert other_row["values"][cid]["user_count"] == 1
     assert abs(_value_pct(other_row["values"][cid]) - 0.25) < 1e-4
 
-    # Named rows should be exactly 3
+    # Named rows should include top 3 + No further action
     named_rows = [r for r in rows if r["path"][-1] != "Other"]
-    assert len(named_rows) == 3, f"Expected 3 named rows, got {len(named_rows)}"
+    assert len(named_rows) == 4, f"Expected 4 named rows (including No further action), got {len(named_rows)}"
 
-    # Named rows should be expandable
+    # Top rows should be expandable; No further action should not.
     for r in named_rows:
-        assert r["expandable"] is True
+        if r["path"][-1] == "No further action":
+            assert r["expandable"] is False
+        else:
+            assert r["expandable"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -598,6 +601,8 @@ def test_l1_named_rows_are_expandable_other_is_not(client: TestClient) -> None:
     for row in rows:
         if row["path"][-1] == "Other":
             assert row["expandable"] is False, "Other row must not be expandable"
+        elif row["path"][-1] == "No further action":
+            assert row["expandable"] is False, "No further action row must not be expandable"
         else:
             assert row["expandable"] is True, f"Named row {row['path']} should be expandable"
 

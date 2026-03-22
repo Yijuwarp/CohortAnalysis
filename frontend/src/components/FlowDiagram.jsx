@@ -188,7 +188,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   const edgeAgg = new Map()
   const nodeUsage = new Map()
   const nodeLoop = new Map()
-  const rootNodeId = `${rootEvent}__1`
+  const rootNodeId = `${rootEvent}__L1`
 
   const walk = (rows) => {
     ;(rows || []).forEach((row) => {
@@ -201,8 +201,8 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       const childEvent = row.path[row.path.length - 1]
 
       const parentDepth = row.path.length - 1
-      const source = `${parentEvent}__${parentDepth}`
-      const target = `${childEvent}__${childDepth}`
+      const source = `${parentEvent}__L${parentDepth}`
+      const target = `${childEvent}__L${childDepth}`
       const isLoop = row.path.slice(0, -1).includes(event)
       if (isLoop) {
         nodeLoop.set(target, true)
@@ -273,8 +273,8 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
     if (parentUsers <= 0) return
 
-    const sourceLabel = source.split('__')[0]
-    const sourceDepth = Number(source.split('__')[1] || 1)
+    const sourceLabel = source.split('__L')[0]
+    const sourceDepth = Number(source.split('__L')[1] || 1)
     const target = `${source}__no_further_action`
     const pct = noFurtherActionUsers / parentUsers
 
@@ -302,9 +302,10 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   })
 
   const nodes = Array.from(activeNodes).map((nodeId) => {
-    const [event, depthStr, suffix] = nodeId.split('__')
-    const depth = suffix === 'action' ? Number(depthStr) + 1 : Number(depthStr)
     const isNoFurtherAction = nodeId.endsWith('__no_further_action')
+    const baseId = isNoFurtherAction ? nodeId.replace('__no_further_action', '') : nodeId
+    const [event, depthStr] = baseId.split('__L')
+    const depth = Number(depthStr || 1) + (isNoFurtherAction ? 1 : 0)
     const isLoop = nodeLoop.get(nodeId) || false
     const users = isNoFurtherAction
       ? (noFurtherActionEdges.find((edge) => edge.target === nodeId)?.users || 0)
@@ -346,8 +347,8 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   })
 
   const edges = filteredEdges.map((edge) => {
-    const sourceLabel = edge.source.split('__')[0]
-    const targetLabel = edge.target.split('__')[0]
+    const sourceLabel = edge.source.split('__L')[0]
+    const targetLabel = edge.target.split('__L')[0]
     const pct = edge.pct
     const users = Math.round(edge.users)
     return ({
@@ -370,6 +371,9 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   })})
 
   noFurtherActionEdges.forEach((edge) => {
+    if (filteredEdges.some((existing) => existing.source === edge.source && existing.target.split('__L')[0] === 'No further action')) {
+      return
+    }
     edges.push({
       id: edge.id,
       source: edge.source,
@@ -386,7 +390,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
         sourceLabel: edge.sourceLabel,
         targetLabel: 'No further action',
         users: edge.users,
-        parentUsers,
+        parentUsers: parentUsersBySource[edge.source] || 0,
         pct: edge.pct,
       },
       title: `${edge.sourceLabel} → No further action\n${(edge.pct * 100).toFixed(1)}% (${Math.round(edge.users).toLocaleString()} users)`,

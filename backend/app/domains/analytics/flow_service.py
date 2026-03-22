@@ -7,7 +7,7 @@ from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.utils.sql import quote_identifier
 
 _TOP_N = 3
-_MAX_DEPTH = 7
+_MAX_DEPTH = 20
 _DIRECTIONS = ("forward", "reverse")
 _ALLOWED_PROPERTY_OPERATORS = {"=", "!=", "IN", "NOT IN", ">", "<", ">=", "<="}
 
@@ -27,9 +27,9 @@ def _snapshot_exists(connection: duckdb.DuckDBPyConnection) -> bool:
 
 
 def _validate_depth(depth: int) -> int:
-    if depth < 2 or depth > _MAX_DEPTH:
-        raise HTTPException(status_code=400, detail=f"depth must be between 2 and {_MAX_DEPTH}")
-    return depth
+    if depth < 2:
+        return 2
+    return min(depth, _MAX_DEPTH)
 
 
 def _build_property_filter_clause(
@@ -243,18 +243,22 @@ def _rows_payload(
         for row in top_rows:
             event_name = row["event_name"]
             median, p20, p80 = timing_map.get(event_name, (None, None, None))
+            pct_of_parent = (row["count"] / anchor_users) if anchor_users > 0 else 0.0
             event_cohort_data.setdefault(event_name, {})[cohort_id] = {
                 "user_count": row["count"],
                 "parent_users": anchor_users,
+                "pct_of_parent": pct_of_parent,
                 "median_time_sec": float(median) if median is not None else None,
                 "p20_time_sec": float(p20) if p20 is not None else None,
                 "p80_time_sec": float(p80) if p80 is not None else None,
             }
 
         if other_count > 0:
+            other_pct = (other_count / anchor_users) if anchor_users > 0 else 0.0
             cohort_other[cohort_id] = {
                 "user_count": other_count,
                 "parent_users": anchor_users,
+                "pct_of_parent": other_pct,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
@@ -267,6 +271,7 @@ def _rows_payload(
             values[str(cid)] = cohort_vals.get(cid, {
                 "user_count": 0,
                 "parent_users": 0,
+                "pct_of_parent": 0.0,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
@@ -285,11 +290,40 @@ def _rows_payload(
             other_values[str(cid)] = cohort_other.get(cid, {
                 "user_count": 0,
                 "parent_users": 0,
+                "pct_of_parent": 0.0,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
             })
         output.append({"path": [*path_prefix, "Other"], "values": other_values, **({"expandable": False} if include_expandable else {})})
+
+    visible_cohort_ids = {int(cid) for cid, _ in cohorts}
+    no_further_values = {}
+    for cohort_id, data in per_cohort.items():
+        if cohort_id not in visible_cohort_ids:
+            continue
+        anchor_users = int(data["anchor"])
+        continued_users = sum(count for _, count, _, _, _ in data["events"])
+        no_further_users = max(0, anchor_users - continued_users)
+        no_further_values[str(cohort_id)] = {
+            "user_count": no_further_users,
+            "parent_users": anchor_users,
+            "pct_of_parent": (no_further_users / anchor_users) if anchor_users > 0 else 0.0,
+            "median_time_sec": None,
+            "p20_time_sec": None,
+            "p80_time_sec": None,
+        }
+    if no_further_values:
+        for cid, _ in cohorts:
+            no_further_values.setdefault(str(cid), {
+                "user_count": 0,
+                "parent_users": 0,
+                "pct_of_parent": 0.0,
+                "median_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
+            })
+        output.append({"path": [*path_prefix, "No further action"], "values": no_further_values, **({"expandable": False} if include_expandable else {})})
 
     return output
 
