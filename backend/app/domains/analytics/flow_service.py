@@ -45,14 +45,12 @@ def _build_property_filter_clause(
         raise HTTPException(status_code=400, detail="Unsupported property_operator")
 
     values = property_values or []
+    if not values:
+        return "", []
     if operator in {"IN", "NOT IN"}:
-        if not values:
-            raise HTTPException(status_code=400, detail=f"Operator {operator} requires property_values")
         placeholders = ", ".join(["?"] * len(values))
         return f" AND {quote_identifier(property_column)} {operator} ({placeholders})", list(values)
 
-    if not values:
-        raise HTTPException(status_code=400, detail="property_values is required")
     return f" AND {quote_identifier(property_column)} {operator} ?", [values[0]]
 
 
@@ -173,8 +171,10 @@ def _build_level_sql(
 
 def _prune_and_aggregate(events_with_counts: list[tuple[str, int]], anchor_users: int) -> tuple[list[dict], int]:
     sorted_events = sorted(events_with_counts, key=lambda x: x[1], reverse=True)
-    top = sorted_events[:_TOP_N]
-    rest = sorted_events[_TOP_N:]
+    qualifying = [item for item in sorted_events if anchor_users > 0 and (item[1] / anchor_users) >= 0.01]
+    top = qualifying[:_TOP_N]
+    top_names = {name for name, _ in top}
+    rest = [item for item in sorted_events if item[0] not in top_names]
 
     top_rows = []
     for event_name, count in top:
@@ -196,6 +196,10 @@ def _run_level_query(
 ) -> tuple[list[tuple], int]:
     parent_depth = len(parent_path)
     if parent_depth < 1 or parent_depth >= depth:
+        return [], parent_depth
+    if "No further action" in parent_path or "Other" in parent_path:
+        return [], parent_depth
+    if len(parent_path) != len(set(parent_path)):
         return [], parent_depth
     if parent_path[0] != start_event:
         raise HTTPException(status_code=400, detail="parent_path must start with start_event")
@@ -243,22 +247,18 @@ def _rows_payload(
         for row in top_rows:
             event_name = row["event_name"]
             median, p20, p80 = timing_map.get(event_name, (None, None, None))
-            pct_of_parent = (row["count"] / anchor_users) if anchor_users > 0 else 0.0
             event_cohort_data.setdefault(event_name, {})[cohort_id] = {
                 "user_count": row["count"],
                 "parent_users": anchor_users,
-                "pct_of_parent": pct_of_parent,
                 "median_time_sec": float(median) if median is not None else None,
                 "p20_time_sec": float(p20) if p20 is not None else None,
                 "p80_time_sec": float(p80) if p80 is not None else None,
             }
 
         if other_count > 0:
-            other_pct = (other_count / anchor_users) if anchor_users > 0 else 0.0
             cohort_other[cohort_id] = {
                 "user_count": other_count,
                 "parent_users": anchor_users,
-                "pct_of_parent": other_pct,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
@@ -271,7 +271,6 @@ def _rows_payload(
             values[str(cid)] = cohort_vals.get(cid, {
                 "user_count": 0,
                 "parent_users": 0,
-                "pct_of_parent": 0.0,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
@@ -282,7 +281,7 @@ def _rows_payload(
         named_rows.append({"path": [*path_prefix, event_name], "values": values, "expandable": True, "_sp": sort_pct, "_sc": sort_count})
 
     named_rows.sort(key=lambda row: (-row["_sp"], -row["_sc"]))
-    output = [{"path": r["path"], "values": r["values"], **({"expandable": r["expandable"]} if include_expandable else {})} for r in named_rows]
+    output = [{"path": r["path"], "values": r["values"], "children": [], **({"expandable": r["expandable"]} if include_expandable else {})} for r in named_rows]
 
     if top_k_enabled and cohort_other:
         other_values = {}
@@ -290,12 +289,11 @@ def _rows_payload(
             other_values[str(cid)] = cohort_other.get(cid, {
                 "user_count": 0,
                 "parent_users": 0,
-                "pct_of_parent": 0.0,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
             })
-        output.append({"path": [*path_prefix, "Other"], "values": other_values, **({"expandable": False} if include_expandable else {})})
+        output.append({"path": [*path_prefix, "Other"], "values": other_values, "children": [], **({"expandable": False} if include_expandable else {})})
 
     visible_cohort_ids = {int(cid) for cid, _ in cohorts}
     no_further_values = {}
@@ -308,7 +306,6 @@ def _rows_payload(
         no_further_values[str(cohort_id)] = {
             "user_count": no_further_users,
             "parent_users": anchor_users,
-            "pct_of_parent": (no_further_users / anchor_users) if anchor_users > 0 else 0.0,
             "median_time_sec": None,
             "p20_time_sec": None,
             "p80_time_sec": None,
@@ -318,12 +315,11 @@ def _rows_payload(
             no_further_values.setdefault(str(cid), {
                 "user_count": 0,
                 "parent_users": 0,
-                "pct_of_parent": 0.0,
                 "median_time_sec": None,
                 "p20_time_sec": None,
                 "p80_time_sec": None,
             })
-        output.append({"path": [*path_prefix, "No further action"], "values": no_further_values, **({"expandable": False} if include_expandable else {})})
+        output.append({"path": [*path_prefix, "No further action"], "values": no_further_values, "children": [], **({"expandable": False} if include_expandable else {})})
 
     return output
 
@@ -340,7 +336,7 @@ def get_l1_flows(
 ) -> dict:
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
-    _validate_depth(depth)
+    depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
     if not _snapshot_exists(connection):
@@ -367,7 +363,7 @@ def get_l2_flows(
 ) -> dict:
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
-    _validate_depth(depth)
+    depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
     if not _snapshot_exists(connection):

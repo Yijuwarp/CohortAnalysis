@@ -89,10 +89,10 @@ export default function FlowTable({
     const pct = computePct(val.user_count, val.parent_users)
 
     return (
-      <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | Median ${formatTime(val.median_time_sec)} | P20 ${formatTime(val.p20_time_sec)} | P80 ${formatTime(val.p80_time_sec)}`}>
+      <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | P20 ${formatTime(val.p20_time_sec)} | Median ${formatTime(val.median_time_sec)} | P80 ${formatTime(val.p80_time_sec)}`}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontWeight: 700 }}>{formatPct(pct)}</div>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.p20_time_sec)} / {formatTime(val.p80_time_sec)}</div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.median_time_sec)}</div>
         </div>
       </td>
     )
@@ -103,7 +103,12 @@ export default function FlowTable({
     const depth = row.path.length - 1
     const indentPx = depth * 16
     const expanded = expandedNodes.has(key)
-    const canExpand = !row.isNoFurtherAction && depth < maxDepth && row.path[row.path.length - 1] !== 'Other'
+    const eventName = row.path[row.path.length - 1]
+    const isLoopRow = row.path.slice(0, -1).includes(eventName)
+    const canExpand = !row.isNoFurtherAction
+      && depth < maxDepth
+      && !['Other', 'No further action'].includes(eventName)
+      && !isLoopRow
     const children = getChildren(row.path)
     const basedOnUsers = Math.round(Number(row.values?.[cohorts[0]]?.parent_users || 0))
 

@@ -97,7 +97,7 @@ async def flow_l1_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     depth = min(max(2, depth), MAX_DEPTH)
-    if not property_column:
+    if not property_column or not property_values:
         property_values = None
     try:
         return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
@@ -118,7 +118,7 @@ async def flow_l2_endpoint(
     include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    if not property_column:
+    if not property_column or not property_values:
         property_values = None
     if parent_path:
         resolved_parent_path = parent_path

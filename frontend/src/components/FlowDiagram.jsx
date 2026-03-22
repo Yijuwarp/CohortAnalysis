@@ -32,7 +32,7 @@ function getEdgeWidth(pct) {
 
   return Math.max(
     MIN,
-    Math.min(MAX, pct * 12)
+    Math.min(MAX, pct * 20)
   )
 }
 
@@ -142,9 +142,10 @@ async function buildLayout(nodes, edges) {
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
     rankdir: 'LR',
-    nodesep: 140,
-    ranksep: 260,
-    edgesep: 80,
+    nodesep: 120,
+    ranksep: 180,
+    edgesep: 40,
+    ranker: 'tight-tree',
     marginx: 40,
     marginy: 40,
   })
@@ -188,7 +189,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   const edgeAgg = new Map()
   const nodeUsage = new Map()
   const nodeLoop = new Map()
-  const rootNodeId = `${rootEvent}__L1`
+  const rootNodeId = `${rootEvent}__L1__ROOT`
 
   const walk = (rows) => {
     ;(rows || []).forEach((row) => {
@@ -199,10 +200,11 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
       const parentEvent = row.path[row.path.length - 2]
       const childEvent = row.path[row.path.length - 1]
+      const sourceParentEvent = row.path.length > 2 ? row.path[row.path.length - 3] : 'ROOT'
 
       const parentDepth = row.path.length - 1
-      const source = `${parentEvent}__L${parentDepth}`
-      const target = `${childEvent}__L${childDepth}`
+      const source = `${parentEvent}__L${parentDepth}__${sourceParentEvent}`
+      const target = `${childEvent}__L${childDepth}__${parentEvent}`
       const isLoop = row.path.slice(0, -1).includes(event)
       if (isLoop) {
         nodeLoop.set(target, true)
@@ -304,8 +306,9 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   const nodes = Array.from(activeNodes).map((nodeId) => {
     const isNoFurtherAction = nodeId.endsWith('__no_further_action')
     const baseId = isNoFurtherAction ? nodeId.replace('__no_further_action', '') : nodeId
-    const [event, depthStr] = baseId.split('__L')
-    const depth = Number(depthStr || 1) + (isNoFurtherAction ? 1 : 0)
+    const [event] = baseId.split('__L')
+    const depthMatch = baseId.match(/__L(\d+)__/)
+    const depth = Number(depthMatch?.[1] || 1) + (isNoFurtherAction ? 1 : 0)
     const isLoop = nodeLoop.get(nodeId) || false
     const users = isNoFurtherAction
       ? (noFurtherActionEdges.find((edge) => edge.target === nodeId)?.users || 0)
@@ -366,7 +369,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       strokeDasharray: edge.isLoop ? '4 2' : undefined,
       opacity: Math.max(0.3, pct / 20),
     },
-    interactionWidth: getEdgeWidth(pct) + 10,
+    interactionWidth: getEdgeWidth(pct) + 8,
     data: { ...edge, pct, users, sourceLabel, targetLabel, parentUsers: edge.parentUsers },
   })})
 
@@ -385,7 +388,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
         strokeDasharray: '4 2',
         opacity: 0.7,
       },
-      interactionWidth: getEdgeWidth(edge.pct) + 10,
+      interactionWidth: getEdgeWidth(edge.pct) + 8,
       data: {
         sourceLabel: edge.sourceLabel,
         targetLabel: 'No further action',
