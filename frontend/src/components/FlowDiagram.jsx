@@ -238,10 +238,12 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   walk(flowTree)
 
   const edgesBySource = {}
+  const parentUsersBySource = {}
   Array.from(edgeAgg.values()).forEach((edge) => {
     const pct = Math.min(1, edge.parentUsers > 0 ? edge.users / edge.parentUsers : 0)
     if (!edgesBySource[edge.source]) edgesBySource[edge.source] = []
     edgesBySource[edge.source].push({ ...edge, pct })
+    parentUsersBySource[edge.source] = Math.max(parentUsersBySource[edge.source] || 0, edge.parentUsers)
   })
 
   const filteredEdges = []
@@ -253,27 +255,65 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       .forEach((edge) => filteredEdges.push(edge))
   })
 
+  const childUsersBySource = {}
+  filteredEdges.forEach((edge) => {
+    childUsersBySource[edge.source] = (childUsersBySource[edge.source] || 0) + edge.users
+  })
+
+  const noFurtherActionEdges = []
+  Object.entries(parentUsersBySource).forEach(([source, parentUsers]) => {
+    const childUsers = childUsersBySource[source] || 0
+    const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
+    if (parentUsers <= 0) return
+    if ((noFurtherActionUsers / parentUsers) < 0.01) return
+
+    const sourceLabel = source.split('__')[0]
+    const sourceDepth = Number(source.split('__')[1] || 1)
+    const target = `${source}__no_further_action`
+    const pct = noFurtherActionUsers / parentUsers
+
+    noFurtherActionEdges.push({
+      id: `${source}→no_further_action`,
+      source,
+      target,
+      users: noFurtherActionUsers,
+      pct,
+      sourceLabel,
+      targetLabel: 'No further action',
+      noFurtherAction: true,
+      targetDepth: sourceDepth + 1,
+    })
+  })
+
   const activeNodes = new Set([rootNodeId])
   filteredEdges.forEach((edge) => {
     activeNodes.add(edge.source)
     activeNodes.add(edge.target)
   })
+  noFurtherActionEdges.forEach((edge) => {
+    activeNodes.add(edge.source)
+    activeNodes.add(edge.target)
+  })
 
   const nodes = Array.from(activeNodes).map((nodeId) => {
-    const [event, depthStr] = nodeId.split('__')
-    const depth = Number(depthStr)
+    const [event, depthStr, suffix] = nodeId.split('__')
+    const depth = suffix === 'action' ? Number(depthStr) + 1 : Number(depthStr)
+    const isNoFurtherAction = nodeId.endsWith('__no_further_action')
     const isLoop = nodeLoop.get(nodeId) || false
-    const users = nodeUsage.get(nodeId) || 0
-    const width = getNodeWidth(event)
+    const users = isNoFurtherAction
+      ? (noFurtherActionEdges.find((edge) => edge.target === nodeId)?.users || 0)
+      : (nodeUsage.get(nodeId) || 0)
+    const width = getNodeWidth(isNoFurtherAction ? 'No further action' : event)
     const height = 60
 
     return {
       id: nodeId,
     data: {
-      label: `${event}${isLoop ? ' ↺' : ''}`,
+      label: isNoFurtherAction ? 'No further action' : `${event}${isLoop ? ' ↺' : ''}`,
       users,
       isRoot: nodeId === rootNodeId,
       isLoop,
+      isNoFurtherAction,
     },
       width,
       height,
@@ -281,9 +321,9 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     style: {
       width,
       minHeight: height,
-      border: isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb'),
+      border: isNoFurtherAction ? '1px dashed #d1d5db' : (isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb')),
       borderRadius: '10px',
-      background: isLoop ? '#fffbeb' : '#fff',
+      background: isNoFurtherAction ? '#f9fafb' : (isLoop ? '#fffbeb' : '#fff'),
       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
       padding: '8px 12px',
       display: 'flex',
@@ -292,7 +332,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       textAlign: 'center',
       whiteSpace: 'normal',
     },
-    title: isLoop ? 'Users returned to this event (loop)' : '',
+    title: isNoFurtherAction ? 'Users who did not perform any tracked event after this step' : (isLoop ? 'Users returned to this event (loop)' : ''),
     sourcePosition: 'right',
     targetPosition: 'left',
       rank: depth,
@@ -319,6 +359,29 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     },
     data: { ...edge, pct, users, sourceLabel, targetLabel },
   })})
+
+  noFurtherActionEdges.forEach((edge) => {
+    edges.push({
+      id: edge.id,
+      source: edge.source,
+      target: edge.target,
+      type: 'smoothstep',
+      style: {
+        strokeWidth: getEdgeWidth(edge.pct),
+        stroke: '#9ca3af',
+        strokeDasharray: '4 2',
+        opacity: 0.7,
+      },
+      data: {
+        sourceLabel: edge.sourceLabel,
+        targetLabel: 'No further action',
+        users: edge.users,
+        pct: edge.pct,
+      },
+      title: `${edge.sourceLabel} → No further action\n${(edge.pct * 100).toFixed(1)}% (${Math.round(edge.users).toLocaleString()} users)`,
+      markerEnd: { type: MarkerType.ArrowClosed },
+    })
+  })
 
   return { nodes, edges, rootEvent, direction }
 }

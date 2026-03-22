@@ -26,30 +26,48 @@ export default function FlowTable({
   onToggle,
   maxDepth,
 }) {
+  const buildNoFurtherActionRow = (parentRow, children) => {
+    const values = {}
+    let hasAny = false
+
+    cohorts.forEach((cid) => {
+      const parentVal = parentRow.values?.[cid]
+      const parentUsers = parentVal?.pct_of_parent > 0
+        ? Math.round(parentVal.user_count / parentVal.pct_of_parent)
+        : (parentVal?.user_count || 0)
+      const childUsers = (children || []).reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
+      const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
+      const show = parentUsers > 0 && (noFurtherActionUsers / parentUsers) >= 0.01
+      if (show) {
+        hasAny = true
+        values[cid] = {
+          user_count: noFurtherActionUsers,
+          pct_of_parent: noFurtherActionUsers / parentUsers,
+          count: noFurtherActionUsers,
+          pct: noFurtherActionUsers / parentUsers,
+          median_time_sec: null,
+          p90_time_sec: null,
+        }
+      }
+    })
+
+    if (!hasAny) return null
+    return {
+      path: [...parentRow.path, 'No further action'],
+      values,
+      isNoFurtherAction: true,
+    }
+  }
+
   const renderValueCell = (row, cid) => {
     const val = row.values[cid]
     if (!val) return <td key={cid}>—</td>
 
-    const continuePct = val.continue_pct ?? 0
-    const dropoffPct = val.dropoff_pct ?? 1
-    const minSeg = 3
-    const cWidth = Math.max(minSeg, continuePct * 100)
-    const dWidth = Math.max(minSeg, dropoffPct * 100)
-    const norm = cWidth + dWidth
-
-    const parentUsers = val.pct > 0 ? Math.round(val.count / val.pct) : 0
-    const usersContinuing = Math.round(parentUsers * continuePct)
-    const usersDropped = Math.max(0, parentUsers - usersContinuing)
-
     return (
-      <td key={cid} title={`Continue ${formatPct(continuePct)} | Drop-off ${formatPct(dropoffPct)} | Users continuing ${usersContinuing} | Users dropped ${usersDropped} | Median ${formatTime(val.median_time_sec)} | P90 ${formatTime(val.p90_time_sec)}`}>
+      <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | Median ${formatTime(val.median_time_sec)} | P90 ${formatTime(val.p90_time_sec)}`}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           <div style={{ fontWeight: 700 }}>{formatPct(val.pct)}</div>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>↓{formatPct(dropoffPct)} · {formatTime(val.median_time_sec)} / {formatTime(val.p90_time_sec)}</div>
-          <div style={{ width: '100%', height: 8, borderRadius: 4, overflow: 'hidden', background: '#e5e7eb', display: 'flex' }}>
-            <div style={{ width: `${(cWidth / norm) * 100}%`, background: '#2563eb' }} />
-            <div style={{ width: `${(dWidth / norm) * 100}%`, background: '#d1d5db' }} />
-          </div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.median_time_sec)} / {formatTime(val.p90_time_sec)}</div>
         </div>
       </td>
     )
@@ -59,7 +77,7 @@ export default function FlowTable({
     const key = nodeKey(row.path)
     const depth = row.path.length - 1
     const expanded = expandedNodes.has(key)
-    const canExpand = depth < maxDepth && row.path[row.path.length - 1] !== 'Other'
+    const canExpand = !row.isNoFurtherAction && depth < maxDepth && row.path[row.path.length - 1] !== 'Other'
     const children = getChildren(row.path)
 
     const own = (
@@ -68,7 +86,7 @@ export default function FlowTable({
           <div style={{ paddingLeft: (depth - 1) * 18, display: 'flex', gap: 8, alignItems: 'center' }}>
             {canExpand && <span>{expanded ? '▼' : '▶'}</span>}
             <div>
-              <div style={{ fontWeight: 600 }}>{row.path[row.path.length - 1]}</div>
+              <div style={{ fontWeight: 600, color: row.isNoFurtherAction ? '#9ca3af' : undefined, fontStyle: row.isNoFurtherAction ? 'italic' : 'normal' }}>{row.path[row.path.length - 1]}</div>
             </div>
           </div>
         </td>
@@ -82,17 +100,16 @@ export default function FlowTable({
       return [own, <tr key={`${key}-loading`}><td className="sticky-col flow-path-col" style={{ paddingLeft: depth * 18 }}>Loading...</td>{cohorts.map(cid => <td key={cid}></td>)}</tr>]
     }
 
+    const noFurtherActionRow = buildNoFurtherActionRow(row, children || [])
+
     if (!children || children.length === 0) {
       return [
         own,
-        <tr key={`${key}-empty`}>
-          <td className="sticky-col flow-path-col" style={{ paddingLeft: depth * 18, color: '#6b7280' }}>No transitions found</td>
-          {cohorts.map(cid => <td key={cid} style={{ color: '#6b7280' }}>↓100%</td>)}
-        </tr>,
+        ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : []),
       ]
     }
 
-    return [own, ...renderRows(children)]
+    return [own, ...renderRows(children), ...(noFurtherActionRow ? renderRows([noFurtherActionRow]) : [])]
   })
 
   if (!rootRows || rootRows.length === 0) return <p style={{ marginTop: 16 }}>No transitions found</p>
