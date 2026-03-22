@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
-import { BaseEdge } from 'reactflow'
 
 function formatPct(v) {
   return `${((v || 0) * 100).toFixed(1)}%`
@@ -15,12 +14,11 @@ function formatTime(sec) {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
-function estimateNodeWidth(label, users) {
-  const text = `${label} ${users} users`
-  const charWidth = 7.5
-  const padding = 40
-
-  return Math.max(160, text.length * charWidth + padding)
+function getNodeWidth(label) {
+  return Math.min(
+    260,
+    Math.max(180, label.length * 7)
+  )
 }
 
 let dagreLib = null
@@ -78,64 +76,6 @@ function fallbackLayout(nodes) {
   return result
 }
 
-function flowBasedVerticalLayout(nodes, edges) {
-  const LEVEL_GAP_Y = 150
-
-  const parentsMap = {}
-  edges.forEach((edge) => {
-    if (!parentsMap[edge.target]) parentsMap[edge.target] = []
-    parentsMap[edge.target].push(edge.source)
-  })
-
-  const levels = {}
-  nodes.forEach((node) => {
-    const level = node.rank || 1
-    if (!levels[level]) levels[level] = []
-    levels[level].push(node)
-  })
-
-  const positioned = {}
-
-  const sortedLevels = Object.keys(levels)
-    .map(Number)
-    .sort((a, b) => a - b)
-
-  sortedLevels.forEach((level) => {
-    const levelNodes = levels[level]
-
-    if (level === 1) {
-      levelNodes.forEach((node, i) => {
-        node.position.y = i * LEVEL_GAP_Y
-        positioned[node.id] = node.position.y
-      })
-      return
-    }
-
-    const nodesWithScore = levelNodes.map((node) => {
-      const parents = parentsMap[node.id] || []
-
-      if (parents.length === 0) {
-        return { node, score: Infinity }
-      }
-
-      const avgY =
-        parents.reduce((sum, p) => sum + (positioned[p] || 0), 0) /
-        parents.length
-
-      return { node, score: avgY }
-    })
-
-    nodesWithScore.sort((a, b) => a.score - b.score)
-
-    nodesWithScore.forEach((entry, i) => {
-      entry.node.position.y = i * LEVEL_GAP_Y
-      positioned[entry.node.id] = entry.node.position.y
-    })
-  })
-
-  return nodes
-}
-
 async function buildLayout(nodes, edges) {
   const dagre = await getDagre()
 
@@ -148,16 +88,17 @@ async function buildLayout(nodes, edges) {
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
     rankdir: 'LR',
-    nodesep: 80,
-    ranksep: 220,
+    nodesep: 120,
+    ranksep: 260,
+    edgesep: 40,
     marginx: 40,
     marginy: 40,
   })
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, {
-      width: node.width,
-      height: node.height,
+      width: node.width || 220,
+      height: node.height || 70,
     })
   })
 
@@ -275,7 +216,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     const depth = Number(depthStr)
     const isLoop = nodeLoop.get(nodeId) || false
     const users = nodeUsage.get(nodeId) || 0
-    const width = estimateNodeWidth(event, users)
+    const width = getNodeWidth(event)
     const height = 60
 
     return {
@@ -310,20 +251,27 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     }
   })
 
-  const edges = filteredEdges.map((edge, edgeIndex) => ({
+  const edges = filteredEdges.map((edge) => ({
     ...(edge.pct > 0.3 ? { isPrimary: true } : {}),
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'custom',
+    type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed },
+    label: edge.pct < 0.05 ? '' : `${Number((edge.pct * 100).toFixed(1))}%`,
+    labelStyle: {
+      fontSize: 11,
+      fill: '#6b7280',
+    },
+    labelBgPadding: [2, 2],
+    labelBgBorderRadius: 4,
     title: `${Math.round(edge.users).toLocaleString()} users`,
     style: {
       stroke: edge.pct > 0.3 ? '#2563eb' : '#94a3b8',
       strokeWidth: edge.pct > 0.3 ? 4 : Math.max(1.5, edge.pct * 8),
       opacity: edge.pct >= 0.01 ? 1 : 0.4,
     },
-    data: { ...edge, pct: Number((edge.pct * 100).toFixed(1)), edgeIndex },
+    data: edge,
   }))
 
   return { nodes, edges, rootEvent, direction }
@@ -331,37 +279,6 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
 export default function FlowDiagram({ data }) {
   const [graph, setGraph] = useState({ nodes: [], edges: [] })
-  const CustomEdge = ({
-    id,
-    sourceX,
-    sourceY,
-    targetX,
-    targetY,
-    data,
-  }) => {
-    const offset = ((data?.edgeIndex || 0) % 3) * 6
-    const labelX = targetX - 40
-    const labelY = targetY - 10 + offset
-    const path = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`
-
-    return (
-      <>
-        <BaseEdge id={id} path={path} style={{ stroke: '#94a3b8' }} />
-        <text
-          x={labelX}
-          y={labelY}
-          fontSize={11}
-          fill="#6b7280"
-          textAnchor="end"
-        >
-          {data?.pct}%
-        </text>
-      </>
-    )
-  }
-  const edgeTypes = {
-    custom: CustomEdge,
-  }
 
   useEffect(() => {
     let cancelled = false
@@ -386,21 +303,9 @@ export default function FlowDiagram({ data }) {
       }))
 
       const layoutedNodes = await buildLayout(nodes, edges)
-      const LEVEL_GAP_X = 320
-
-      layoutedNodes.forEach((node) => {
-        const level = node.rank || 1
-        node.position.x = (level - 1) * LEVEL_GAP_X
-      })
-
-      const flowNodes = flowBasedVerticalLayout(layoutedNodes, edges)
-      const minY = Math.min(...flowNodes.map((n) => n.position.y))
-      flowNodes.forEach((n) => {
-        n.position.y -= minY
-      })
 
       if (!cancelled) {
-        setGraph({ nodes: flowNodes, edges })
+        setGraph({ nodes: layoutedNodes, edges })
       }
     }
 
@@ -418,7 +323,6 @@ export default function FlowDiagram({ data }) {
       <ReactFlow
         nodes={graph.nodes}
         edges={graph.edges}
-        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         panOnScroll
