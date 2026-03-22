@@ -21,6 +21,16 @@ function getNodeWidth(label) {
   )
 }
 
+function getEdgeWidth(pct) {
+  const MIN = 2
+  const MAX = 12
+
+  return Math.max(
+    MIN,
+    Math.min(MAX, pct * 12)
+  )
+}
+
 let dagreLib = null
 
 async function getDagre() {
@@ -251,34 +261,33 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     }
   })
 
-  const edges = filteredEdges.map((edge) => ({
+  const edges = filteredEdges.map((edge) => {
+    const sourceLabel = edge.source.split('__')[0]
+    const targetLabel = edge.target.split('__')[0]
+    const pct = edge.pct
+    const users = Math.round(edge.users)
+    return ({
     ...(edge.pct > 0.3 ? { isPrimary: true } : {}),
     id: edge.id,
     source: edge.source,
     target: edge.target,
     type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed },
-    label: edge.pct < 0.05 ? '' : `${Number((edge.pct * 100).toFixed(1))}%`,
-    labelStyle: {
-      fontSize: 11,
-      fill: '#6b7280',
-    },
-    labelBgPadding: [2, 2],
-    labelBgBorderRadius: 4,
-    title: `${Math.round(edge.users).toLocaleString()} users`,
+    title: `${sourceLabel} → ${targetLabel}\n${(pct * 100).toFixed(1)}% (${users.toLocaleString()} users)`,
     style: {
-      stroke: edge.pct > 0.3 ? '#2563eb' : '#94a3b8',
-      strokeWidth: edge.pct > 0.3 ? 4 : Math.max(1.5, edge.pct * 8),
-      opacity: edge.pct >= 0.01 ? 1 : 0.4,
+      strokeWidth: getEdgeWidth(pct),
+      stroke: '#3b82f6',
+      opacity: Math.max(0.3, pct / 20),
     },
-    data: edge,
-  }))
+    data: { ...edge, pct, users, sourceLabel, targetLabel },
+  })})
 
   return { nodes, edges, rootEvent, direction }
 }
 
 export default function FlowDiagram({ data }) {
   const [graph, setGraph] = useState({ nodes: [], edges: [] })
+  const [tooltip, setTooltip] = useState(null)
 
   useEffect(() => {
     let cancelled = false
@@ -327,10 +336,37 @@ export default function FlowDiagram({ data }) {
         fitViewOptions={{ padding: 0.2 }}
         panOnScroll
         panOnDrag
+        onEdgeMouseEnter={(event, edge) => {
+          setTooltip({
+            x: event.clientX,
+            y: event.clientY,
+            content: `${edge.data?.sourceLabel} → ${edge.data?.targetLabel}\n${(Number(edge.data?.pct || 0) * 100).toFixed(1)}% (${Number(edge.data?.users || 0).toLocaleString()} users)`,
+          })
+        }}
+        onEdgeMouseLeave={() => setTooltip(null)}
       >
         <Background gap={20} size={1} />
         <Controls />
       </ReactFlow>
+      {tooltip && (
+        <div
+          style={{
+            position: 'fixed',
+            left: tooltip.x + 8,
+            top: tooltip.y + 8,
+            background: '#111827',
+            color: 'white',
+            padding: '6px 8px',
+            borderRadius: '6px',
+            fontSize: '12px',
+            pointerEvents: 'none',
+            whiteSpace: 'pre-line',
+            zIndex: 50,
+          }}
+        >
+          {tooltip.content}
+        </div>
+      )}
     </div>
   )
 }
