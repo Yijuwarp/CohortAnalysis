@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
+import { BaseEdge } from 'reactflow'
 
 function formatPct(v) {
   return `${((v || 0) * 100).toFixed(1)}%`
@@ -12,6 +13,14 @@ function formatTime(sec) {
   if (s < 60) return `${s}s`
   if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
+}
+
+function estimateNodeWidth(label, users) {
+  const text = `${label} ${users} users`
+  const charWidth = 7.5
+  const padding = 40
+
+  return Math.max(160, text.length * charWidth + padding)
 }
 
 let dagreLib = null
@@ -139,16 +148,16 @@ async function buildLayout(nodes, edges) {
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
     rankdir: 'LR',
-    nodesep: 100,
-    ranksep: 180,
+    nodesep: 80,
+    ranksep: 220,
     marginx: 40,
     marginy: 40,
   })
 
   nodes.forEach((node) => {
     dagreGraph.setNode(node.id, {
-      width: 220,
-      height: 80,
+      width: node.width,
+      height: node.height,
     })
   })
 
@@ -171,8 +180,8 @@ async function buildLayout(nodes, edges) {
     return {
       ...node,
       position: {
-        x: pos.x - 110,
-        y: pos.y - 40,
+        x: pos.x - node.width / 2,
+        y: pos.y - node.height / 2,
       },
     }
   })
@@ -265,30 +274,34 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     const [event, depthStr] = nodeId.split('__')
     const depth = Number(depthStr)
     const isLoop = nodeLoop.get(nodeId) || false
+    const users = nodeUsage.get(nodeId) || 0
+    const width = estimateNodeWidth(event, users)
+    const height = 60
 
     return {
       id: nodeId,
     data: {
       label: `${event}${isLoop ? ' ↺' : ''}`,
-      users: nodeUsage.get(nodeId) || 0,
+      users,
       isRoot: nodeId === rootNodeId,
       isLoop,
     },
+      width,
+      height,
     position: { x: 0, y: 0 },
     style: {
-      minWidth: 180,
-      maxWidth: 260,
-      minHeight: 70,
+      width,
+      minHeight: height,
       border: isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb'),
-      borderRadius: 12,
+      borderRadius: '10px',
       background: isLoop ? '#fffbeb' : '#fff',
       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-      padding: 10,
+      padding: '8px 12px',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       textAlign: 'center',
-      whiteSpace: 'pre-line',
+      whiteSpace: 'normal',
     },
     title: isLoop ? 'Users returned to this event (loop)' : '',
     sourcePosition: 'right',
@@ -297,21 +310,20 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     }
   })
 
-  const edges = filteredEdges.map((edge) => ({
+  const edges = filteredEdges.map((edge, edgeIndex) => ({
     ...(edge.pct > 0.3 ? { isPrimary: true } : {}),
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'smoothstep',
+    type: 'custom',
     markerEnd: { type: MarkerType.ArrowClosed },
-    label: formatPct(edge.pct),
     title: `${Math.round(edge.users).toLocaleString()} users`,
     style: {
       stroke: edge.pct > 0.3 ? '#2563eb' : '#94a3b8',
       strokeWidth: edge.pct > 0.3 ? 4 : Math.max(1.5, edge.pct * 8),
       opacity: edge.pct >= 0.01 ? 1 : 0.4,
     },
-    data: edge,
+    data: { ...edge, pct: Number((edge.pct * 100).toFixed(1)), edgeIndex },
   }))
 
   return { nodes, edges, rootEvent, direction }
@@ -319,6 +331,37 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
 export default function FlowDiagram({ data }) {
   const [graph, setGraph] = useState({ nodes: [], edges: [] })
+  const CustomEdge = ({
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    data,
+  }) => {
+    const offset = ((data?.edgeIndex || 0) % 3) * 6
+    const labelX = targetX - 40
+    const labelY = targetY - 10 + offset
+    const path = `M ${sourceX} ${sourceY} L ${targetX} ${targetY}`
+
+    return (
+      <>
+        <BaseEdge id={id} path={path} style={{ stroke: '#94a3b8' }} />
+        <text
+          x={labelX}
+          y={labelY}
+          fontSize={11}
+          fill="#6b7280"
+          textAnchor="end"
+        >
+          {data?.pct}%
+        </text>
+      </>
+    )
+  }
+  const edgeTypes = {
+    custom: CustomEdge,
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -375,6 +418,7 @@ export default function FlowDiagram({ data }) {
       <ReactFlow
         nodes={graph.nodes}
         edges={graph.edges}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.2 }}
         panOnScroll
