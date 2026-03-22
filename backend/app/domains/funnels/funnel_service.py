@@ -7,6 +7,7 @@ import duckdb
 from datetime import datetime, timezone
 from fastapi import HTTPException
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
+from app.models.funnel_models import MAX_FUNNEL_STEPS, MIN_FUNNEL_STEPS
 
 
 # ---------------------------------------------------------------------------
@@ -18,7 +19,9 @@ def ensure_funnel_tables(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS funnels (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
-            created_at TIMESTAMP
+            created_at TIMESTAMP,
+            conversion_window_value INTEGER NULL,
+            conversion_window_unit TEXT NULL
         )
     """)
     conn.execute("CREATE SEQUENCE IF NOT EXISTS funnels_id_seq START 1")
@@ -43,6 +46,22 @@ def ensure_funnel_tables(conn: duckdb.DuckDBPyConnection) -> None:
         )
     """)
     conn.execute("CREATE SEQUENCE IF NOT EXISTS funnel_step_filters_id_seq START 1")
+    conn.execute(
+        "ALTER TABLE funnels ADD COLUMN IF NOT EXISTS conversion_window_value INTEGER NULL"
+    )
+    conn.execute(
+        "ALTER TABLE funnels ADD COLUMN IF NOT EXISTS conversion_window_unit TEXT NULL"
+    )
+    # Performance for funnel execution scans
+    normalized_exists = conn.execute(
+        "SELECT COUNT(*) FROM information_schema.tables "
+        "WHERE table_name = 'events_normalized' AND table_schema = 'main'"
+    ).fetchone()[0]
+    if normalized_exists:
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_normalized_user_time "
+            "ON events_normalized(user_id, event_time)"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -126,20 +145,31 @@ def create_funnel(
     conn: duckdb.DuckDBPyConnection,
     name: str,
     steps: list[dict],
+    conversion_window: dict | None = None,
 ) -> dict:
     """
     steps: [ { event_name, filters: [ { property_key, property_value } ] } ]
-    Minimum 2, maximum 5 steps.
+    Minimum 2, maximum 10 steps.
     """
     ensure_funnel_tables(conn)
 
     name = (name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Funnel name is required")
-    if len(steps) < 2:
-        raise HTTPException(status_code=400, detail="Funnels require at least 2 steps")
-    if len(steps) > 5:
-        raise HTTPException(status_code=400, detail="Funnels support at most 5 steps")
+    if len(steps) < MIN_FUNNEL_STEPS:
+        raise HTTPException(status_code=400, detail=f"Funnels require at least {MIN_FUNNEL_STEPS} steps")
+    if len(steps) > MAX_FUNNEL_STEPS:
+        raise HTTPException(status_code=400, detail=f"Funnels support at most {MAX_FUNNEL_STEPS} steps")
+
+    conversion_window_value: int | None = None
+    conversion_window_unit: str | None = None
+    if conversion_window is not None:
+        conversion_window_value = int(conversion_window.get("value", 0))
+        conversion_window_unit = (conversion_window.get("unit") or "").strip().lower()
+        if conversion_window_value <= 0:
+            raise HTTPException(status_code=400, detail="Conversion window value must be greater than 0")
+        if conversion_window_unit != "minute":
+            raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
 
     for idx, step in enumerate(steps):
         if not step.get("event_name", "").strip():
@@ -149,8 +179,9 @@ def create_funnel(
 
     created_at = datetime.now(timezone.utc)
     funnel_id = conn.execute(
-        "INSERT INTO funnels (id, name, created_at) VALUES (nextval('funnels_id_seq'), ?, ?) RETURNING id",
-        [name, created_at],
+        "INSERT INTO funnels (id, name, created_at, conversion_window_value, conversion_window_unit) "
+        "VALUES (nextval('funnels_id_seq'), ?, ?, ?, ?) RETURNING id",
+        [name, created_at, conversion_window_value, conversion_window_unit],
     ).fetchone()[0]
 
     for order, step in enumerate(steps):
@@ -177,16 +208,17 @@ def update_funnel(
     funnel_id: int,
     name: str,
     steps: list[dict],
+    conversion_window: dict | None = None,
 ) -> dict:
     ensure_funnel_tables(conn)
 
     name = (name or "").strip()
     if not name:
         raise HTTPException(status_code=400, detail="Funnel name is required")
-    if len(steps) < 2:
-        raise HTTPException(status_code=400, detail="Funnels require at least 2 steps")
-    if len(steps) > 5:
-        raise HTTPException(status_code=400, detail="Funnels support at most 5 steps")
+    if len(steps) < MIN_FUNNEL_STEPS:
+        raise HTTPException(status_code=400, detail=f"Funnels require at least {MIN_FUNNEL_STEPS} steps")
+    if len(steps) > MAX_FUNNEL_STEPS:
+        raise HTTPException(status_code=400, detail=f"Funnels support at most {MAX_FUNNEL_STEPS} steps")
     for idx, step in enumerate(steps):
         if not step.get("event_name", "").strip():
             raise HTTPException(
@@ -197,7 +229,22 @@ def update_funnel(
     if not row:
         raise HTTPException(status_code=404, detail="Funnel not found")
 
-    conn.execute("UPDATE funnels SET name = ? WHERE id = ?", [name, funnel_id])
+    conversion_window_value: int | None = None
+    conversion_window_unit: str | None = None
+    if conversion_window is not None:
+        conversion_window_value = int(conversion_window.get("value", 0))
+        conversion_window_unit = (conversion_window.get("unit") or "").strip().lower()
+        if conversion_window_value <= 0:
+            raise HTTPException(status_code=400, detail="Conversion window value must be greater than 0")
+        if conversion_window_unit != "minute":
+            raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
+
+    conn.execute(
+        "UPDATE funnels "
+        "SET name = ?, conversion_window_value = ?, conversion_window_unit = ? "
+        "WHERE id = ?",
+        [name, conversion_window_value, conversion_window_unit, funnel_id],
+    )
 
     # Delete existing steps and filters
     step_ids = [r[0] for r in conn.execute("SELECT id FROM funnel_steps WHERE funnel_id = ?", [funnel_id]).fetchall()]
@@ -229,7 +276,7 @@ def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
     ensure_funnel_tables(conn)
 
     rows = conn.execute(
-        "SELECT id, name, created_at FROM funnels ORDER BY id"
+        "SELECT id, name, created_at, conversion_window_value, conversion_window_unit FROM funnels ORDER BY id"
     ).fetchall()
     if not rows:
         return {"funnels": []}
@@ -241,7 +288,7 @@ def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
         event_names, property_keys = set(), set()
 
     funnels = []
-    for fid, fname, fcreated_at in rows:
+    for fid, fname, fcreated_at, window_value, window_unit in rows:
         is_valid = _check_funnel_validity(int(fid), conn, event_names, property_keys)
         # Fetch steps to allow editing on frontend
         steps_objs = []
@@ -266,6 +313,11 @@ def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
             "id": int(fid),
             "name": str(fname),
             "created_at": str(fcreated_at) if fcreated_at else None,
+            "conversion_window": (
+                {"value": int(window_value), "unit": str(window_unit)}
+                if window_value is not None and window_unit is not None
+                else None
+            ),
             "is_valid": is_valid,
             "steps": steps_objs,
         })
@@ -339,14 +391,21 @@ def _build_step_cte(
     filters: list[tuple[str, str]],
     source: str,
     prev_alias: str,
+    conversion_window_minutes: int | None,
 ) -> str:
     """
-    Subsequent-step CTE: earliest matching event occurring >= the previous step's timestamp.
-    Using >= (not >) so that events at exactly the same timestamp are not excluded (Issue #3).
+    Subsequent-step CTE: earliest matching event occurring after the previous step's timestamp.
+    If a conversion window is set, require event_time <= previous_step_time + window.
     """
     alias = f"step_{step_index}"
     filter_clauses = _build_filter_clauses(filters)
     safe_event = event_name.replace("'", "''")
+
+    window_clause = ""
+    if conversion_window_minutes is not None:
+        window_clause = (
+            f"  AND e.event_time <= (p.ts + ({int(conversion_window_minutes)} * INTERVAL '1 minute'))\n"
+        )
 
     return (
         f"{alias} AS (\n"
@@ -355,7 +414,8 @@ def _build_step_cte(
         f"  JOIN {prev_alias} p ON e.user_id = p.user_id\n"
         f"  WHERE e.event_name = '{safe_event}'"
         f"{filter_clauses}\n"
-        f"  AND e.event_time >= p.ts\n"  # Issue #3: >= not >
+        f"  AND e.event_time > p.ts\n"
+        f"{window_clause}"
         f"  GROUP BY e.user_id\n"
         f")"
     )
@@ -374,10 +434,17 @@ def run_funnel(
 
     # Load funnel definition
     funnel_row = conn.execute(
-        "SELECT id, name FROM funnels WHERE id = ?", [funnel_id]
+        "SELECT id, name, conversion_window_value, conversion_window_unit "
+        "FROM funnels WHERE id = ?",
+        [funnel_id],
     ).fetchone()
     if not funnel_row:
         raise HTTPException(status_code=404, detail="Funnel not found")
+    conversion_window_minutes: int | None = None
+    if funnel_row[2] is not None:
+        if str(funnel_row[3]).lower() != "minute":
+            raise HTTPException(status_code=400, detail="Unsupported conversion window unit")
+        conversion_window_minutes = int(funnel_row[2])
 
     steps_rows = conn.execute(
         "SELECT id, step_order, event_name FROM funnel_steps WHERE funnel_id = ? ORDER BY step_order",
@@ -454,7 +521,7 @@ def run_funnel(
                 # Subsequent steps — chain from previous step (Issue #4: strict chaining)
                 ctes.append(_build_step_cte(
                     i, step["event_name"], step["filters"],
-                    source, f"step_{i - 1}",
+                    source, f"step_{i - 1}", conversion_window_minutes,
                 ))
             prev_alias = f"step_{i}"
 

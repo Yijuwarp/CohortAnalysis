@@ -577,6 +577,19 @@ describe('FunnelPane – funnel builder modal', () => {
     expect(screen.getByTestId('funnel-step-2')).toBeInTheDocument()
   })
 
+  test('builder_allows_up_to_ten_steps', async () => {
+    renderFunnelPane()
+    await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('funnel-new-button'))
+
+    for (let i = 0; i < 8; i++) {
+      fireEvent.click(screen.getByTestId('funnel-add-step'))
+    }
+
+    expect(screen.getByTestId('funnel-step-9')).toBeInTheDocument()
+    expect(screen.queryByTestId('funnel-add-step')).not.toBeInTheDocument()
+  })
+
   test('builder_shows_error_when_name_empty_on_save', async () => {
     renderFunnelPane()
     await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
@@ -615,5 +628,52 @@ describe('FunnelPane – funnel builder modal', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('funnel-filter-0-0')).not.toBeInTheDocument()
     })
+  })
+
+  test('builder_sends_custom_conversion_window_in_payload', async () => {
+    renderFunnelPane(MOCK_EVENTS_STR)
+    await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('funnel-new-button'))
+
+    fireEvent.change(screen.getByTestId('funnel-name-input'), { target: { value: 'Window Funnel' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-0'), { target: { value: 'signup' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-1'), { target: { value: 'purchase' } })
+    fireEvent.change(screen.getByTestId('funnel-conversion-window-mode'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByTestId('funnel-conversion-window-value'), { target: { value: '15' } })
+    fireEvent.click(screen.getByTestId('funnel-save-button'))
+
+    await waitFor(() => {
+      expect(createFunnel).toHaveBeenCalledWith(expect.objectContaining({
+        conversion_window: { value: 15, unit: 'minute' },
+      }))
+    })
+  })
+
+  test('builder_drag_drop_reorders_steps_and_persists_order', async () => {
+    renderFunnelPane(MOCK_EVENTS_STR)
+    await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('funnel-new-button'))
+    fireEvent.click(screen.getByTestId('funnel-add-step'))
+
+    fireEvent.change(screen.getByTestId('funnel-name-input'), { target: { value: 'Reordered Funnel' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-0'), { target: { value: 'signup' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-1'), { target: { value: 'search' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-2'), { target: { value: 'purchase' } })
+
+    const dragged = screen.getByTestId('funnel-step-2')
+    const target = screen.getByTestId('funnel-step-0')
+    fireEvent.dragStart(dragged, {
+      dataTransfer: { setData: vi.fn(), effectAllowed: 'move' },
+    })
+    fireEvent.dragOver(target)
+    fireEvent.drop(target, {
+      dataTransfer: { getData: () => '2' },
+    })
+
+    fireEvent.click(screen.getByTestId('funnel-save-button'))
+    await waitFor(() => expect(createFunnel).toHaveBeenCalled())
+    expect(createFunnel.mock.calls[0][0].steps.map(s => s.event_name)).toEqual([
+      'purchase', 'signup', 'search',
+    ])
   })
 })

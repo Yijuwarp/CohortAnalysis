@@ -39,3 +39,10 @@ Monetization tab includes:
 - Prediction horizon selector (30/60/90/180/365 days)
 - Projection trigger
 - Optional tuning pane for per-cohort power-law params (A/B)
+
+## Funnels builder UI
+Funnels modal supports:
+- 2 to 10 ordered steps
+- Per-step event + property filters
+- Drag-and-drop step reordering with preserved filter state
+- Optional global pairwise conversion window (`None`/lifetime or custom minutes)

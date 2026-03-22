@@ -15,6 +15,7 @@ It supports:
 * Cohort creation with condition logic
 * Retention, usage, and monetization analytics
 * Revenue event include/exclude + per-event override config
+* Funnels with up to 10 ordered steps, optional conversion window, and drag-drop step ordering in UI
 
 ## Stack
 
@@ -59,6 +60,11 @@ It supports:
 * `GET /revenue-events`
 * `POST /update-revenue-config`
 * `GET /monetization`
+* `POST /funnels`
+* `GET /funnels`
+* `PUT /funnels/{funnel_id}`
+* `DELETE /funnels/{funnel_id}`
+* `POST /funnels/run`
 
 ## Key constraints from implementation
 
@@ -81,6 +87,9 @@ It supports:
   * `join_type` is `condition_met` or `first_event`
 * `column-values` returns up to 100 values and `total_distinct`.
 * `max_day` defaults to 7 for retention/usage/monetization.
+* Funnels:
+  * step count must be between 2 and 10
+  * optional `conversion_window` supports minutes (`{"value": <int>, "unit": "minute"}`) or `null` for lifetime
 
 ## Run locally
 
