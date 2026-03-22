@@ -90,9 +90,10 @@ async def flow_l1_endpoint(
     property_column: str | None = Query(None),
     property_operator: str | None = Query("="),
     property_values: list[str] | None = Query(None),
+    include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values)
+    return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
 
 @router.get("/flow/l2")
 async def flow_l2_endpoint(
@@ -104,6 +105,7 @@ async def flow_l2_endpoint(
     property_column: str | None = Query(None),
     property_operator: str | None = Query("="),
     property_values: list[str] | None = Query(None),
+    include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     resolved_parent_path = parent_path or ([start_event, parent_event] if parent_event else [start_event])
@@ -116,4 +118,5 @@ async def flow_l2_endpoint(
         property_column,
         property_operator,
         property_values,
+        include_top_k,
     )

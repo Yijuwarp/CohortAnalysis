@@ -2,11 +2,17 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { getEventProperties, getEventPropertyValues, getFlowL1, getFlowL2, listCohorts, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
-import FlowGraph from './FlowGraph'
+import FlowDiagram, { buildGraphFromTree } from './FlowDiagram'
+
+const TABLE_MAX_DEPTH = 20
+
+function removeOtherRows(rows) {
+  return (rows || []).filter(row => row.path[row.path.length - 1] !== 'Other')
+}
 
 export default function FlowPane({ refreshToken }) {
   const [events, setEvents] = useState([])
-  const [controls, setControls] = useState({ event: null, property: null, direction: 'forward', depth: 2 })
+  const [controls, setControls] = useState({ event: null, property: null, direction: 'forward' })
   const [propertyValues, setPropertyValues] = useState([])
   const [propertyFilterValue, setPropertyFilterValue] = useState('')
   const [properties, setProperties] = useState([])
@@ -18,6 +24,10 @@ export default function FlowPane({ refreshToken }) {
   const [loadingNodes, setLoadingNodes] = useState({})
   const [viewMode, setViewMode] = useState('table')
   const [loadingRoot, setLoadingRoot] = useState(false)
+
+  const [graphDepth, setGraphDepth] = useState(3)
+  const [graphData, setGraphData] = useState(null)
+  const [graphLoading, setGraphLoading] = useState(false)
 
   const reqIdRef = useRef(0)
 
@@ -73,7 +83,7 @@ export default function FlowPane({ refreshToken }) {
     setExpandedNodes(new Set())
     setCache({})
 
-    getFlowL1(controls.event, controls.direction, controls.depth, propertyFilter)
+    getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter, true)
       .then(resp => {
         if (rid !== reqIdRef.current) return
         setFlowTree(resp.rows || [])
@@ -85,19 +95,20 @@ export default function FlowPane({ refreshToken }) {
       .finally(() => {
         if (rid === reqIdRef.current) setLoadingRoot(false)
       })
-  }, [refreshToken, controls.event, controls.direction, controls.depth, propertyFilter])
+  }, [refreshToken, controls.event, controls.direction, propertyFilter])
 
   const cohorts = useMemo(() => {
-    const first = flowTree[0]
+    const sourceRows = graphData?.rootRows || flowTree
+    const first = sourceRows?.[0]
     return first ? Object.keys(first.values || {}) : Object.keys(cohortMap)
-  }, [flowTree, cohortMap])
+  }, [flowTree, cohortMap, graphData])
 
   const getChildren = (path) => cache[nodeKey(path)] || []
 
   const onToggle = async (path) => {
     const key = nodeKey(path)
     const depth = path.length - 1
-    if (depth >= controls.depth) return
+    if (depth >= TABLE_MAX_DEPTH) return
 
     setExpandedNodes(prev => {
       const next = new Set(prev)
@@ -110,10 +121,39 @@ export default function FlowPane({ refreshToken }) {
 
     setLoadingNodes(prev => ({ ...prev, [key]: true }))
     try {
-      const resp = await getFlowL2(controls.event, path, controls.direction, controls.depth, propertyFilter)
+      const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter, true)
       setCache(prev => ({ ...prev, [key]: resp.rows || [] }))
     } finally {
       setLoadingNodes(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
+  const loadFullTreeForGraph = async () => {
+    if (!controls.event) return
+    setGraphLoading(true)
+    try {
+      const rootResp = await getFlowL1(controls.event, controls.direction, graphDepth, propertyFilter, false)
+      const rootRows = removeOtherRows(rootResp.rows || [])
+      const treeMap = {}
+
+      const walk = async (path) => {
+        if (path.length - 1 >= graphDepth) return
+        const resp = await getFlowL2(controls.event, path, controls.direction, graphDepth, propertyFilter, false)
+        const rows = removeOtherRows(resp.rows || [])
+        treeMap[nodeKey(path)] = rows
+        await Promise.all(rows.map(r => walk(r.path)))
+      }
+
+      await Promise.all(rootRows.map(row => walk(row.path)))
+
+      const byCohort = {}
+      for (const cid of cohorts) {
+        byCohort[cid] = buildGraphFromTree(rootRows, treeMap, graphDepth, cid)
+      }
+
+      setGraphData({ rootRows, treeMap, byCohort })
+    } finally {
+      setGraphLoading(false)
     }
   }
 
@@ -137,6 +177,7 @@ export default function FlowPane({ refreshToken }) {
               setFlowTree([])
               setExpandedNodes(new Set())
               setCache({})
+              setGraphData(null)
             }}
           >
             <option value="">None</option>
@@ -148,12 +189,6 @@ export default function FlowPane({ refreshToken }) {
           <select value={propertyFilterValue} disabled={!controls.property} onChange={(e) => setPropertyFilterValue(e.target.value)}>
             <option value="">All</option>
             {propertyValues.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
-        </label>
-        <label>
-          Depth
-          <select value={controls.depth} onChange={(e) => setControls(prev => ({ ...prev, depth: Number(e.target.value) }))}>
-            {[2, 3, 4, 5, 6, 7].map(d => <option key={d} value={d}>{d}</option>)}
           </select>
         </label>
         <label>
@@ -170,6 +205,20 @@ export default function FlowPane({ refreshToken }) {
             <button type="button" className={`view-button ${viewMode === 'graph' ? 'active' : ''}`} onClick={() => setViewMode('graph')}>Graph</button>
           </div>
         </label>
+        {viewMode === 'graph' && (
+          <>
+            <label>
+              Graph Depth
+              <select value={graphDepth} onChange={(e) => setGraphDepth(Number(e.target.value))}>
+                {[2, 3, 4, 5, 6, 7].map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            </label>
+            <label>
+              <span style={{ opacity: 0 }}>Generate</span>
+              <button type="button" onClick={loadFullTreeForGraph}>Generate Graph</button>
+            </label>
+          </>
+        )}
       </div>
 
       {loadingRoot ? (
@@ -183,18 +232,21 @@ export default function FlowPane({ refreshToken }) {
           loadingNodes={loadingNodes}
           getChildren={getChildren}
           onToggle={onToggle}
-          maxDepth={controls.depth}
+          maxDepth={TABLE_MAX_DEPTH}
         />
+      ) : graphLoading ? (
+        <div className="table-loading" style={{ padding: '24px 0' }}>Generating graph...</div>
+      ) : !graphData ? (
+        <p style={{ marginTop: 16 }}>Select graph depth and click Generate Graph</p>
       ) : (
-        <FlowGraph
-          rootRows={flowTree}
-          cohorts={cohorts}
-          expandedNodes={expandedNodes}
-          loadingNodes={loadingNodes}
-          getChildren={getChildren}
-          onToggle={onToggle}
-          maxDepth={controls.depth}
-        />
+        <div style={{ display: 'grid', gap: 16 }}>
+          {cohorts.map(cid => (
+            <div key={cid}>
+              <h3 style={{ marginBottom: 8 }}>{cohortMap[cid]?.name || `Cohort ${cid}`}</h3>
+              <FlowDiagram cohortId={cid} data={graphData.byCohort[cid]} />
+            </div>
+          ))}
+        </div>
       )}
     </section>
   )

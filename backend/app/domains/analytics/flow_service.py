@@ -208,11 +208,17 @@ def _run_level_query(
 
     property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
     sql, params = _build_level_sql(direction, parent_path, property_clause)
-    full_params = [params[0], params[1], *property_params, *params[2:]]
+    full_params = [params[0], *property_params, *params[1:]]
     return connection.execute(sql, full_params).fetchall(), parent_depth
 
 
-def _rows_payload(raw_rows: list[tuple], cohorts: list[tuple[int, str]], path_prefix: list[str], include_expandable: bool) -> list[dict]:
+def _rows_payload(
+    raw_rows: list[tuple],
+    cohorts: list[tuple[int, str]],
+    path_prefix: list[str],
+    include_expandable: bool,
+    top_k_enabled: bool,
+) -> list[dict]:
     per_cohort: dict[int, dict[str, object]] = {}
     for cohort_id, next_event, transition_users, total_users, continuing_users, median_time_sec, p90_time_sec in raw_rows:
         cid = int(cohort_id)
@@ -233,7 +239,14 @@ def _rows_payload(raw_rows: list[tuple], cohorts: list[tuple[int, str]], path_pr
         continue_pct = round((continuing_users / anchor_users) if anchor_users > 0 else 0.0, 6)
         dropoff_pct = round(1.0 - continue_pct, 6)
 
-        top_rows, other_count = _prune_and_aggregate([(n, c) for n, c, _, _ in data["events"]], anchor_users)
+        if top_k_enabled:
+            top_rows, other_count = _prune_and_aggregate([(n, c) for n, c, _, _ in data["events"]], anchor_users)
+        else:
+            top_rows = [
+                {"event_name": name, "count": count, "pct": round((count / anchor_users) if anchor_users > 0 else 0.0, 6)}
+                for name, count, _, _ in sorted(data["events"], key=lambda item: item[1], reverse=True)
+            ]
+            other_count = 0
         timing_map = {n: (m, p) for n, _, m, p in data["events"]}
 
         for row in top_rows:
@@ -284,7 +297,7 @@ def _rows_payload(raw_rows: list[tuple], cohorts: list[tuple[int, str]], path_pr
     named_rows.sort(key=lambda row: (-row["_sp"], -row["_sc"]))
     output = [{"path": r["path"], "values": r["values"], **({"expandable": r["expandable"]} if include_expandable else {})} for r in named_rows]
 
-    if cohort_other:
+    if top_k_enabled and cohort_other:
         other_values = {}
         for cid, _ in cohorts:
             other_values[str(cid)] = cohort_other.get(cid, {
@@ -310,6 +323,7 @@ def get_l1_flows(
     property_column: str | None = None,
     property_operator: str | None = None,
     property_values: list[str] | None = None,
+    include_top_k: bool = True,
 ) -> dict:
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
@@ -324,7 +338,7 @@ def get_l1_flows(
         return {"rows": []}
 
     raw_rows, _ = _run_level_query(connection, start_event, [start_event], direction, depth, property_column, property_operator, property_values)
-    return {"rows": _rows_payload(raw_rows, cohorts, [start_event], include_expandable=True)}
+    return {"rows": _rows_payload(raw_rows, cohorts, [start_event], include_expandable=True, top_k_enabled=include_top_k)}
 
 
 def get_l2_flows(
@@ -336,6 +350,7 @@ def get_l2_flows(
     property_column: str | None = None,
     property_operator: str | None = None,
     property_values: list[str] | None = None,
+    include_top_k: bool = True,
 ) -> dict:
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
@@ -353,4 +368,7 @@ def get_l2_flows(
     if parent_depth >= depth:
         return {"parent_path": parent_path, "rows": []}
 
-    return {"parent_path": parent_path, "rows": _rows_payload(raw_rows, cohorts, parent_path, include_expandable=False)}
+    return {
+        "parent_path": parent_path,
+        "rows": _rows_payload(raw_rows, cohorts, parent_path, include_expandable=False, top_k_enabled=include_top_k),
+    }
