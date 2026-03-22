@@ -10,7 +10,7 @@ import MonetizationTable from './components/MonetizationTable'
 import FunnelPane from './components/FunnelPane'
 import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
-import FlowTable from './components/FlowTable'
+import FlowPane from './components/FlowPane'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
@@ -399,7 +399,7 @@ export default function App() {
                 />
               )}
               {activeTab === 'flow' && (
-                <FlowTable refreshToken={retentionRefreshToken} />
+                <FlowPane refreshToken={retentionRefreshToken} />
               )}
             </section>
           </div>
