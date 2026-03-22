@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 import duckdb
 from typing import Any
+from datetime import datetime
 import logging
 from app.db.connection import get_connection
 from app.domains.analytics.retention_service import get_retention
@@ -13,6 +14,7 @@ from app.domains.analytics.usage_service import (
 )
 from app.domains.analytics.monetization_service import get_monetization
 from app.domains.analytics.flow_service import get_flow_graph, get_l1_flows, get_l2_flows
+from app.domains.analytics.user_explorer_service import get_user_explorer, search_users
 from app.utils.parsing import parse_max_day
 
 router = APIRouter()
@@ -172,3 +174,38 @@ async def flow_graph_endpoint(
     except Exception as e:
         logger.exception("flow_graph failed")
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/users/search")
+async def users_search_endpoint(
+    query: str = Query(""),
+    limit: int = Query(20),
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return search_users(conn, query=query, limit=limit)
+
+
+@router.get("/user-explorer")
+async def user_explorer_endpoint(
+    user_id: str = Query(...),
+    page: int = Query(1),
+    page_size: int = Query(50),
+    event_search: str | None = Query(None),
+    direction: str | None = Query(None),
+    from_event_time: datetime | None = Query(None),
+    jump_datetime: str | None = Query(None),
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    if direction not in {None, "next", "prev"}:
+        raise HTTPException(status_code=400, detail="direction must be one of: next, prev")
+
+    return get_user_explorer(
+        conn,
+        user_id=user_id,
+        page=page,
+        page_size=page_size,
+        event_search=event_search,
+        direction=direction,
+        from_event_time=from_event_time,
+        jump_datetime_raw=jump_datetime,
+    )

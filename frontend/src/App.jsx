@@ -11,6 +11,7 @@ import FunnelPane from './components/FunnelPane'
 import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
+import UserExplorer from './components/UserExplorer'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const WORKSPACE_STORAGE_VERSION = 2
@@ -368,6 +369,7 @@ export default function App() {
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
                 <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
+                <button className={activeTab === 'user-explorer' ? 'active' : ''} onClick={() => setActiveTab('user-explorer')}>User Explorer</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
@@ -400,6 +402,9 @@ export default function App() {
               )}
               {activeTab === 'flow' && (
                 <FlowPane refreshToken={retentionRefreshToken} />
+              )}
+              {activeTab === 'user-explorer' && (
+                <UserExplorer />
               )}
             </section>
           </div>

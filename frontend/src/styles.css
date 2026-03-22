@@ -3078,3 +3078,86 @@ th.flow-path-col {
   color: #888;
   margin-left: 4px;
 }
+
+.user-explorer-pane {
+  display: grid;
+  gap: 12px;
+}
+
+.user-explorer-user-search {
+  margin-top: 8px;
+  width: 100%;
+}
+
+.user-explorer-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.user-explorer-summary-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.user-explorer-controls-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.user-explorer-controls-row input[type='datetime-local'] {
+  min-width: 240px;
+}
+
+.user-explorer-event-cell {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.user-explorer-join-tag {
+  font-size: 12px;
+  color: #1f5fbf;
+  background: #eaf2ff;
+  border-radius: 10px;
+  padding: 2px 8px;
+}
+
+.user-explorer-tooltip {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 6px;
+  z-index: 10;
+  background: #101626;
+  color: #f4f7ff;
+  max-width: 520px;
+  max-height: 280px;
+  overflow: auto;
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.user-explorer-event-cell:hover .user-explorer-tooltip {
+  display: block;
+}
+
+.user-explorer-tooltip pre {
+  margin: 0;
+}
+
+.user-explorer-highlighted-row {
+  outline: 2px solid #1f5fbf;
+  background: #f0f6ff;
+}
+
+.user-explorer-pagination {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
