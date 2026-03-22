@@ -1,10 +1,6 @@
-import { useMemo } from 'react'
-import dagre from 'dagre'
+import { useEffect, useState } from 'react'
 import ReactFlow, { Background, Controls, MarkerType } from 'reactflow'
 import 'reactflow/dist/style.css'
-
-const NODE_WIDTH = 220
-const NODE_HEIGHT = 80
 
 function formatPct(v) {
   return `${((v || 0) * 100).toFixed(1)}%`
@@ -18,31 +14,107 @@ function formatTime(sec) {
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`
 }
 
-function buildLayout(nodes, edges) {
+let dagreLib = null
+
+async function getDagre() {
+  if (dagreLib) return dagreLib
+
+  try {
+    dagreLib = await import('dagre')
+  } catch {
+    dagreLib = await import('../shims/dagre')
+  }
+
+  return dagreLib.default || dagreLib
+}
+
+function isRealDagre(dagre) {
+  if (dagre.__isShim) return false
+
+  try {
+    const g = new dagre.graphlib.Graph()
+    g.setGraph({})
+    g.setNode('a', { width: 100, height: 50 })
+    dagre.layout(g)
+    const pos = g.node('a')
+    return pos && pos.x !== 0
+  } catch {
+    return false
+  }
+}
+
+function fallbackLayout(nodes) {
+  const levels = {}
+
+  nodes.forEach((node) => {
+    const level = node.rank || 1
+    if (!levels[level]) levels[level] = []
+    levels[level].push(node)
+  })
+
+  const result = []
+
+  Object.entries(levels).forEach(([level, levelNodes]) => {
+    levelNodes.forEach((node, i) => {
+      result.push({
+        ...node,
+        position: {
+          x: (Number(level) - 1) * 320,
+          y: i * 120,
+        },
+      })
+    })
+  })
+
+  return result
+}
+
+async function buildLayout(nodes, edges) {
+  const dagre = await getDagre()
+
+  if (!isRealDagre(dagre)) {
+    console.warn('Using fallback layout (dagre unavailable)')
+    return fallbackLayout(nodes)
+  }
+
   const dagreGraph = new dagre.graphlib.Graph()
   dagreGraph.setDefaultEdgeLabel(() => ({}))
   dagreGraph.setGraph({
     rankdir: 'LR',
-    align: 'UL',
     nodesep: 100,
     ranksep: 180,
     marginx: 40,
     marginy: 40,
   })
 
-  nodes.forEach((node) => dagreGraph.setNode(node.id, { width: NODE_WIDTH, height: NODE_HEIGHT, rank: node.rank || 1 }))
-  edges.forEach((edge) => dagreGraph.setEdge(edge.source, edge.target))
+  nodes.forEach((node) => {
+    dagreGraph.setNode(node.id, {
+      width: 220,
+      height: 80,
+    })
+  })
+
+  edges.forEach((edge) => {
+    dagreGraph.setEdge(edge.source, edge.target)
+  })
+
   dagre.layout(dagreGraph)
 
   return nodes.map((node) => {
-    const pos = dagreGraph.node(node.id) || { x: 0, y: 0 }
-    const x = Number.isFinite(pos?.x) ? pos.x : 0
-    const y = Number.isFinite(pos?.y) ? pos.y : 0
+    const pos = dagreGraph.node(node.id)
+
+    if (!pos || !Number.isFinite(pos.x) || !Number.isFinite(pos.y)) {
+      return {
+        ...node,
+        position: { x: 0, y: 0 },
+      }
+    }
+
     return {
       ...node,
       position: {
-        x: x - NODE_WIDTH / 2,
-        y: y - NODE_HEIGHT / 2,
+        x: pos.x - 110,
+        y: pos.y - 40,
       },
     }
   })
@@ -171,23 +243,42 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 }
 
 export default function FlowDiagram({ data }) {
-  const graph = useMemo(() => {
-    if (!data || !data.nodes?.length) return { nodes: [], edges: [] }
+  const [graph, setGraph] = useState({ nodes: [], edges: [] })
 
-    const nodes = data.nodes.map((node) => ({
-      ...node,
-      data: {
-        ...node.data,
-        label: `${node.data.label}${node.data.isRoot ? ' (Start)' : ''}\n${Number(node.data.users || 0).toLocaleString()} users`,
-      },
-    }))
+  useEffect(() => {
+    let cancelled = false
 
-    const edges = data.edges.map((edge) => ({
-      ...edge,
-      title: `Continue ${formatPct(edge.data?.continue_pct)} | Drop-off ${formatPct(edge.data?.dropoff_pct)} | Median ${formatTime(edge.data?.median_time_sec)} | P90 ${formatTime(edge.data?.p90_time_sec)}`,
-    }))
+    async function compute() {
+      if (!data?.nodes?.length) {
+        setGraph({ nodes: [], edges: [] })
+        return
+      }
 
-    return { nodes: buildLayout(nodes, edges), edges }
+      const nodes = data.nodes.map((node) => ({
+        ...node,
+        data: {
+          ...node.data,
+          label: `${node.data.label}${node.data.isRoot ? ' (Start)' : ''}\n${Number(node.data.users || 0).toLocaleString()} users`,
+        },
+      }))
+
+      const edges = data.edges.map((edge) => ({
+        ...edge,
+        title: `Continue ${formatPct(edge.data?.continue_pct)} | Drop-off ${formatPct(edge.data?.dropoff_pct)} | Median ${formatTime(edge.data?.median_time_sec)} | P90 ${formatTime(edge.data?.p90_time_sec)}`,
+      }))
+
+      const layoutedNodes = await buildLayout(nodes, edges)
+
+      if (!cancelled) {
+        setGraph({ nodes: layoutedNodes, edges })
+      }
+    }
+
+    compute()
+
+    return () => {
+      cancelled = true
+    }
   }, [data])
 
   if (!graph.nodes.length || !graph.edges.length) return <p>No transitions found</p>

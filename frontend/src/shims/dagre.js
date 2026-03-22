@@ -4,7 +4,6 @@ class Graph {
   }
 
   setGraph() {}
-
   setDefaultEdgeLabel() {}
 
   setNode(id, value = {}) {
@@ -21,6 +20,7 @@ class Graph {
 function layout() {}
 
 export default {
+  __isShim: true,
   graphlib: { Graph },
   layout,
 }
