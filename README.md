@@ -92,6 +92,12 @@ It supports:
   * steps may include optional explicit `step_order` (frontend sends sequential 0-based order)
   * optional `conversion_window` supports minutes (`{"value": <int>, "unit": "minute"}`) or `null` for lifetime
 
+### Funnel Matching Logic
+
+Funnels use greedy earliest-path matching:
+- Each step selects the earliest valid event after the previous step
+- Does not compute globally optimal paths across all event combinations
+
 ## Run locally
 
 ### Backend

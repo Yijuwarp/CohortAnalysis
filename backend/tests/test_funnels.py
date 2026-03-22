@@ -771,6 +771,7 @@ def test_step_order_in_payload_controls_execution_order(client: TestClient) -> N
     listed = client.get("/funnels").json()["funnels"]
     target = next(f for f in listed if f["id"] == fid)
     assert [s["event_name"] for s in target["steps"]] == ["signup", "search", "purchase"]
+    assert [s["step_order"] for s in target["steps"]] == [0, 1, 2]
 
     run = client.post("/funnels/run", json={"funnel_id": fid})
     assert run.status_code == 200

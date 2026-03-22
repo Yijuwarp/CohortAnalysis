@@ -96,7 +96,7 @@ def _validate_conversion_window(conversion_window: dict | None) -> tuple[int | N
     if value > MAX_WINDOW_MINUTES:
         raise HTTPException(
             status_code=400,
-            detail=f"Conversion window value must be at most {MAX_WINDOW_MINUTES} minutes",
+            detail=f"Conversion window cannot exceed 7 days ({MAX_WINDOW_MINUTES} minutes)",
         )
     if not isinstance(unit, str) or unit.strip().lower() != "minute":
         raise HTTPException(status_code=400, detail="Conversion window unit must be 'minute'")
@@ -326,16 +326,17 @@ def list_funnels(conn: duckdb.DuckDBPyConnection) -> dict:
         # Fetch steps to allow editing on frontend
         steps_objs = []
         s_rows = conn.execute(
-            "SELECT id, event_name FROM funnel_steps WHERE funnel_id = ? ORDER BY step_order",
+            "SELECT id, event_name, step_order FROM funnel_steps WHERE funnel_id = ? ORDER BY step_order",
             [fid],
         ).fetchall()
-        for sid, s_event in s_rows:
+        for sid, s_event, s_order in s_rows:
             f_rows = conn.execute(
                 "SELECT property_key, property_value FROM funnel_step_filters WHERE step_id = ? ORDER BY id",
                 [sid],
             ).fetchall()
             steps_objs.append({
                 "event_name": str(s_event),
+                "step_order": int(s_order),
                 "filters": [
                     {"property_key": str(fk), "property_value": str(fv)} 
                     for fk, fv in f_rows
@@ -573,7 +574,7 @@ def run_funnel(
         base_users = step_counts[0]  # always relative to step 0 (Issue #9: consistent scaling)
         for i, step in enumerate(steps):
             users = step_counts[i]
-            conversion_pct = round(users / base_users * 100, 2) if base_users > 0 else 0.0
+            conversion_pct = round(users / base_users * 100, 1) if base_users > 0 else 0.0
             if i > 0:
                 prev_users = step_counts[i - 1]
                 dropoff_pct = round((prev_users - users) / prev_users * 100, 2) if prev_users > 0 else 0.0

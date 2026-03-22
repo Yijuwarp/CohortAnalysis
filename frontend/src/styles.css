@@ -2785,6 +2785,12 @@ tbody tr:hover {
   margin: -4px 0 10px;
 }
 
+.funnel-dnd-help {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0 0 8px;
+}
+
 .funnel-steps-scroll {
   max-height: 420px;
   overflow-y: auto;
@@ -2799,6 +2805,11 @@ tbody tr:hover {
   width: 100%;
 }
 
+.funnel-sortable-step.drag-over {
+  border: 1px dashed var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
 .funnel-step-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -2807,12 +2818,13 @@ tbody tr:hover {
   flex-direction: column;
   gap: 8px;
   background: #fafafa;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
 }
 
 .funnel-step-block:active {
   cursor: grabbing;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  transform: scale(1.02);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
 }
 
 .funnel-step-header {
@@ -2833,6 +2845,7 @@ tbody tr:hover {
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
+  transition: all 0.2s ease;
 }
 
 .funnel-drag-handle {
@@ -2843,6 +2856,16 @@ tbody tr:hover {
   line-height: 1;
   cursor: grab;
   width: auto;
+}
+
+.drag-overlay {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: white;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .funnel-step-event-select {

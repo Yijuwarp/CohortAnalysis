@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFunnel, updateFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
 import { formatInteger } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
-import { DndContext, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay } from '@dnd-kit/core'
 import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 
@@ -18,14 +18,14 @@ const STEP_WINDOW_CUSTOM = 'custom'
 const EMPTY_STEP = (id) => ({ id, event_name: '', filters: [] })
 const EMPTY_FILTER = () => ({ property_key: '', property_value: '' })
 
-function SortableStep({ id, children }) {
+function SortableStep({ id, isDragOver, children }) {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
   const style = {
     transform: CSS.Transform.toString(transform),
     transition,
   }
   return (
-    <div ref={setNodeRef} style={style} className="funnel-sortable-step">
+    <div ref={setNodeRef} style={style} className={`funnel-sortable-step${isDragOver ? ' drag-over' : ''}`}>
       {children({ attributes, listeners })}
     </div>
   )
@@ -40,6 +40,8 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
   const [steps, setSteps] = useState([EMPTY_STEP(nextStepIdRef.current++), EMPTY_STEP(nextStepIdRef.current++)])
   const [conversionWindowMode, setConversionWindowMode] = useState(STEP_WINDOW_NONE)
   const [conversionWindowValue, setConversionWindowValue] = useState('10')
+  const [activeId, setActiveId] = useState(null)
+  const [overId, setOverId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   // { eventName -> string[] } — property key lists per event
@@ -153,6 +155,8 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
 
   const handleDragEnd = (event) => {
     const { active, over } = event
+    setActiveId(null)
+    setOverId(null)
     if (!over || active.id === over.id) return
     setSteps(prev => {
       const oldIndex = prev.findIndex(step => step.id === active.id)
@@ -161,6 +165,8 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
       return arrayMove(prev, oldIndex, newIndex)
     })
   }
+
+  const activeStep = steps.find(step => step.id === activeId) || null
 
   const addFilter = (stepIdx) => {
     setSteps(prev => prev.map((s, i) =>
@@ -203,6 +209,10 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
       const numericValue = Number(conversionWindowValue)
       if (!Number.isInteger(numericValue) || numericValue <= 0) {
         setError('Conversion window must be a positive number of minutes')
+        return
+      }
+      if (numericValue > 10080) {
+        setError('Conversion window cannot exceed 7 days (10080 minutes)')
         return
       }
       conversionWindow = { value: numericValue, unit: 'minute' }
@@ -275,6 +285,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                     value={conversionWindowValue}
                     onChange={e => setConversionWindowValue(e.target.value)}
                     data-testid="funnel-conversion-window-value"
+                    placeholder="e.g. 10 (minutes)"
                   />
                   <select disabled data-testid="funnel-conversion-window-unit">
                     <option>minutes</option>
@@ -282,16 +293,31 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                 </div>
               )}
             </div>
-            <p className="funnel-window-help">Maximum time allowed between consecutive steps</p>
+            <p className="funnel-window-help">
+              {conversionWindowMode === STEP_WINDOW_NONE
+                ? 'No time restriction between steps (lifetime conversion)'
+                : 'Max time allowed between each step (e.g. 10 mins between Step 1 → Step 2)'}
+            </p>
+            <p className="funnel-dnd-help">Drag steps to reorder funnel</p>
             <p className="funnel-steps-label">Steps (2–10 required)</p>
 
             <div className="funnel-steps-scroll">
-            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={({ active }) => setActiveId(active.id)}
+              onDragOver={({ over }) => setOverId(over?.id ?? null)}
+              onDragEnd={handleDragEnd}
+              onDragCancel={() => {
+                setActiveId(null)
+                setOverId(null)
+              }}
+            >
             <SortableContext items={steps.map(s => s.id)} strategy={verticalListSortingStrategy}>
             {steps.map((step, stepIdx) => {
               const props = propsByEvent[step.event_name] || []
               return (
-                <SortableStep key={step.id} id={step.id}>
+                <SortableStep key={step.id} id={step.id} isDragOver={overId === step.id}>
                 {({ attributes, listeners }) => (
                 <div className="funnel-step-block" data-testid={`funnel-step-${stepIdx}`}>
                   <div className="funnel-step-header">
@@ -404,6 +430,13 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
               )
             })}
             </SortableContext>
+            <DragOverlay>
+              {activeStep ? (
+                <div className="drag-overlay">
+                  {activeStep.event_name || 'Step'}
+                </div>
+              ) : null}
+            </DragOverlay>
             </DndContext>
             </div>
 
@@ -467,11 +500,9 @@ function FunnelChart({ result }) {
           <div className="funnel-bars">
             {cohorts.map((cohort, cohortIdx) => {
               const stepData = cohort.steps[stepIdx] || { users: 0, conversion_pct: 0, dropoff_pct: 0 }
-              const baseUsers = Number(cohort.steps[0]?.users) || 0
-              const users = Number(stepData.users) || 0
-              const barWidth = Math.max(0, Math.min(100, baseUsers > 0 ? (users / baseUsers) * 100 : 0))
+              const barWidth = Number(stepData.conversion_pct) || 0
               // 2px minimum so tiny values (e.g. 0.1%) are still visible
-              const minWidthPx = barWidth > 0 ? 2 : 0
+              const minWidthPx = barWidth > 0 ? '2px' : '0px'
               return (
                 <div
                   key={cohort.cohort_id}
@@ -491,7 +522,7 @@ function FunnelChart({ result }) {
                       style={{
                         width: `${barWidth}%`,
                         background: getCohortColor(cohort.cohort_id, cohortIdx),
-                        minWidth: `${minWidthPx}px`,
+                        minWidth: minWidthPx,
                       }}
                     />
                   </div>

@@ -565,7 +565,7 @@ describe('FunnelPane – funnel builder modal', () => {
     expect(screen.getByTestId('funnel-step-0')).toBeInTheDocument()
     expect(screen.getByTestId('funnel-step-1')).toBeInTheDocument()
     expect(screen.queryByTestId('funnel-step-2')).not.toBeInTheDocument()
-    expect(screen.getByText('Maximum time allowed between consecutive steps')).toBeInTheDocument()
+    expect(screen.getByText('No time restriction between steps (lifetime conversion)')).toBeInTheDocument()
   })
 
   test('builder_adds_step_on_add_step_click', async () => {
@@ -648,6 +648,24 @@ describe('FunnelPane – funnel builder modal', () => {
         conversion_window: { value: 15, unit: 'minute' },
       }))
     })
+  })
+
+  test('builder_shows_error_when_conversion_window_exceeds_upper_bound', async () => {
+    renderFunnelPane(MOCK_EVENTS_STR)
+    await waitFor(() => expect(screen.getByTestId('funnel-new-button')).toBeInTheDocument())
+    fireEvent.click(screen.getByTestId('funnel-new-button'))
+
+    fireEvent.change(screen.getByTestId('funnel-name-input'), { target: { value: 'Window Limit Funnel' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-0'), { target: { value: 'signup' } })
+    fireEvent.change(screen.getByTestId('funnel-step-event-1'), { target: { value: 'purchase' } })
+    fireEvent.change(screen.getByTestId('funnel-conversion-window-mode'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByTestId('funnel-conversion-window-value'), { target: { value: '10081' } })
+    fireEvent.click(screen.getByTestId('funnel-save-button'))
+
+    expect(screen.getByTestId('funnel-builder-error')).toHaveTextContent(
+      'Conversion window cannot exceed 7 days (10080 minutes)',
+    )
+    expect(createFunnel).not.toHaveBeenCalled()
   })
 
   test('builder_sends_explicit_step_order_in_payload', async () => {
