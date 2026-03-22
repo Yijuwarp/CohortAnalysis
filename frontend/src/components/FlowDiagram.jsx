@@ -145,16 +145,26 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
   const edgeAgg = new Map()
   const nodeUsage = new Map()
-  const nodeDepth = new Map([[rootEvent, 1]])
+  const nodeLoop = new Map()
+  const rootNodeId = `${rootEvent}__1`
 
   const walk = (rows) => {
     ;(rows || []).forEach((row) => {
-      const level = row.path.length - 1
-      if (level > graphDepth) return
+      const event = row.path[row.path.length - 1]
+      const childDepth = row.path.length
+      if (childDepth - 1 > graphDepth) return
+      if (event === 'Other') return
 
-      const source = row.path[row.path.length - 2]
-      const target = row.path[row.path.length - 1]
-      if (!source || !target || target === 'Other') return
+      const parentEvent = row.path[row.path.length - 2]
+      const childEvent = row.path[row.path.length - 1]
+
+      const parentDepth = row.path.length - 1
+      const source = `${parentEvent}__${parentDepth}`
+      const target = `${childEvent}__${childDepth}`
+      const isLoop = row.path.slice(0, -1).includes(event)
+      if (isLoop) {
+        nodeLoop.set(target, true)
+      }
 
       const val = row.values?.[cohortId]
       const users = Number(val?.user_count ?? val?.count ?? 0)
@@ -183,8 +193,6 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
       nodeUsage.set(source, Math.max(nodeUsage.get(source) || 0, Math.round(parentUsers)))
       nodeUsage.set(target, Math.max(nodeUsage.get(target) || 0, users))
-      nodeDepth.set(source, Math.min(nodeDepth.get(source) || level, level))
-      nodeDepth.set(target, Math.min(nodeDepth.get(target) || (level + 1), level + 1))
 
       const children = treeMap[row.path.join('||')] || []
       walk(children)
@@ -209,27 +217,33 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       .forEach((edge) => filteredEdges.push(edge))
   })
 
-  const activeNodes = new Set([rootEvent])
+  const activeNodes = new Set([rootNodeId])
   filteredEdges.forEach((edge) => {
     activeNodes.add(edge.source)
     activeNodes.add(edge.target)
   })
 
-  const nodes = Array.from(activeNodes).map((event) => ({
-    id: event,
+  const nodes = Array.from(activeNodes).map((nodeId) => {
+    const [event, depthStr] = nodeId.split('__')
+    const depth = Number(depthStr)
+    const isLoop = nodeLoop.get(nodeId) || false
+
+    return {
+      id: nodeId,
     data: {
-      label: event,
-      users: nodeUsage.get(event) || 0,
-      isRoot: event === rootEvent,
+      label: `${event}${isLoop ? ' ↺' : ''}`,
+      users: nodeUsage.get(nodeId) || 0,
+      isRoot: nodeId === rootNodeId,
+      isLoop,
     },
     position: { x: 0, y: 0 },
     style: {
       minWidth: 180,
       maxWidth: 260,
       minHeight: 70,
-      border: event === rootEvent ? '2px solid #2563eb' : '1px solid #e5e7eb',
+      border: isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb'),
       borderRadius: 12,
-      background: '#fff',
+      background: isLoop ? '#fffbeb' : '#fff',
       boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
       padding: 10,
       display: 'flex',
@@ -238,10 +252,12 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       textAlign: 'center',
       whiteSpace: 'pre-line',
     },
+    title: isLoop ? 'Users returned to this event (loop)' : '',
     sourcePosition: 'right',
     targetPosition: 'left',
-    rank: nodeDepth.get(event) || 1,
-  }))
+      rank: depth,
+    }
+  })
 
   const edges = filteredEdges.map((edge) => ({
     ...(edge.pct > 0.3 ? { isPrimary: true } : {}),
