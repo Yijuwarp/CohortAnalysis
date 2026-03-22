@@ -26,7 +26,7 @@ function buildLayout(nodes, edges) {
     marginy: 20,
   })
 
-  nodes.forEach((node) => dagreGraph.setNode(node.id, { width: 220, height: 80 }))
+  nodes.forEach((node) => dagreGraph.setNode(node.id, { width: 220, height: 80, rank: node.rank || 1 }))
   edges.forEach((edge) => dagreGraph.setEdge(edge.source, edge.target))
   dagre.layout(dagreGraph)
 
@@ -40,8 +40,8 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   const { cohortId, graphDepth = 7, treeMap = {} } = options
 
   const edgeAgg = new Map()
-  const nodeIncoming = new Map()
-  const nodeOutgoing = new Map()
+  const nodeUsage = new Map()
+  const nodeDepth = new Map([[rootEvent, 1]])
 
   const walk = (rows) => {
     ;(rows || []).forEach((row) => {
@@ -55,17 +55,21 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       const val = row.values?.[cohortId]
       const users = Number(val?.user_count ?? val?.count ?? 0)
       if (users <= 0) return
+      const pctOfParent = Number(val?.pct_of_parent ?? val?.pct ?? 0)
+      const parentUsers = users / (pctOfParent || 1)
 
       const key = `${source}→${target}`
       const existing = edgeAgg.get(key)
       if (existing) {
         existing.users += users
+        existing.parentUsers += parentUsers
       } else {
         edgeAgg.set(key, {
           id: key,
           source,
           target,
           users,
+          parentUsers,
           continue_pct: Number(val?.continue_pct ?? 0),
           dropoff_pct: Number(val?.dropoff_pct ?? 0),
           median_time_sec: val?.median_time_sec ?? null,
@@ -73,8 +77,10 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
         })
       }
 
-      nodeOutgoing.set(source, Math.max(nodeOutgoing.get(source) || 0, users))
-      nodeIncoming.set(target, Math.max(nodeIncoming.get(target) || 0, users))
+      nodeUsage.set(source, Math.max(nodeUsage.get(source) || 0, Math.round(parentUsers)))
+      nodeUsage.set(target, Math.max(nodeUsage.get(target) || 0, users))
+      nodeDepth.set(source, Math.min(nodeDepth.get(source) || level, level))
+      nodeDepth.set(target, Math.min(nodeDepth.get(target) || (level + 1), level + 1))
 
       const children = treeMap[row.path.join('||')] || []
       walk(children)
@@ -83,15 +89,9 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
   walk(flowTree)
 
-  const nodeUsers = new Map()
-  for (const event of new Set([...nodeIncoming.keys(), ...nodeOutgoing.keys(), rootEvent])) {
-    nodeUsers.set(event, Math.max(nodeIncoming.get(event) || 0, nodeOutgoing.get(event) || 0))
-  }
-
   const edgesBySource = {}
   Array.from(edgeAgg.values()).forEach((edge) => {
-    const sourceUsers = nodeUsers.get(edge.source) || 1
-    const pct = edge.users / sourceUsers
+    const pct = Math.min(1, edge.parentUsers > 0 ? edge.users / edge.parentUsers : 0)
     if (!edgesBySource[edge.source]) edgesBySource[edge.source] = []
     edgesBySource[edge.source].push({ ...edge, pct })
   })
@@ -115,7 +115,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     id: event,
     data: {
       label: event,
-      users: nodeUsers.get(event) || 0,
+      users: nodeUsage.get(event) || 0,
       isRoot: event === rootEvent,
     },
     position: { x: 0, y: 0 },
@@ -137,6 +137,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     },
     sourcePosition: 'right',
     targetPosition: 'left',
+    rank: nodeDepth.get(event) || 1,
   }))
 
   const edges = filteredEdges.map((edge) => ({

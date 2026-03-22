@@ -4,7 +4,7 @@ import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
 import FlowDiagram, { buildGraphFromTree } from './FlowDiagram'
 
-const TABLE_MAX_DEPTH = 20
+const TABLE_MAX_DEPTH = 7
 
 function removeOtherRows(rows) {
   return (rows || []).filter(row => row.path[row.path.length - 1] !== 'Other')
