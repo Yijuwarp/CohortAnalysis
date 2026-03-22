@@ -2526,7 +2526,7 @@ tbody tr:hover {
 
 .funnel-bar-row {
   display: grid;
-  grid-template-columns: 180px 1fr auto;
+  grid-template-columns: 180px 1fr;
   align-items: center;
   gap: 12px;
   min-height: 28px;
@@ -2558,12 +2558,18 @@ tbody tr:hover {
 }
 
 .funnel-bar-meta {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 4px;
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   align-items: center;
+  pointer-events: none;
+  color: #111827;
 }
 
 .funnel-bar-users {

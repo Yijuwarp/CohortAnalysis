@@ -525,15 +525,15 @@ function FunnelChart({ result }) {
                         minWidth: minWidthPx,
                       }}
                     />
-                  </div>
-                  <div className="funnel-bar-meta">
-                    <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
-                    <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
-                    {stepIdx > 0 && (Number(stepData.dropoff_pct) || 0) > 0 && (
-                      <span className="funnel-bar-dropoff" title="Drop-off from previous step">
-                        ↓{(Number(stepData.dropoff_pct) || 0).toFixed(1)}%
-                      </span>
-                    )}
+                    <div className="funnel-bar-meta">
+                      <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
+                      <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
+                      {stepIdx > 0 && (Number(stepData.dropoff_pct) || 0) > 0 && (
+                        <span className="funnel-bar-dropoff" title="Drop-off from previous step">
+                          ↓{(Number(stepData.dropoff_pct) || 0).toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )
