@@ -69,6 +69,26 @@ function fallbackLayout(nodes) {
   return result
 }
 
+function compactVertical(nodes) {
+  const levels = {}
+
+  nodes.forEach((n) => {
+    const level = n.rank || 1
+    if (!levels[level]) levels[level] = []
+    levels[level].push(n)
+  })
+
+  Object.values(levels).forEach((levelNodes) => {
+    levelNodes.sort((a, b) => (b.data.users || 0) - (a.data.users || 0))
+
+    levelNodes.forEach((node, i) => {
+      node.position.y = i * 150
+    })
+  })
+
+  return nodes
+}
+
 async function buildLayout(nodes, edges) {
   const dagre = await getDagre()
 
@@ -204,20 +224,19 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
     },
     position: { x: 0, y: 0 },
     style: {
-      width: 220,
-      height: 80,
-      border: event === rootEvent ? '2px solid #2563eb' : '1px solid #cbd5e1',
-      borderRadius: 8,
+      minWidth: 180,
+      maxWidth: 260,
+      minHeight: 70,
+      border: event === rootEvent ? '2px solid #2563eb' : '1px solid #e5e7eb',
+      borderRadius: 12,
       background: '#fff',
+      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+      padding: 10,
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'center',
       textAlign: 'center',
       whiteSpace: 'pre-line',
-      padding: 8,
-      fontWeight: 600,
-      fontSize: 14,
-      color: '#111827',
     },
     sourcePosition: 'right',
     targetPosition: 'left',
@@ -225,16 +244,18 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
   }))
 
   const edges = filteredEdges.map((edge) => ({
+    ...(edge.pct > 0.3 ? { isPrimary: true } : {}),
     id: edge.id,
     source: edge.source,
     target: edge.target,
-    type: 'default',
+    type: 'smoothstep',
     markerEnd: { type: MarkerType.ArrowClosed },
     label: formatPct(edge.pct),
+    title: `${Math.round(edge.users).toLocaleString()} users`,
     style: {
-      strokeWidth: Math.max(1, edge.pct * 6),
-      zIndex: 1,
-      strokeDasharray: edge.source === edge.target ? '5 4' : undefined,
+      stroke: edge.pct > 0.3 ? '#2563eb' : '#94a3b8',
+      strokeWidth: edge.pct > 0.3 ? 4 : Math.max(1.5, edge.pct * 8),
+      opacity: edge.pct >= 0.01 ? 1 : 0.4,
     },
     data: edge,
   }))
@@ -268,9 +289,21 @@ export default function FlowDiagram({ data }) {
       }))
 
       const layoutedNodes = await buildLayout(nodes, edges)
+      const LEVEL_GAP_X = 320
+
+      layoutedNodes.forEach((node) => {
+        const level = node.rank || 1
+        node.position.x = (level - 1) * LEVEL_GAP_X
+      })
+
+      const compactedNodes = compactVertical(layoutedNodes)
+      const minY = Math.min(...compactedNodes.map((n) => n.position.y))
+      compactedNodes.forEach((n) => {
+        n.position.y -= minY
+      })
 
       if (!cancelled) {
-        setGraph({ nodes: layoutedNodes, edges })
+        setGraph({ nodes: compactedNodes, edges })
       }
     }
 
