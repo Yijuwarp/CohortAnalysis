@@ -86,15 +86,37 @@ async def monetization_endpoint(
 async def flow_l1_endpoint(
     start_event: str = Query(...),
     direction: str = Query("forward"),
+    depth: int = Query(2),
+    property_column: str | None = Query(None),
+    property_operator: str | None = Query("="),
+    property_values: list[str] | None = Query(None),
+    include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return get_l1_flows(conn, start_event, direction)
+    return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
 
 @router.get("/flow/l2")
 async def flow_l2_endpoint(
     start_event: str = Query(...),
-    parent_event: str = Query(...),
+    parent_path: list[str] | None = Query(None),
+    parent_event: str | None = Query(None),
     direction: str = Query("forward"),
+    depth: int = Query(7),
+    property_column: str | None = Query(None),
+    property_operator: str | None = Query("="),
+    property_values: list[str] | None = Query(None),
+    include_top_k: bool = Query(True),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return get_l2_flows(conn, start_event, parent_event, direction)
+    resolved_parent_path = parent_path or ([start_event, parent_event] if parent_event else [start_event])
+    return get_l2_flows(
+        conn,
+        start_event,
+        resolved_parent_path,
+        direction,
+        depth,
+        property_column,
+        property_operator,
+        property_values,
+        include_top_k,
+    )

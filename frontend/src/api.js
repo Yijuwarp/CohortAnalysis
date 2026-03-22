@@ -279,16 +279,37 @@ export async function runFunnel(funnelId) {
 // Flow Analytics
 // ---------------------------------------------------------------------------
 
-export async function getFlowL1(startEvent, direction = 'forward') {
-  return request(
-    `/flow/l1?start_event=${encodeURIComponent(startEvent)}&direction=${encodeURIComponent(direction)}`,
-    { method: 'GET' }
-  )
+export async function getFlowL1(startEvent, direction = 'forward', depth = 2, propertyFilter = null) {
+  const query = new URLSearchParams({
+    start_event: startEvent,
+    direction,
+    depth: String(depth),
+  })
+
+  if (propertyFilter?.column) {
+    query.set('property_column', propertyFilter.column)
+    query.set('property_operator', propertyFilter.operator || '=')
+    ;(propertyFilter.values || []).forEach(v => {
+      query.append('property_values', String(v))
+    })
+  }
+  return request(`/flow/l1?${query.toString()}`, { method: 'GET' })
 }
 
-export async function getFlowL2(startEvent, parentEvent, direction = 'forward') {
-  return request(
-    `/flow/l2?start_event=${encodeURIComponent(startEvent)}&parent_event=${encodeURIComponent(parentEvent)}&direction=${encodeURIComponent(direction)}`,
-    { method: 'GET' }
-  )
+export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 2, propertyFilter = null) {
+  const query = new URLSearchParams({
+    start_event: startEvent,
+    direction,
+    depth: String(depth),
+  })
+  ;(parentPath || []).forEach(node => query.append('parent_path', node))
+
+  if (propertyFilter?.column) {
+    query.set('property_column', propertyFilter.column)
+    query.set('property_operator', propertyFilter.operator || '=')
+    ;(propertyFilter.values || []).forEach(v => {
+      query.append('property_values', String(v))
+    })
+  }
+  return request(`/flow/l2?${query.toString()}`, { method: 'GET' })
 }
