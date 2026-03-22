@@ -239,7 +239,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       nodeUsage.set(source, Math.max(nodeUsage.get(source) || 0, Math.round(parentUsers)))
       nodeUsage.set(target, Math.max(nodeUsage.get(target) || 0, users))
 
-      const children = treeMap[row.path.join('>')] || []
+      const children = treeMap[row.path.join('>')] || row.children || []
       walk(children)
     })
   }

@@ -146,13 +146,20 @@ export default function FlowPane({ refreshToken }) {
     const graphReqId = ++graphReqIdRef.current
     setGraphLoading(true)
     try {
-      const rootResp = await getFlowL1(controls.event, controls.direction, graphDepth, propertyFilter)
+      const rootResp = await getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
       if (graphReqId !== graphReqIdRef.current) return
       const rootRows = removeOtherRows(rootResp.rows || [])
       const treeMap = {}
-      rootRows.forEach((row) => {
-        treeMap[nodeKey(row.path)] = removeOtherRows(row.children || [])
-      })
+      const walk = (rows) => {
+        ;(rows || []).forEach((row) => {
+          const children = removeOtherRows(row.children || [])
+          treeMap[nodeKey(row.path)] = children
+          if (children.length > 0) {
+            walk(children)
+          }
+        })
+      }
+      walk(rootRows)
 
       const byCohort = {}
       for (const cid of cohorts) {
@@ -161,6 +168,14 @@ export default function FlowPane({ refreshToken }) {
           graphDepth,
           treeMap,
         })
+      }
+      if (import.meta.env.DEV) {
+        const graphNodes = Object.values(byCohort).flatMap((g) => g?.nodes || [])
+        const levels = [...new Set(graphNodes
+          .map((n) => Number(n.id.match(/__L(\d+)__/)?.[1]))
+          .filter((lvl) => Number.isFinite(lvl)))]
+          .sort((a, b) => a - b)
+        console.log('Graph levels:', levels)
       }
 
       if (graphReqId === graphReqIdRef.current) {
