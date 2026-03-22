@@ -1224,38 +1224,45 @@ td.sticky-col-size {
 
 .tuning-cohort-block {
   margin-bottom: var(--space-4);
-  padding: var(--space-3);
-  background: #f9fafb;
+  padding: var(--space-4);
+  background: #f8fafc;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius-md);
 }
 
 .tuning-cohort-block h4 {
   margin-top: 0;
-  margin-bottom: var(--space-2);
+  margin-bottom: var(--space-3);
 }
 
 .tuning-input-group {
   display: flex;
   flex-direction: column;
-  gap: var(--space-2);
+  gap: var(--space-3);
   margin-bottom: var(--space-2);
 }
 
 .tuning-input-row {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-3);
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
 }
 
 .tuning-input-row label {
-  flex: 0 0 30px;
+  flex: none;
+  font-size: 11px;
+  color: var(--color-text-secondary);
   font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
 }
 
 .tuning-input-row input[type="number"] {
-  flex: 1;
+  height: 32px;
+  width: 100%;
+  padding: 4px 8px;
+  font-size: 13px;
 }
 
 .tuning-actions {
@@ -1792,17 +1799,101 @@ tbody tr:hover {
    ============================ */
 .monetization-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 280px;
+  grid-template-columns: 1fr 320px;
   gap: 16px;
   align-items: start;
 }
 
-.monetization-layout.with-tuning-pane {
-  grid-template-columns: minmax(0, 1fr) 280px 360px;
-}
-
 .monetization-main {
   min-width: 0;
+}
+
+.monetization-controls {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.monetization-controls label {
+  margin: 0;
+  min-width: 140px;
+}
+
+.monetization-controls select,
+.monetization-controls button,
+.monetization-controls .view-toggle {
+  height: 36px;
+}
+
+.monetization-controls .predict-button {
+  background: var(--color-primary);
+  color: white;
+}
+
+.monetization-controls .predict-button:not(:disabled):hover {
+  background: var(--color-primary-hover);
+}
+
+.monetization-controls .compare-btn-align {
+  margin-left: auto;
+}
+
+.monetization-data-table th,
+.monetization-data-table td {
+  padding: 8px 12px;
+  min-width: 80px;
+}
+
+.monetization-data-table .col-numeric {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.monetization-data-table .sticky-col-top {
+  top: 0;
+  z-index: 2;
+}
+
+.monetization-data-table .sticky-col-left {
+  left: 0;
+  z-index: 2;
+  background: #fff;
+  width: 140px;
+  min-width: 140px;
+}
+
+.monetization-data-table th.sticky-col-left {
+  background: #f6fbf7;
+}
+
+.monetization-data-table .sticky-col-top.sticky-col-left {
+  z-index: 3;
+}
+
+.monetization-data-table .cohort-name-cell {
+  font-weight: 600;
+}
+
+.monetization-data-table .cohort-size-cell {
+  color: var(--color-text-secondary);
+}
+
+.monetization-data-table .predicted-col-header {
+  border-left: 2px solid #e5e7eb;
+}
+
+.monetization-data-table .predicted-cell {
+  border-left: 2px solid #e5e7eb;
+  font-weight: 700;
+  color: #15803d;
+}
+
+.monetization-side-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .prediction-sticky-card {
@@ -1814,6 +1905,46 @@ tbody tr:hover {
   background: #fff;
   padding: 12px;
   box-shadow: var(--shadow-sm);
+}
+
+.summary-card .summary-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.summary-header h4 {
+  margin: 0;
+}
+
+.summary-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 4px;
+  border-radius: 4px;
+}
+
+.summary-close-btn:hover {
+  color: var(--color-text-primary);
+  background: #f3f4f6;
+}
+
+.summary-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.summary-name {
+  flex: 1;
+}
+
+.summary-val {
+  font-weight: 600;
 }
 
 .prediction-row {

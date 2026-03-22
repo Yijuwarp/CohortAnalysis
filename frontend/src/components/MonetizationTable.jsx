@@ -16,7 +16,6 @@ const METRIC_OPTIONS = [
 ]
 
 export default function MonetizationTable({ refreshToken, maxDay }) {
-  const [isPinned, setIsPinned] = useState(true)
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState('table')
   const [revenueRows, setRevenueRows] = useState([])
@@ -29,6 +28,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
   const [predictionBaseline, setPredictionBaseline] = useState(null)
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
+  const [showPredictionSummary, setShowPredictionSummary] = useState(true)
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)
@@ -127,6 +127,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
 
     setPredictions(nextPredictions)
     setPredictionBaseline(nextPredictions)
+    setShowPredictionSummary(true)
   }
 
   const predictionSummary = useMemo(() => {
@@ -143,10 +144,9 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
   return (
     <section className="card">
       <h2>Monetization</h2>
-      <div className={`monetization-layout ${isTuningPaneOpen ? 'with-tuning-pane' : ''}`}>
+      <div className="monetization-layout">
         <div className="monetization-main">
-          <div className="retention-header">
-            <div className="retention-controls-left">
+          <div className="retention-header monetization-controls">
               <label>
                 Metric
                 <select
@@ -162,94 +162,88 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
                 </select>
               </label>
               <label>
-                Prediction Horizon
+                Horizon
                 <select value={predictionHorizon} onChange={(e) => setPredictionHorizon(Number(e.target.value))}>
                   {[30, 60, 90, 180, 365].map((day) => <option key={day} value={day}>{day}D</option>)}
                 </select>
               </label>
-              <button className="button button-primary" onClick={loadData} disabled={loading}>
-                {loading ? 'Loading...' : 'Load Monetization'}
-              </button>
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={handleProjectRevenue}
-                disabled={!predictionEnabled || displayRows.length === 0}
-                title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
-              >
-                Predict Revenue
-              </button>
-              <button
-                className="button button-ghost"
-                type="button"
-                onClick={() => {
-                  if (!predictions || Object.keys(predictions).length === 0) return
-                  setPredictionBaseline(JSON.parse(JSON.stringify(predictions)))
-                  setIsTuningPaneOpen(true)
-                }}
-                disabled={!predictions || Object.keys(predictions).length === 0}
-              >
-                Tune Prediction
-              </button>
-              <button
-                type="button"
-                className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
-                onClick={() => setIsComparePaneOpen(prev => !prev)}
-                title="Compare two cohorts statistically"
-                data-testid="open-compare-pane"
-              >
-                🔬 Compare
-              </button>
-            </div>
 
-            <div className="retention-controls-right">
               <div className="view-toggle">
                 <button
                   type="button"
-                  className={`view-button ${isPinned ? 'active' : ''}`}
-                  onClick={() => setIsPinned((prev) => !prev)}
-                  title="Pin Cohort Columns"
-                >
-                  {isPinned ? '📌' : '📍'}
-                </button>
-                <button
-                  type="button"
-                  className={`view-button ${viewMode === 'table' ? 'active' : ''}`}
+                  className={`view-button ${viewMode === 'table' ? 'active ui-toggle-active' : ''}`}
                   onClick={() => setViewMode('table')}
                 >
                   Table
                 </button>
                 <button
                   type="button"
-                  className={`view-button ${viewMode === 'graph' ? 'active' : ''}`}
+                  className={`view-button ${viewMode === 'graph' ? 'active ui-toggle-active' : ''}`}
                   onClick={() => setViewMode('graph')}
                 >
                   Graph
                 </button>
               </div>
-            </div>
+
+              <button className="button button-primary" onClick={loadData} disabled={loading}>
+                {loading ? 'Loading...' : 'Load'}
+              </button>
+              <button
+                className="button button-primary predict-button"
+                type="button"
+                onClick={handleProjectRevenue}
+                disabled={!predictionEnabled || displayRows.length === 0}
+                title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
+              >
+                Predict
+              </button>
+              {predictions && Object.keys(predictions).length > 0 && (
+                <button
+                  className="button button-secondary"
+                  type="button"
+                  onClick={() => {
+                    setPredictionBaseline(JSON.parse(JSON.stringify(predictions)))
+                    setIsTuningPaneOpen(true)
+                  }}
+                >
+                  Tune
+                </button>
+              )}
+
+              <button
+                type="button"
+                className={`compare-open-button button-secondary compare-btn-align ${isComparePaneOpen ? 'active' : ''}`}
+                onClick={() => setIsComparePaneOpen(prev => !prev)}
+                title="Compare two cohorts statistically"
+              >
+                Compare
+              </button>
           </div>
 
-          {error && <p className="error">{error}</p>}
+          {!loading && error && <p className="error">{error}</p>}
+          {loading && <div className="loader">Loading monetization data...</div>}
+          {!loading && !error && displayRows.length === 0 && (
+            <div className="loader">No revenue data available</div>
+          )}
 
-          {displayRows.length > 0 && viewMode === 'table' && (
-            <div className="analytics-table table-responsive">
+          {!loading && displayRows.length > 0 && viewMode === 'table' && (
+            <div className="analytics-table table-responsive monetization-data-table">
               <table>
                 <thead>
                   <tr>
-                    <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                    <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
-                    {visibleDayColumns.map((day) => <th key={day}>D{day}</th>)}
-                    <th className="col-prediction">Predicted Revenue ({predictionHorizon}D)</th>
+                    <th className="sticky-col sticky-col-top sticky-col-left">Cohort</th>
+                    <th className="sticky-col sticky-col-top col-numeric">Size</th>
+                    {visibleDayColumns.map((day) => <th key={day} className="sticky-col sticky-col-top col-numeric">D{day}</th>)}
+                    <th className="col-prediction sticky-col sticky-col-top col-numeric predicted-col-header">Predicted ({predictionHorizon}D)</th>
                   </tr>
                 </thead>
                 <tbody>
                   {displayRows.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td className={isPinned ? 'sticky-col sticky-col-cohort' : ''} title={row.cohort_name}>{row.cohort_name}</td>
-                      <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{row.size}</td>
-                      {visibleDayColumns.map((day) => <td key={day}>{row.displayValues[String(day)] ?? '—'}</td>)}
-                      <td className="col-prediction">{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
+                      <td className="sticky-col sticky-col-left cohort-name-cell" title={row.cohort_name}>{row.cohort_name}</td>
+                      <td className="col-numeric cohort-size-cell">{Number(row.size).toLocaleString()}</td>
+                      {visibleDayColumns.map((day) => <td key={day} className="col-numeric tabular-cell">{row.displayValues[String(day)] ?? '—'}</td>)}
+                      <td className="col-prediction col-numeric predicted-cell">{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -257,7 +251,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
             </div>
           )}
 
-          {viewMode === 'graph' && (
+          {!loading && viewMode === 'graph' && (
             <MonetizationGraph
               rows={displayRows}
               maxDay={effectiveMaxDay}
@@ -269,31 +263,44 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
           )}
         </div>
 
-        {predictionSummary.length > 0 && (
-          <aside className="prediction-sticky-card">
-            <h4>Prediction Summary ({predictionHorizon}D)</h4>
-            {predictionSummary.map((item) => (
-              <div key={item.id} className="prediction-row">
-                <span>{item.name}</span>
-                <strong>{formatCurrency(item.value)}</strong>
+        <div className="monetization-side-panel">
+          {predictionSummary.length > 0 && showPredictionSummary && (
+            <aside className="prediction-sticky-card summary-card">
+              <div className="summary-header">
+                <h4>Prediction Summary</h4>
+                <button 
+                  type="button" 
+                  className="summary-close-btn"
+                  onClick={() => setShowPredictionSummary(false)}
+                >
+                  ✕
+                </button>
               </div>
-            ))}
-          </aside>
-        )}
+              <div className="summary-body">
+                {predictionSummary.map((item) => (
+                  <div key={item.id} className="prediction-row">
+                    <span className="summary-name">{item.name}</span>
+                    <strong className="summary-val">{formatCurrency(item.value)}</strong>
+                  </div>
+                ))}
+              </div>
+            </aside>
+          )}
 
-        <TunePredictionPane
-          isOpen={isTuningPaneOpen}
-          onClose={() => setIsTuningPaneOpen(false)}
-          predictions={predictions}
-          displayRows={displayRows}
-          onLiveUpdate={setPredictions}
-          onCancel={() => {
-            if (predictionBaseline) {
-              setPredictions(JSON.parse(JSON.stringify(predictionBaseline)))
-            }
-            setIsTuningPaneOpen(false)
-          }}
-        />
+          <TunePredictionPane
+            isOpen={isTuningPaneOpen}
+            onClose={() => setIsTuningPaneOpen(false)}
+            predictions={predictions}
+            displayRows={displayRows}
+            onLiveUpdate={setPredictions}
+            onCancel={() => {
+              if (predictionBaseline) {
+                setPredictions(JSON.parse(JSON.stringify(predictionBaseline)))
+              }
+              setIsTuningPaneOpen(false)
+            }}
+          />
+        </div>
 
         <ComparePane
           isOpen={isComparePaneOpen}
