@@ -15,15 +15,24 @@ function UserSummaryCard({ summary }) {
         <div><strong>Last event</strong><span>{summary.last_event_time || '—'}</span></div>
         <div><strong>Total events</strong><span>{summary.total_events ?? 0}</span></div>
       </div>
-      <details>
-        <summary>Latest properties snapshot</summary>
-        <pre>{JSON.stringify(summary.properties || {}, null, 2)}</pre>
-      </details>
+      <div className="user-explorer-properties">
+        <div className="section-label">Latest properties</div>
+        <div className="user-explorer-properties-grid">
+          {Object.entries(summary.properties || {}).map(([key, value]) => (
+            <div key={key} className="user-explorer-property">
+              <span className="property-key">{key}</span>
+              <span className="property-value">
+                {value === null || value === undefined ? '—' : String(value)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
 
-function EventControls({ eventOptions, eventSearchTerm, onEventSearchTermChange, onNavigate, jumpDatetime, onJumpDatetimeChange, onReset, disabled }) {
+function EventControls({ eventOptions, eventSearchTerm, onEventSearchTermChange, onNavigate, jumpDatetime, onJumpDatetimeChange, onReset, disabled, disablePrev, disableNext }) {
   return (
     <div className="user-explorer-controls card ui-card">
       <div className="user-explorer-controls-row">
@@ -34,12 +43,13 @@ function EventControls({ eventOptions, eventSearchTerm, onEventSearchTermChange,
           placeholder="Find Event"
           disabled={disabled}
         />
-        <button type="button" className="button" onClick={() => onNavigate('prev')} disabled={disabled || !eventSearchTerm}>↑ Prev</button>
-        <button type="button" className="button" onClick={() => onNavigate('next')} disabled={disabled || !eventSearchTerm}>↓ Next</button>
+        <button type="button" className="button" onClick={() => onNavigate('prev')} disabled={disabled || disablePrev || !eventSearchTerm}>↑ Prev</button>
+        <button type="button" className="button" onClick={() => onNavigate('next')} disabled={disabled || disableNext || !eventSearchTerm}>↓ Next</button>
       </div>
       <div className="user-explorer-controls-row">
         <input
-          type="datetime-local"
+          type="text"
+          placeholder="YYYY-MM-DD"
           value={jumpDatetime}
           onChange={(event) => onJumpDatetimeChange(event.target.value)}
           disabled={disabled}
@@ -51,12 +61,15 @@ function EventControls({ eventOptions, eventSearchTerm, onEventSearchTermChange,
   )
 }
 
-function EventTable({ events, highlightedTime }) {
-  const highlightedRef = useRef(null)
-
+function EventTable({ events, highlightedTime, highlightedName }) {
   useEffect(() => {
-    highlightedRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [highlightedTime])
+    if (!highlightedTime) return;
+
+    const el = document.getElementById(`event-${highlightedTime}-${highlightedName}`);
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [highlightedTime, highlightedName]);
 
   if (events.length === 0) {
     return <div className="card ui-card">No events found for this user</div>
@@ -74,12 +87,12 @@ function EventTable({ events, highlightedTime }) {
           </thead>
           <tbody>
             {events.map((event, index) => {
-              const isHighlighted = highlightedTime && event.event_time === highlightedTime
+              const isHighlighted = highlightedTime && event.event_time === highlightedTime && event.event_name === highlightedName
               return (
                 <tr
+                  id={`event-${event.event_time}-${event.event_name}`}
                   key={`${event.event_time}-${event.event_name}-${index}`}
                   className={isHighlighted ? 'user-explorer-highlighted-row' : ''}
-                  ref={isHighlighted ? highlightedRef : null}
                 >
                   <td>{event.event_time}</td>
                   <td>
@@ -143,9 +156,18 @@ export default function UserExplorer() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [currentEventTime, setCurrentEventTime] = useState(null)
+  const [highlightedEventTime, setHighlightedEventTime] = useState(null)
+  const [highlightedEventName, setHighlightedEventName] = useState(null)
   const [eventSearchTerm, setEventSearchTerm] = useState('')
   const [jumpDatetime, setJumpDatetime] = useState('')
   const [loading, setLoading] = useState(false)
+  const [noMorePrev, setNoMorePrev] = useState(false)
+  const [noMoreNext, setNoMoreNext] = useState(false)
+
+  useEffect(() => {
+    setNoMorePrev(false)
+    setNoMoreNext(false)
+  }, [eventSearchTerm])
 
   useEffect(() => {
     const id = setTimeout(async () => {
@@ -184,6 +206,24 @@ export default function UserExplorer() {
       setPage(payload.pagination?.page || 1)
       setTotalPages(payload.pagination?.total_pages || 1)
       setCurrentEventTime(payload.cursor?.current_event_time || null)
+      
+      let isMatchFound = false
+      if (payload.matched_event) {
+        setHighlightedEventTime(payload.matched_event.event_time)
+        setHighlightedEventName(payload.matched_event.event_name)
+        isMatchFound = true
+      } else if (resetSearch) {
+        setHighlightedEventTime(null)
+        setHighlightedEventName(null)
+      }
+
+      if (direction === 'prev' && !isMatchFound) setNoMorePrev(true)
+      if (direction === 'next' && !isMatchFound) setNoMoreNext(true)
+      
+      if (isMatchFound) {
+        if (direction === 'prev') setNoMoreNext(false)
+        if (direction === 'next') setNoMorePrev(false)
+      }
     } finally {
       setLoading(false)
     }
@@ -203,13 +243,8 @@ export default function UserExplorer() {
             options={userOptions}
             value={selectedUser}
             onChange={setSelectedUser}
-            placeholder="Search and select a user"
-          />
-          <input
-            className="user-explorer-user-search"
-            value={searchTerm}
-            onChange={(event) => setSearchTerm(event.target.value)}
-            placeholder="Type to load scoped users"
+            placeholder="Search user_id..."
+            onSearch={setSearchTerm}
           />
           <p>Select a user to explore</p>
         </div>
@@ -228,16 +263,15 @@ export default function UserExplorer() {
             setSelectedUser(value)
             setPage(1)
             setCurrentEventTime(null)
+            setHighlightedEventTime(null)
+            setHighlightedEventName(null)
             setEventSearchTerm('')
             setJumpDatetime('')
+            setNoMorePrev(false)
+            setNoMoreNext(false)
           }}
-          placeholder="Search and select a user"
-        />
-        <input
-          className="user-explorer-user-search"
-          value={searchTerm}
-          onChange={(event) => setSearchTerm(event.target.value)}
-          placeholder="Type to load scoped users"
+          placeholder="Search user_id..."
+          onSearch={setSearchTerm}
         />
       </div>
 
@@ -249,7 +283,12 @@ export default function UserExplorer() {
         onEventSearchTermChange={setEventSearchTerm}
         onNavigate={(direction) => {
           if (direction === 'jump') {
-            fetchData({ targetPage: 1, jump: jumpDatetime })
+            const normalizeDatetime = (input) => {
+              if (!input) return null;
+              if (input.length === 10) return input + " 00:00:00";
+              return input;
+            }
+            fetchData({ targetPage: 1, jump: normalizeDatetime(jumpDatetime) })
             return
           }
           fetchData({ direction })
@@ -261,12 +300,18 @@ export default function UserExplorer() {
           setJumpDatetime('')
           setPage(1)
           setCurrentEventTime(null)
+          setHighlightedEventTime(null)
+          setHighlightedEventName(null)
+          setNoMorePrev(false)
+          setNoMoreNext(false)
           fetchData({ targetPage: 1, resetSearch: true })
         }}
         disabled={loading}
+        disablePrev={noMorePrev}
+        disableNext={noMoreNext}
       />
 
-      <EventTable events={events} highlightedTime={currentEventTime} />
+      <EventTable events={events} highlightedTime={highlightedEventTime} highlightedName={highlightedEventName} />
       <PaginationBar page={page} totalPages={totalPages} onChangePage={(nextPage) => fetchData({ targetPage: nextPage })} disabled={loading} />
     </div>
   )
