@@ -330,3 +330,31 @@ export async function getFlowGraph(startEvent, direction = 'forward', depth = 3,
   }
   return request(`/flow/graph?${query.toString()}`, { method: 'GET' })
 }
+
+export async function searchUsers(query = '', limit = 20) {
+  return request(`/users/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`, {
+    method: 'GET',
+  })
+}
+
+export async function getUserExplorer(params) {
+  const query = new URLSearchParams()
+  query.set('user_id', params.userId)
+  query.set('page', String(params.page ?? 1))
+  query.set('page_size', String(params.pageSize ?? 50))
+
+  if (params.eventSearch) {
+    query.set('event_search', params.eventSearch)
+  }
+  if (params.direction) {
+    query.set('direction', params.direction)
+  }
+  if (params.fromEventTime) {
+    query.set('from_event_time', params.fromEventTime)
+  }
+  if (params.jumpDatetime) {
+    query.set('jump_datetime', params.jumpDatetime)
+  }
+
+  return request(`/user-explorer?${query.toString()}`, { method: 'GET' })
+}
