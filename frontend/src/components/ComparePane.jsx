@@ -65,31 +65,12 @@ function formatValue(value, metric) {
 }
 
 /**
- * Given the result object, find which test produced the selected p_value
- * and return a human-readable label, e.g. "p-value (Mann-Whitney U)".
+ * Format a p-value for display.
  */
-function getPValueLabel(result) {
-  if (!result || result.p_value === null || result.p_value === undefined) {
-    return 'p-value'
-  }
-  if (!result.tests || result.tests.length === 0) {
-    return 'p-value'
-  }
-
-  // First try exact match, then tolerance match (floating-point rounding)
-  const match =
-    result.tests.find(t => t.p_value === result.p_value) ||
-    result.tests.find(t => Math.abs(t.p_value - result.p_value) < 1e-6)
-
-  if (!match) return 'p-value'
-
-  // Convert snake_case name to Title Case
-  const readable = match.name
-    .split('_')
-    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
-
-  return `p-value (${readable})`
+function formatPValue(p) {
+  if (p === null || p === undefined) return '—'
+  if (p < 0.001) return '< 0.001'
+  return p.toFixed(3)
 }
 
 export default function ComparePane({
@@ -239,8 +220,6 @@ export default function ComparePane({
 
   const bucketOptions = Array.from({ length: maxBucket + 1 }, (_, i) => i)
 
-  const pValueLabel = getPValueLabel(result)
-
   return (
     <>
       {/* Overlay */}
@@ -272,96 +251,98 @@ export default function ComparePane({
           </button>
         </div>
 
-        {/* ── Row 1: Baseline ── */}
-        <div className="compare-cohort-row">
-          <label className="compare-cohort-label" htmlFor="compare-cohort-b">Baseline</label>
-          <select
-            id="compare-cohort-b"
-            className="compare-select"
-            value={cohortB}
-            onChange={e => { setCohortB(e.target.value); setResult(null) }}
-            data-testid="compare-cohort-b"
-          >
-            <option value="">Select cohort…</option>
-            {cohortsForBaseline.map(c => (
-              <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
-            ))}
-          </select>
-        </div>
+        {/* ── Input Section ── */}
+        <div className="compare-inputs section">
+          <div className="compare-cohort-row">
+            <label className="compare-cohort-label" htmlFor="compare-cohort-b">Baseline</label>
+            <select
+              id="compare-cohort-b"
+              className="compare-select"
+              value={cohortB}
+              onChange={e => { setCohortB(e.target.value); setResult(null) }}
+              data-testid="compare-cohort-b"
+            >
+              <option value="">Select cohort…</option>
+              {cohortsForBaseline.map(c => (
+                <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
+              ))}
+            </select>
+          </div>
 
-        {/* ── Row 2: Variant + Swap ── */}
-        <div className="compare-cohort-row">
-          <label className="compare-cohort-label" htmlFor="compare-cohort-a">Variant</label>
-          <select
-            id="compare-cohort-a"
-            className="compare-select"
-            value={cohortA}
-            onChange={e => { setCohortA(e.target.value); setResult(null) }}
-            data-testid="compare-cohort-a"
-          >
-            <option value="">Select cohort…</option>
-            {cohortsForVariant.map(c => (
-              <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
-            ))}
-          </select>
-          <button
-            type="button"
-            className="compare-swap-button"
-            onClick={handleSwap}
-            aria-label="Swap Variant and Baseline"
-            title="Swap Variant and Baseline"
-            data-testid="compare-swap-button"
-          >
-            ⇄
-          </button>
-        </div>
+          <div className="compare-cohort-row">
+            <label className="compare-cohort-label" htmlFor="compare-cohort-a">Variant</label>
+            <div style={{ display: 'flex', gap: '8px', flex: 1 }}>
+              <select
+                id="compare-cohort-a"
+                className="compare-select"
+                value={cohortA}
+                onChange={e => { setCohortA(e.target.value); setResult(null) }}
+                data-testid="compare-cohort-a"
+              >
+                <option value="">Select cohort…</option>
+                {cohortsForVariant.map(c => (
+                  <option key={c.cohort_id} value={c.cohort_id}>{c.cohort_name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                className="compare-swap-button"
+                onClick={handleSwap}
+                aria-label="Swap Variant and Baseline"
+                title="Swap Variant and Baseline"
+                data-testid="compare-swap-button"
+              >
+                ⇄
+              </button>
+            </div>
+          </div>
 
-        {/* Metric + Day selectors */}
-        <div className="compare-controls-row">
-          {tab !== 'retention' && (
+          <div className="compare-controls-row row section">
+            {tab !== 'retention' && (
+              <label className="compare-control-label">
+                Metric
+                <select
+                  className="compare-select"
+                  value={selectedMetric}
+                  onChange={e => { setSelectedMetric(e.target.value); setResult(null) }}
+                  data-testid="compare-metric-select"
+                >
+                  {metrics.map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+
             <label className="compare-control-label">
-              Metric
+              {labelPrefix}
               <select
                 className="compare-select"
-                value={selectedMetric}
-                onChange={e => { setSelectedMetric(e.target.value); setResult(null) }}
-                data-testid="compare-metric-select"
+                value={selectedDay}
+                onChange={e => { setSelectedDay(Number(e.target.value)); setResult(null) }}
+                data-testid="compare-day-select"
               >
-                {metrics.map(m => (
-                  <option key={m.value} value={m.value}>{m.label}</option>
+                {bucketOptions.map(d => (
+                  <option key={d} value={d}>{labelPrefix} {d}</option>
                 ))}
               </select>
             </label>
+          </div>
+
+          {needsEvent && !currentEvent && (
+            <p className="compare-hint">⚠ Select an event in the Usage table to enable comparison.</p>
           )}
 
-          <label className="compare-control-label">
-            {labelPrefix}
-            <select
-              className="compare-select"
-              value={selectedDay}
-              onChange={e => { setSelectedDay(Number(e.target.value)); setResult(null) }}
-              data-testid="compare-day-select"
-            >
-              {bucketOptions.map(d => (
-                <option key={d} value={d}>{labelPrefix} {d}</option>
-              ))}
-            </select>
-          </label>
+          <button
+            type="button"
+            className="button button-primary compare-run-button full-width"
+            onClick={handleRun}
+            disabled={!canRun || loading}
+            data-testid="compare-run-button"
+          >
+            {loading ? 'Running…' : 'Run Comparison'}
+          </button>
         </div>
-
-        {needsEvent && !currentEvent && (
-          <p className="compare-hint">⚠ Select an event in the Usage table to enable comparison.</p>
-        )}
-
-        <button
-          type="button"
-          className="button button-primary compare-run-button"
-          onClick={handleRun}
-          disabled={!canRun || loading}
-          data-testid="compare-run-button"
-        >
-          {loading ? 'Running…' : 'Run Comparison'}
-        </button>
 
         {/* Error */}
         {error && <p className="error compare-error">{error}</p>}
@@ -369,97 +350,87 @@ export default function ComparePane({
         {/* Results */}
         {result && (
           <div className="compare-results" data-testid="compare-results">
-            <div className="compare-results-header">
-              <span className="compare-results-title">Statistical Comparison</span>
+            <div className="compare-header">
+              {result.metric_label || `${labelPrefix} ${selectedDay} Comparison`}
             </div>
 
-            <p className="compare-metric-label">{result.metric_label}</p>
+            <div className="compare-result-hero section">
+              <div className="lift">
+                {result.relative_lift !== null && result.relative_lift !== undefined 
+                  ? `${result.relative_lift >= 0 ? '+' : ''}${(result.relative_lift * 100).toFixed(2)}%`
+                  : '—'}
+              </div>
+              <div 
+                className={result.p_value !== null && result.p_value !== undefined && result.p_value < 0.05 ? "status significant" : "status not-significant"}
+                data-testid={result.p_value === null || result.p_value === undefined ? "compare-null" : (result.p_value < 0.05 ? "compare-significant" : "compare-not-significant")}
+              >
+                ● {result.p_value === null || result.p_value === undefined ? 'Not enough variation to compare cohorts' : (result.p_value < 0.05 ? 'Statistically significant' : 'Not statistically significant')}
+              </div>
+            </div>
 
-            <div className="compare-values-grid">
-              {/* Variant (cohortA) */}
-              <div className="compare-value-row">
-                <span className="compare-value-cohort">
-                  Variant
-                  {(() => {
+            <div className="compare-values section">
+              <div className="value-block">
+                <div className="label">
+                  Variant {(() => {
                     const c = cohorts.find(c => String(c.cohort_id) === String(cohortA))
-                    return c ? ` (${c.cohort_name})` : ''
+                    return c ? `(${c.cohort_name})` : ''
                   })()}
-                </span>
-                <span className="compare-value-number" data-testid="compare-value-a">
+                </div>
+                <div className="value" data-testid="compare-value-a">
                   {formatValue(result.cohort_a_value, selectedMetric)}
-                </span>
+                </div>
               </div>
-              {/* Baseline (cohortB) */}
-              <div className="compare-value-row">
-                <span className="compare-value-cohort">
-                  Baseline
-                  {(() => {
+
+              <div className="value-block">
+                <div className="label">
+                  Baseline {(() => {
                     const c = cohorts.find(c => String(c.cohort_id) === String(cohortB))
-                    return c ? ` (${c.cohort_name})` : ''
+                    return c ? `(${c.cohort_name})` : ''
                   })()}
-                </span>
-                <span className="compare-value-number" data-testid="compare-value-b">
+                </div>
+                <div className="value" data-testid="compare-value-b">
                   {formatValue(result.cohort_b_value, selectedMetric)}
-                </span>
+                </div>
               </div>
             </div>
 
-            <div className="compare-stats-list">
-              <div className="compare-stat-row">
-                <span>Difference</span>
-                <span className={result.difference > 0 ? 'compare-positive' : result.difference < 0 ? 'compare-negative' : ''}>
-                  {result.difference >= 0 ? '+' : ''}{formatValue(result.difference, selectedMetric)}
-                </span>
-              </div>
-              {result.relative_lift !== null && result.relative_lift !== undefined && (
-                <div className="compare-stat-row">
-                  <span>Relative Lift</span>
-                  <span className={result.relative_lift > 0 ? 'compare-positive' : result.relative_lift < 0 ? 'compare-negative' : ''}>
-                    {result.relative_lift >= 0 ? '+' : ''}{(result.relative_lift * 100).toFixed(2)}%
-                  </span>
-                </div>
-              )}
-              <div className="compare-stat-row">
-                <span>{pValueLabel}</span>
-                <span data-testid="compare-p-value">
-                  {result.p_value === null || result.p_value === undefined
-                    ? '—'
-                    : formatDynamic(result.p_value)}
-                </span>
-              </div>
-              <div className="compare-significance-badge">
-                {result.significant
-                  ? <span className="compare-sig compare-sig-yes" data-testid="compare-significant">✓ Statistically significant <small>(p &lt; 0.05)</small></span>
-                  : <span className="compare-sig compare-sig-no" data-testid="compare-not-significant">✗ Not significant <small>(p ≥ 0.05)</small></span>
-                }
+            <div className="difference section">
+              {result.difference >= 0 ? '+' : ''}{formatValue(result.difference, selectedMetric)} 
+              {result.relative_lift !== null && result.relative_lift !== undefined ? ` (${(result.relative_lift * 100).toFixed(2)}%)` : ''}
+            </div>
+
+            <div className="pvalue section">
+              Statistical Test (Mann-Whitney)
+              <div data-testid="compare-p-value">
+                p = {formatPValue(result.p_value)}
               </div>
             </div>
 
             {/* Expandable test details */}
-            <button
-              type="button"
-              className="compare-details-toggle"
-              onClick={() => setShowTestDetails(prev => !prev)}
-              aria-expanded={showTestDetails}
-              data-testid="compare-test-details-toggle"
-            >
-              Test Details {showTestDetails ? '▾' : '▸'}
-            </button>
+            <div className="test-details-container section">
+              <button
+                type="button"
+                className="compare-details-toggle"
+                onClick={() => setShowTestDetails(prev => !prev)}
+                aria-expanded={showTestDetails}
+                data-testid="compare-test-details-toggle"
+              >
+                Test Details {showTestDetails ? '▾' : '▸'}
+              </button>
 
-            {showTestDetails && (
-              <div className="compare-test-details" data-testid="compare-test-details">
-                {result.tests.map(t => (
-                  <div key={t.name} className="compare-test-row">
-                    <span className="compare-test-name">{t.name.replace(/_/g, ' ')}</span>
-                    <span className="compare-test-pvalue">
-                      p = {t.p_value === null || t.p_value === undefined
-                        ? '—'
-                        : formatDynamic(t.p_value)}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
+              {showTestDetails && (
+                <div className="test-details" data-testid="compare-test-details">
+                  {result.tests.map(t => (
+                    <div key={t.name} className="compare-test-row">
+                      <span className="compare-test-name">{t.name.replace(/_/g, ' ')}</span>
+                      <span className="compare-test-pvalue">
+                        p = {formatPValue(t.p_value)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         )}
       </aside>

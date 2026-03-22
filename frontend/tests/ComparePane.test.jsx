@@ -40,8 +40,8 @@ const MOCK_RESULT = {
   ],
 }
 
-// p_value 0.02 → formatDynamic yields "0.0200" (4 dp, non-zero)
-const EXPECTED_P_VALUE_TEXT = '0.0200'
+// p_value 0.02 → formatPValue yields "0.020" (3 dp)
+const EXPECTED_P_VALUE_TEXT = '0.020'
 
 beforeEach(() => {
   vi.clearAllMocks()

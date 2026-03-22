@@ -262,3 +262,80 @@ def test_same_cohort_rejected(client: TestClient) -> None:
     )
     assert response.status_code == 400
     assert "different" in response.json()["detail"].lower()
+
+
+def _prepare_edge_case_dataset(client: TestClient) -> tuple[int, int, int]:
+    """
+    Upload a CSV with three groups for zero variance and low variance testing.
+    Returns (cohort_0_id, cohort_1_id, cohort_var_id).
+    """
+    csv_text = (
+        "user_id,event_name,event_time,revenue\n"
+        # Cohort 0: no revenue
+        "c0_1,signup,2024-01-01 09:00:00,0\n"
+        "c0_2,signup,2024-01-01 09:00:00,0\n"
+        "c0_3,signup,2024-01-01 09:00:00,0\n"
+        # Cohort 1: no revenue
+        "c1_1,view,2024-01-01 09:00:00,0\n"
+        "c1_2,view,2024-01-01 09:00:00,0\n"
+        "c1_3,view,2024-01-01 09:00:00,0\n"
+        # Cohort var: small variance
+        "cv_1,login,2024-01-01 09:00:00,0\n"
+        "cv_2,login,2024-01-01 09:00:00,0\n"
+        "cv_3,login,2024-01-01 09:00:00,0\n"
+        "cv_1,purchase,2024-01-02 11:00:00,10\n"
+    )
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, upload.text
+
+    mapped = client.post(
+        "/map-columns",
+        json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time", "revenue_column": "revenue"},
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    client.post("/update-revenue-config", json={"revenue_config": {"purchase": {"included": True, "override": None}}})
+
+    c0 = client.post("/cohorts", json={"name": "C0", "logic_operator": "AND", "conditions": [{"event_name": "signup", "min_event_count": 1}]})
+    c1 = client.post("/cohorts", json={"name": "C1", "logic_operator": "AND", "conditions": [{"event_name": "view", "min_event_count": 1}]})
+    cv = client.post("/cohorts", json={"name": "CV", "logic_operator": "AND", "conditions": [{"event_name": "login", "min_event_count": 1}]})
+
+    return c0.json()["cohort_id"], c1.json()["cohort_id"], cv.json()["cohort_id"]
+
+
+def test_compare_edge_cases(client: TestClient) -> None:
+    """Test zero variance and Mann-Whitney priority."""
+    c0, c1, cv = _prepare_edge_case_dataset(client)
+
+    # 1. Zero variance case
+    res0 = client.post(
+        "/compare-cohorts",
+        json={"cohort_a": c0, "cohort_b": c1, "tab": "monetization", "metric": "cumulative_revenue_per_acquired_user", "day": 7},
+    )
+    assert res0.status_code == 200, res0.text
+    data0 = res0.json()
+
+    assert data0["p_value"] is None
+    mw_test = next(t for t in data0["tests"] if t["name"] == "mann_whitney_u")
+    assert mw_test["p_value"] is None
+
+    # 2. Low variance case (CV vs C0) -> C0 has 0 var, CV has one purchase (non-zero var)
+    res_low = client.post(
+        "/compare-cohorts",
+        json={"cohort_a": cv, "cohort_b": c0, "tab": "monetization", "metric": "cumulative_revenue_per_acquired_user", "day": 7},
+    )
+    assert res_low.status_code == 200, res_low.text
+    data_low = res_low.json()
+
+    # Should not crash, returning valid tests
+    assert data_low["p_value"] is not None
+    mw_test = next(t for t in data_low["tests"] if t["name"] == "mann_whitney_u")
+    tt_test = next(t for t in data_low["tests"] if t["name"] == "welch_t_test")
+
+    # 3. Mann-Whitney Primary Logic
+    assert data_low["p_value"] == mw_test["p_value"]
+    
+    # 4. No longer testing min() (meaning if tt < mw, p_value will still be mw)
+    # The minimum of the two is NOT always chosen.
+    assert "mann_whitney_u" in [t["name"] for t in data_low["tests"]]
+

@@ -116,3 +116,17 @@ Response:
 - Window functions (`ROW_NUMBER`) are used instead of `DISTINCT` for correctness on multi-event users.
 - All returned numeric types are Python-native `int` / `float` (no numpy).
 
+## Statistical Testing
+
+Primary test: Mann-Whitney U (non-parametric)
+Secondary test: Welch’s t-test (diagnostic only)
+
+Rationale:
+- Monetization data is skewed
+- Mann-Whitney is robust to outliers and non-normal distributions
+
+### Edge Case Behavior
+
+If both cohorts have zero variance:
+→ p_value = null
+→ comparison not shown as significant
