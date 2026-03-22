@@ -1840,10 +1840,13 @@ tbody tr:hover {
   margin-left: auto;
 }
 
-.monetization-data-table th,
-.monetization-data-table td {
+/* Align Monetization headers and values right for clean numeric columns */
+.analytics-table.monetization-data-table th,
+.analytics-table.monetization-data-table td {
   padding: 8px 12px;
   min-width: 80px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 .monetization-data-table .col-numeric {
@@ -1856,12 +1859,13 @@ tbody tr:hover {
   z-index: 2;
 }
 
-.monetization-data-table .sticky-col-left {
+.analytics-table.monetization-data-table .sticky-col-left {
   left: 0;
   z-index: 2;
   background: #fff;
   width: 140px;
   min-width: 140px;
+  text-align: left;
 }
 
 .monetization-data-table th.sticky-col-left {
@@ -1876,8 +1880,9 @@ tbody tr:hover {
   font-weight: 600;
 }
 
-.monetization-data-table .cohort-size-cell {
+.analytics-table.monetization-data-table .cohort-size-cell {
   color: var(--color-text-secondary);
+  text-align: right;
 }
 
 .monetization-data-table .predicted-col-header {
