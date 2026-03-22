@@ -118,6 +118,8 @@ npm install
 npm run dev
 ```
 
+No manual alias setup required. Flow graph uses a fallback shim for restricted environments.
+
 Default API base URL is `http://127.0.0.1:8000` unless `VITE_API_BASE_URL` is set.
 
 ---

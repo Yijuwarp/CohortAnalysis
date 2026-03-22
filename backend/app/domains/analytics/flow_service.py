@@ -1,302 +1,383 @@
-"""
-Short summary: service for computing event-anchored user flows (L1 and L2) across cohorts.
-
-Supports:
-- Forward and reverse directions
-- First-occurrence-per-user anchoring
-- User-based percentages (denominator = users who performed start_event)
-- Top-3 pruning with an "Other" bucket
-- Multi-cohort output
-- Expandable rows (rows that have valid L2 data)
-"""
 from __future__ import annotations
 
 import duckdb
 from fastapi import HTTPException
+
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
+from app.utils.sql import quote_identifier
 
 _TOP_N = 3
+_MAX_DEPTH = 20
 _DIRECTIONS = ("forward", "reverse")
+_ALLOWED_PROPERTY_OPERATORS = {"=", "!=", "IN", "NOT IN", ">", "<", ">=", "<="}
 
 
-def _fetch_active_cohorts(
-    connection: duckdb.DuckDBPyConnection,
-) -> list[tuple[int, str]]:
-    """Return list of (cohort_id, name) for all non-hidden, active cohorts."""
+def _fetch_active_cohorts(connection: duckdb.DuckDBPyConnection) -> list[tuple[int, str]]:
     rows = connection.execute(
-        """
-        SELECT cohort_id, name
-        FROM cohorts
-        WHERE hidden = FALSE
-        ORDER BY cohort_id
-        """
+        "SELECT cohort_id, name FROM cohorts WHERE hidden = FALSE ORDER BY cohort_id"
     ).fetchall()
     return [(int(r[0]), str(r[1])) for r in rows]
 
 
 def _snapshot_exists(connection: duckdb.DuckDBPyConnection) -> bool:
-    """Return True if the cohort_activity_snapshot table exists and has rows."""
     count = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'cohort_activity_snapshot' AND table_schema = 'main'"
     ).fetchone()[0]
     return bool(count)
 
 
-# ---------------------------------------------------------------------------
-# L1 SQL helpers
-# ---------------------------------------------------------------------------
+def _validate_depth(depth: int) -> int:
+    if depth < 2:
+        return 2
+    return min(depth, _MAX_DEPTH)
 
-def _build_l1_sql(direction: str) -> str:
-    """
-    Build the parameterised SQL for L1 flows.
 
-    Parameters (positional, in order):
-        1. start_event: str  – the anchor event name
-        2. start_event: str  – repeated for denominator CTE
+def _build_property_filter_clause(
+    property_column: str | None,
+    property_operator: str | None,
+    property_values: list[str] | None,
+) -> tuple[str, list[object]]:
+    if not property_column:
+        return "", []
 
-    Returns columns: cohort_id, next_event, transition_users
-    Also returns denominator: cohort_id, anchor_users
-    """
-    if direction == "forward":
-        time_filter = "e.event_time > fe.event_time"
-        order_dir = "ASC"
-    else:
-        time_filter = "e.event_time < fe.event_time"
-        order_dir = "DESC"
+    operator = (property_operator or "=").upper()
+    if operator not in _ALLOWED_PROPERTY_OPERATORS:
+        raise HTTPException(status_code=400, detail="Unsupported property_operator")
 
-    return f"""
-        WITH first_events AS (
-            -- Step 1: first occurrence of start_event per user per cohort
-            SELECT cohort_id, user_id, event_time
+    values = property_values or []
+    if not values:
+        return "", []
+    if operator in {"IN", "NOT IN"}:
+        placeholders = ", ".join(["?"] * len(values))
+        return f" AND {quote_identifier(property_column)} {operator} ({placeholders})", list(values)
+
+    return f" AND {quote_identifier(property_column)} {operator} ?", [values[0]]
+
+
+def _build_level_sql(
+    direction: str,
+    parent_path: list[str],
+    property_clause: str,
+) -> tuple[str, list[object]]:
+    order_dir = "ASC" if direction == "forward" else "DESC"
+    time_op = ">" if direction == "forward" else "<"
+
+    params: list[object] = [parent_path[0]]
+    if property_clause:
+        pass
+
+    ctes: list[str] = [
+        f"""
+        root_step AS (
+            SELECT cohort_id, user_id, event_time AS parent_time, ? AS parent_event
             FROM (
                 SELECT
                     cohort_id,
                     user_id,
                     event_time,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY cohort_id, user_id
-                        ORDER BY event_time
-                    ) AS rn
+                    ROW_NUMBER() OVER (PARTITION BY cohort_id, user_id ORDER BY event_time) AS rn
                 FROM cohort_activity_snapshot
-                WHERE event_name = ?
-            ) sub
+                WHERE event_name = ?{property_clause}
+            ) r
             WHERE rn = 1
-        ),
-        transitions AS (
-            -- Step 2: join to find the first/last adjacent event per user
-            SELECT
-                fe.cohort_id,
-                fe.user_id,
-                e.event_name AS next_event,
-                ROW_NUMBER() OVER (
-                    PARTITION BY fe.cohort_id, fe.user_id
+        )
+        """
+    ]
+    params = [parent_path[0], parent_path[0]]
+
+    prev_cte = "root_step"
+    prev_event = parent_path[0]
+
+    for idx, target_event in enumerate(parent_path[1:], start=1):
+        cte_name = f"step_{idx}"
+        ctes.append(
+            f"""
+            {cte_name} AS (
+                SELECT s.cohort_id, s.user_id, n.event_time AS parent_time, n.event_name AS parent_event
+                FROM {prev_cte} s
+                JOIN LATERAL (
+                    SELECT e.event_name, e.event_time
+                    FROM cohort_activity_snapshot e
+                    WHERE e.cohort_id = s.cohort_id
+                      AND e.user_id = s.user_id
+                      AND e.event_time {time_op} s.parent_time
+                      AND e.event_name <> s.parent_event
                     ORDER BY e.event_time {order_dir}
-                ) AS rn
-            FROM first_events fe
-            JOIN cohort_activity_snapshot e
-              ON e.cohort_id = fe.cohort_id
-             AND e.user_id   = fe.user_id
-             AND {time_filter}
-             AND e.event_name <> ?  -- exclude self-loops
-        ),
-        first_transitions AS (
-            -- Step 3: only the first transition per user
-            SELECT cohort_id, user_id, next_event
-            FROM transitions
-            WHERE rn = 1
-        ),
-        agg AS (
-            -- Step 4: aggregate per cohort + event
-            SELECT cohort_id, next_event, COUNT(*) AS transition_users
-            FROM first_transitions
-            GROUP BY cohort_id, next_event
+                    LIMIT 1
+                ) n ON TRUE
+                WHERE n.event_name = ?
+            )
+            """
+        )
+        params.append(target_event)
+        prev_cte = cte_name
+        prev_event = target_event
+
+    ctes.append(
+        f"""
+        transition_candidates AS (
+            SELECT
+                s.cohort_id,
+                s.user_id,
+                n.event_name AS next_event,
+                ABS(DATE_DIFF('second', s.parent_time, n.event_time))::DOUBLE AS time_diff_sec
+            FROM {prev_cte} s
+            JOIN LATERAL (
+                SELECT e.event_name, e.event_time
+                FROM cohort_activity_snapshot e
+                WHERE e.cohort_id = s.cohort_id
+                  AND e.user_id = s.user_id
+                  AND e.event_time {time_op} s.parent_time
+                  AND e.event_name <> s.parent_event
+                ORDER BY e.event_time {order_dir}
+                LIMIT 1
+            ) n ON TRUE
         ),
         denominators AS (
-            -- Denominator: users who performed start_event (per cohort)
-            SELECT cohort_id, COUNT(*) AS anchor_users
-            FROM first_events
+            SELECT cohort_id, COUNT(*) AS total_users
+            FROM {prev_cte}
             GROUP BY cohort_id
+        ),
+        agg AS (
+            SELECT
+                cohort_id,
+                next_event,
+                COUNT(*) AS transition_users,
+                MEDIAN(time_diff_sec) AS median_time_sec,
+                APPROX_QUANTILE(time_diff_sec, 0.2) AS p20_time_sec,
+                APPROX_QUANTILE(time_diff_sec, 0.8) AS p80_time_sec
+            FROM transition_candidates
+            GROUP BY cohort_id, next_event
         )
+        """
+    )
+
+    sql = f"""
+        WITH {', '.join(ctes)}
         SELECT
             a.cohort_id,
             a.next_event,
             a.transition_users,
-            d.anchor_users
+            d.total_users,
+            a.median_time_sec,
+            a.p20_time_sec,
+            a.p80_time_sec
         FROM agg a
-        JOIN denominators d ON a.cohort_id = d.cohort_id
+        JOIN denominators d ON d.cohort_id = a.cohort_id
         ORDER BY a.cohort_id, a.transition_users DESC
     """
+    return sql, params
 
 
-def _build_l2_sql(direction: str) -> str:
-    """
-    Build the parameterised SQL for L2 flows.
-
-    Parameters (positional, in order):
-        1. start_event: str
-        2. start_event: str  (self-loop guard in transitions)
-        3. parent_event: str (filter to users whose L1 = parent_event)
-        4. parent_event: str (self-loop guard in second transition)
-
-    Returns columns: cohort_id, next_event, transition_users, anchor_users
-    where anchor_users = users at the L1 parent_event step (per cohort).
-    """
-    if direction == "forward":
-        time_filter_l1 = "e1.event_time > fe.event_time"
-        order_dir_l1 = "ASC"
-        time_filter_l2 = "e2.event_time > l1.l1_time"
-        order_dir_l2 = "ASC"
-    else:
-        time_filter_l1 = "e1.event_time < fe.event_time"
-        order_dir_l1 = "DESC"
-        time_filter_l2 = "e2.event_time < l1.l1_time"
-        order_dir_l2 = "DESC"
-
-
-    return f"""
-        WITH first_events AS (
-            SELECT cohort_id, user_id, event_time
-            FROM (
-                SELECT
-                    cohort_id,
-                    user_id,
-                    event_time,
-                    ROW_NUMBER() OVER (
-                        PARTITION BY cohort_id, user_id
-                        ORDER BY event_time
-                    ) AS rn
-                FROM cohort_activity_snapshot
-                WHERE event_name = ?
-            ) sub
-            WHERE rn = 1
-        ),
-        l1_transitions AS (
-            -- First transition per user (L1 step)
-            SELECT
-                fe.cohort_id,
-                fe.user_id,
-                e1.event_name AS l1_event,
-                e1.event_time AS l1_time,
-                ROW_NUMBER() OVER (
-                    PARTITION BY fe.cohort_id, fe.user_id
-                    ORDER BY e1.event_time {order_dir_l1}
-                ) AS rn
-            FROM first_events fe
-            JOIN cohort_activity_snapshot e1
-              ON e1.cohort_id = fe.cohort_id
-             AND e1.user_id   = fe.user_id
-             AND {time_filter_l1}
-             AND e1.event_name <> ?
-        ),
-        l1_first AS (
-            SELECT cohort_id, user_id, l1_event, l1_time
-            FROM l1_transitions
-            WHERE rn = 1
-              AND l1_event = ?  -- filter to users whose L1 = parent_event
-        ),
-        l2_transitions AS (
-            -- Second transition per user (L2 step)
-            SELECT
-                l1.cohort_id,
-                l1.user_id,
-                e2.event_name AS next_event,
-                ROW_NUMBER() OVER (
-                    PARTITION BY l1.cohort_id, l1.user_id
-                    ORDER BY e2.event_time {order_dir_l2}
-                ) AS rn
-            FROM l1_first l1
-            JOIN cohort_activity_snapshot e2
-              ON e2.cohort_id = l1.cohort_id
-             AND e2.user_id   = l1.user_id
-             AND {time_filter_l2}
-             AND e2.event_name <> ?
-        ),
-        l2_first AS (
-            SELECT cohort_id, user_id, next_event
-            FROM l2_transitions
-            WHERE rn = 1
-        ),
-        agg AS (
-            SELECT cohort_id, next_event, COUNT(*) AS transition_users
-            FROM l2_first
-            GROUP BY cohort_id, next_event
-        ),
-        denominators AS (
-            -- Denominator = users at the L1 parent step
-            SELECT cohort_id, COUNT(*) AS anchor_users
-            FROM l1_first
-            GROUP BY cohort_id
-        )
-        SELECT
-            a.cohort_id,
-            a.next_event,
-            a.transition_users,
-            d.anchor_users
-        FROM agg a
-        JOIN denominators d ON a.cohort_id = d.cohort_id
-        ORDER BY a.cohort_id, a.transition_users DESC
-    """
-
-
-# ---------------------------------------------------------------------------
-# Pruning + "Other" logic
-# ---------------------------------------------------------------------------
-
-def _prune_and_aggregate(
-    events_with_counts: list[tuple[str, int]],
-    anchor_users: int,
-) -> tuple[list[dict], int, int]:
-    """
-    Apply top-3 pruning and compute "Other" bucket.
-
-    Returns:
-        (top_rows, other_count, anchor_users)
-        where top_rows is list of {event_name, count, pct}
-    """
-    # Sort descending by count (already sorted from SQL, but be defensive)
+def _prune_and_aggregate(events_with_counts: list[tuple[str, int]], anchor_users: int) -> tuple[list[dict], int]:
     sorted_events = sorted(events_with_counts, key=lambda x: x[1], reverse=True)
-    top = sorted_events[:_TOP_N]
-    rest = sorted_events[_TOP_N:]
+    qualifying = [item for item in sorted_events if anchor_users > 0 and (item[1] / anchor_users) >= 0.01]
+    top = qualifying[:_TOP_N]
+    top_names = {name for name, _ in top}
+    rest = [item for item in sorted_events if item[0] not in top_names]
 
     top_rows = []
     for event_name, count in top:
-        pct = (count / anchor_users) if anchor_users > 0 else 0.0
-        top_rows.append({"event_name": event_name, "count": count, "pct": round(pct, 6)})
+        top_rows.append({"event_name": event_name, "count": count})
 
     other_count = sum(c for _, c in rest)
-    return top_rows, other_count, anchor_users
+    return top_rows, other_count
 
 
-# ---------------------------------------------------------------------------
-# Public service functions
-# ---------------------------------------------------------------------------
+def _run_level_query(
+    connection: duckdb.DuckDBPyConnection,
+    start_event: str,
+    parent_path: list[str],
+    direction: str,
+    depth: int,
+    property_column: str | None,
+    property_operator: str | None,
+    property_values: list[str] | None,
+) -> tuple[list[tuple], int]:
+    parent_depth = len(parent_path)
+    if parent_depth < 1 or parent_depth >= depth:
+        return [], parent_depth
+    if "No further action" in parent_path or "Other" in parent_path:
+        return [], parent_depth
+    if len(parent_path) != len(set(parent_path)):
+        return [], parent_depth
+    if parent_path[0] != start_event:
+        raise HTTPException(status_code=400, detail="parent_path must start with start_event")
+
+    property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
+    sql, params = _build_level_sql(direction, parent_path, property_clause)
+    full_params = [params[0], *property_params, *params[1:]]
+    return connection.execute(sql, full_params).fetchall(), parent_depth
+
+
+def _root_user_count(
+    connection: duckdb.DuckDBPyConnection,
+    start_event: str,
+    property_column: str | None,
+    property_operator: str | None,
+    property_values: list[str] | None,
+    cohort_id: int | None = None,
+) -> int:
+    property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
+    cohort_clause = " AND cohort_id = ?" if cohort_id is not None else ""
+    sql = f"""
+        WITH root_step AS (
+            SELECT cohort_id, user_id
+            FROM (
+                SELECT
+                    cohort_id,
+                    user_id,
+                    event_time,
+                    ROW_NUMBER() OVER (PARTITION BY cohort_id, user_id ORDER BY event_time) AS rn
+                FROM cohort_activity_snapshot
+                WHERE event_name = ?{property_clause}{cohort_clause}
+            ) r
+            WHERE rn = 1
+        )
+        SELECT COUNT(*) FROM root_step
+    """
+    params = [start_event, *property_params, *([cohort_id] if cohort_id is not None else [])]
+    return int(connection.execute(sql, params).fetchone()[0] or 0)
+
+
+def _rows_payload(
+    raw_rows: list[tuple],
+    cohorts: list[tuple[int, str]],
+    path_prefix: list[str],
+    include_expandable: bool,
+    top_k_enabled: bool,
+) -> list[dict]:
+    per_cohort: dict[int, dict[str, object]] = {}
+    global_event_totals: dict[str, int] = {}
+    for cohort_id, next_event, transition_users, total_users, median_time_sec, p20_time_sec, p80_time_sec in raw_rows:
+        cid = int(cohort_id)
+        event_name = str(next_event)
+        if cid not in per_cohort:
+            per_cohort[cid] = {"anchor": int(total_users), "events": {}}
+        per_cohort[cid]["events"][event_name] = (
+            int(transition_users),
+            median_time_sec,
+            p20_time_sec,
+            p80_time_sec,
+        )
+        global_event_totals[event_name] = global_event_totals.get(event_name, 0) + int(transition_users)
+
+    if not per_cohort:
+        return []
+
+    first_cohort_id = cohorts[0][0] if cohorts else None
+    if top_k_enabled:
+        global_top_events = [name for name, _ in sorted(global_event_totals.items(), key=lambda item: item[1], reverse=True)[:_TOP_N]]
+    else:
+        global_top_events = [name for name, _ in sorted(global_event_totals.items(), key=lambda item: item[1], reverse=True)]
+
+    named_rows = []
+    cohort_other: dict[int, dict] = {}
+    for event_name in global_top_events:
+        values = {}
+        for cid, _ in cohorts:
+            cohort_data = per_cohort.get(cid, {"anchor": 0, "events": {}})
+            anchor_users = int(cohort_data.get("anchor", 0))
+            event_tuple = cohort_data.get("events", {}).get(event_name)
+            if event_tuple:
+                count, median, p20, p80 = event_tuple
+                values[str(cid)] = {
+                    "user_count": count,
+                    "parent_users": anchor_users,
+                    "has_event": True,
+                    "median_time_sec": float(median) if median is not None else None,
+                    "p20_time_sec": float(p20) if p20 is not None else None,
+                    "p80_time_sec": float(p80) if p80 is not None else None,
+                }
+            else:
+                values[str(cid)] = {
+                    "user_count": 0,
+                    "parent_users": anchor_users,
+                    "has_event": False,
+                    "median_time_sec": None,
+                    "p20_time_sec": None,
+                    "p80_time_sec": None,
+                }
+        sort_count = values.get(str(first_cohort_id), {}).get("user_count", 0) if first_cohort_id else 0
+        sort_parent = values.get(str(first_cohort_id), {}).get("parent_users", 0) if first_cohort_id else 0
+        sort_pct = (sort_count / sort_parent) if sort_parent else 0.0
+        named_rows.append({"path": [*path_prefix, event_name], "values": values, "expandable": True, "_sp": sort_pct, "_sc": sort_count})
+
+    for cid, _ in cohorts:
+        cohort_data = per_cohort.get(cid, {"anchor": 0, "events": {}})
+        anchor_users = int(cohort_data.get("anchor", 0))
+        events = cohort_data.get("events", {})
+        other_count = sum(count for name, (count, *_timing) in events.items() if name not in global_top_events)
+        if other_count > 0:
+            cohort_other[cid] = {
+                "user_count": other_count,
+                "parent_users": anchor_users,
+                "has_event": True,
+                "median_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
+            }
+
+    named_rows.sort(key=lambda row: (-row["_sp"], -row["_sc"]))
+    output = [{"path": r["path"], "values": r["values"], "children": [], **({"expandable": r["expandable"]} if include_expandable else {})} for r in named_rows]
+
+    if top_k_enabled and cohort_other:
+        other_values = {}
+        for cid, _ in cohorts:
+            other_values[str(cid)] = cohort_other.get(cid, {
+                "user_count": 0,
+                "parent_users": int((per_cohort.get(cid, {"anchor": 0}).get("anchor") or 0)),
+                "has_event": False,
+                "median_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
+            })
+        output.append({"path": [*path_prefix, "Other"], "values": other_values, "children": [], **({"expandable": False} if include_expandable else {})})
+
+    visible_cohort_ids = {int(cid) for cid, _ in cohorts}
+    no_further_values = {}
+    for cohort_id, data in per_cohort.items():
+        if cohort_id not in visible_cohort_ids:
+            continue
+        anchor_users = int(data["anchor"])
+        continued_users = sum(count for count, *_timing in data["events"].values())
+        no_further_users = max(0, anchor_users - continued_users)
+        no_further_values[str(cohort_id)] = {
+            "user_count": no_further_users,
+            "parent_users": anchor_users,
+            "has_event": True,
+            "median_time_sec": None,
+            "p20_time_sec": None,
+            "p80_time_sec": None,
+        }
+    if no_further_values:
+        for cid, _ in cohorts:
+            no_further_values.setdefault(str(cid), {
+                "user_count": 0,
+                "parent_users": int((per_cohort.get(cid, {"anchor": 0}).get("anchor") or 0)),
+                "has_event": False,
+                "median_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
+            })
+        output.append({"path": [*path_prefix, "No further action"], "values": no_further_values, "children": [], **({"expandable": False} if include_expandable else {})})
+
+    return output
+
 
 def get_l1_flows(
     connection: duckdb.DuckDBPyConnection,
     start_event: str,
     direction: str,
+    depth: int = 2,
+    property_column: str | None = None,
+    property_operator: str | None = None,
+    property_values: list[str] | None = None,
+    include_top_k: bool = True,
 ) -> dict:
-    """
-    Compute L1 flows for a given start_event and direction.
-
-    Returns:
-        {
-            "rows": [
-                {
-                    "path": [start_event, next_event],
-                    "values": {
-                        "<cohort_id>": {"count": int, "pct": float}
-                    },
-                    "expandable": bool
-                }
-            ]
-        }
-
-    Sorting: by pct of first visible cohort descending.
-    Expandable: True for all named top-3 events (never for "Other").
-    """
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
+    depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
     if not _snapshot_exists(connection):
@@ -306,208 +387,117 @@ def get_l1_flows(
     if not cohorts:
         return {"rows": []}
 
-    sql = _build_l1_sql(direction)
-    # Parameters: start_event (first_events WHERE), start_event (self-loop guard)
-    raw_rows = connection.execute(sql, [start_event, start_event]).fetchall()
-
-    # Organise raw rows: {cohort_id: [(event_name, transition_users, anchor_users), ...]}
-    per_cohort: dict[int, tuple[int, list[tuple[str, int]]]] = {}
-    for cohort_id, next_event, transition_users, anchor_users in raw_rows:
-        cohort_id = int(cohort_id)
-        anchor_users = int(anchor_users)
-        transition_users = int(transition_users)
-        if cohort_id not in per_cohort:
-            per_cohort[cohort_id] = (anchor_users, [])
-        per_cohort[cohort_id][1].append((str(next_event), transition_users))
-
-    if not per_cohort:
-        return {"rows": []}
-
-    # Build cohort_id list in cohorts order
-    active_cohort_ids = [cid for cid, _ in cohorts]
-
-    # Collect all unique event names across cohorts (top-3 per cohort)
-    # We gather every top-3 event seen in any cohort for the union path list
-    event_cohort_data: dict[str, dict[int, dict]] = {}  # event_name -> {cohort_id: {count, pct}}
-
-    cohort_other: dict[int, dict] = {}  # cohort_id -> {count, pct}
-
-    for cohort_id, (anchor_users, events) in per_cohort.items():
-        top_rows, other_count, _ = _prune_and_aggregate(events, anchor_users)
-        for row in top_rows:
-            en = row["event_name"]
-            if en not in event_cohort_data:
-                event_cohort_data[en] = {}
-            event_cohort_data[en][cohort_id] = {"count": row["count"], "pct": row["pct"]}
-
-        if other_count > 0:
-            other_pct = round(other_count / anchor_users, 6) if anchor_users > 0 else 0.0
-            cohort_other[cohort_id] = {"count": other_count, "pct": other_pct}
-
-    # Determine sorting cohort: first visible active cohort
-    first_cohort_id = active_cohort_ids[0] if active_cohort_ids else None
-
-    # Build output rows for named events
-    named_rows = []
-    for event_name, cohort_vals in event_cohort_data.items():
-        values: dict[str, dict] = {}
-        for cid, _ in cohorts:
-            if cid in cohort_vals:
-                values[str(cid)] = {"count": cohort_vals[cid]["count"], "pct": cohort_vals[cid]["pct"]}
-            else:
-                values[str(cid)] = {"count": 0, "pct": 0.0}
-
-        sort_pct = cohort_vals.get(first_cohort_id, {}).get("pct", 0.0) if first_cohort_id else 0.0
-        sort_count = cohort_vals.get(first_cohort_id, {}).get("count", 0) if first_cohort_id else 0
-
-        named_rows.append({
-            "path": [start_event, event_name],
-            "values": values,
-            "expandable": True,
-            "_sort_pct": sort_pct,
-            "_sort_count": sort_count,
-        })
-
-    # Sort by first cohort pct desc, then count desc
-    named_rows.sort(key=lambda r: (-r["_sort_pct"], -r["_sort_count"]))
-
-    # Strip internal sort keys
-    output_rows = []
-    for row in named_rows:
-        output_rows.append({
-            "path": row["path"],
-            "values": row["values"],
-            "expandable": row["expandable"],
-        })
-
-    # Build "Other" row if any cohort has other_count > 0
-    if cohort_other:
-        other_values: dict[str, dict] = {}
-        for cid, _ in cohorts:
-            if cid in cohort_other:
-                other_values[str(cid)] = cohort_other[cid]
-            else:
-                other_values[str(cid)] = {"count": 0, "pct": 0.0}
-        output_rows.append({
-            "path": [start_event, "Other"],
-            "values": other_values,
-            "expandable": False,
-        })
-
-    return {"rows": output_rows}
+    raw_rows, _ = _run_level_query(connection, start_event, [start_event], direction, depth, property_column, property_operator, property_values)
+    return {"rows": _rows_payload(raw_rows, cohorts, [start_event], include_expandable=True, top_k_enabled=include_top_k)}
 
 
 def get_l2_flows(
     connection: duckdb.DuckDBPyConnection,
     start_event: str,
-    parent_event: str,
+    parent_path: list[str],
     direction: str,
+    depth: int = 2,
+    property_column: str | None = None,
+    property_operator: str | None = None,
+    property_values: list[str] | None = None,
+    include_top_k: bool = True,
 ) -> dict:
-    """
-    Compute L2 flows for users who hit parent_event as their L1 step.
-
-    Returns:
-        {
-            "parent_path": [start_event, parent_event],
-            "rows": [
-                {
-                    "path": [start_event, parent_event, next_event],
-                    "values": {
-                        "<cohort_id>": {"count": int, "pct": float}
-                    }
-                }
-            ]
-        }
-    """
     if direction not in _DIRECTIONS:
         raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
+    depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
     if not _snapshot_exists(connection):
-        return {"parent_path": [start_event, parent_event], "rows": []}
+        return {"parent_path": parent_path, "rows": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
-        return {"parent_path": [start_event, parent_event], "rows": []}
+        return {"parent_path": parent_path, "rows": []}
 
-    sql = _build_l2_sql(direction)
-    # Parameters:
-    #   1. start_event (first_events WHERE)
-    #   2. start_event (self-loop guard for L1)
-    #   3. parent_event (l1_event = parent_event filter)
-    #   4. parent_event (self-loop guard for L2)
-    raw_rows = connection.execute(
-        sql, [start_event, start_event, parent_event, parent_event]
-    ).fetchall()
+    raw_rows, parent_depth = _run_level_query(connection, start_event, parent_path, direction, depth, property_column, property_operator, property_values)
+    if parent_depth >= depth:
+        return {"parent_path": parent_path, "rows": []}
 
-    per_cohort: dict[int, tuple[int, list[tuple[str, int]]]] = {}
-    for cohort_id, next_event, transition_users, anchor_users in raw_rows:
-        cohort_id = int(cohort_id)
-        anchor_users = int(anchor_users)
-        transition_users = int(transition_users)
-        if cohort_id not in per_cohort:
-            per_cohort[cohort_id] = (anchor_users, [])
-        per_cohort[cohort_id][1].append((str(next_event), transition_users))
+    return {
+        "parent_path": parent_path,
+        "rows": _rows_payload(raw_rows, cohorts, parent_path, include_expandable=False, top_k_enabled=include_top_k),
+    }
 
-    if not per_cohort:
-        return {"parent_path": [start_event, parent_event], "rows": []}
 
-    active_cohort_ids = [cid for cid, _ in cohorts]
-    first_cohort_id = active_cohort_ids[0] if active_cohort_ids else None
+def get_flow_graph(
+    connection: duckdb.DuckDBPyConnection,
+    start_event: str,
+    direction: str,
+    depth: int,
+    property_column: str | None = None,
+    property_operator: str | None = None,
+    property_values: list[str] | None = None,
+    include_top_k: bool = True,
+) -> dict:
+    if direction not in _DIRECTIONS:
+        raise HTTPException(status_code=400, detail=f"direction must be one of: {', '.join(_DIRECTIONS)}")
+    depth = max(1, min(depth, 10))
 
-    event_cohort_data: dict[str, dict[int, dict]] = {}
-    cohort_other: dict[int, dict] = {}
+    ensure_cohort_tables(connection)
+    if not _snapshot_exists(connection):
+        return {"cohorts": []}
 
-    for cohort_id, (anchor_users, events) in per_cohort.items():
-        top_rows, other_count, _ = _prune_and_aggregate(events, anchor_users)
-        for row in top_rows:
-            en = row["event_name"]
-            if en not in event_cohort_data:
-                event_cohort_data[en] = {}
-            event_cohort_data[en][cohort_id] = {"count": row["count"], "pct": row["pct"]}
+    cohorts = _fetch_active_cohorts(connection)
+    if not cohorts:
+        return {"cohorts": []}
 
-        if other_count > 0:
-            other_pct = round(other_count / anchor_users, 6) if anchor_users > 0 else 0.0
-            cohort_other[cohort_id] = {"count": other_count, "pct": other_pct}
+    cohort_trees = []
+    for cohort_id, cohort_name in cohorts:
+        cohort_scope = [(cohort_id, cohort_name)]
+        root_count = _root_user_count(connection, start_event, property_column, property_operator, property_values, cohort_id=cohort_id)
+        root = {"name": start_event, "user_count": root_count, "children": []}
 
-    named_rows = []
-    for event_name, cohort_vals in event_cohort_data.items():
-        values: dict[str, dict] = {}
-        for cid, _ in cohorts:
-            if cid in cohort_vals:
-                values[str(cid)] = {"count": cohort_vals[cid]["count"], "pct": cohort_vals[cid]["pct"]}
-            else:
-                values[str(cid)] = {"count": 0, "pct": 0.0}
+        node_map: dict[tuple[str, ...], dict] = {(start_event,): root}
+        frontier: list[list[str]] = [[start_event]]
 
-        sort_pct = cohort_vals.get(first_cohort_id, {}).get("pct", 0.0) if first_cohort_id else 0.0
-        sort_count = cohort_vals.get(first_cohort_id, {}).get("count", 0) if first_cohort_id else 0
+        for _level in range(1, depth + 1):
+            if not frontier:
+                break
+            next_frontier: list[list[str]] = []
+            for parent_path in frontier:
+                raw_rows, parent_depth = _run_level_query(
+                    connection,
+                    start_event,
+                    parent_path,
+                    direction,
+                    depth + 1,
+                    property_column,
+                    property_operator,
+                    property_values,
+                )
+                if parent_depth >= depth + 1:
+                    continue
+                rows = _rows_payload(raw_rows, cohort_scope, parent_path, include_expandable=False, top_k_enabled=include_top_k)
+                rows.sort(key=lambda r: (
+                    2 if r["path"][-1] == "No further action" else 1 if r["path"][-1] == "Other" else 0,
+                    -((r.get("values", {}).get(str(cohort_id), {}) or {}).get("user_count", 0))
+                ))
+                children = []
+                for row in rows:
+                    event_name = row["path"][-1]
+                    values = row.get("values", {})
+                    users = int((values.get(str(cohort_id), {}) or {}).get("user_count", 0))
+                    child_path = tuple(row["path"])
+                    child_node = {"name": event_name, "user_count": users, "children": []}
+                    node_map[child_path] = child_node
+                    children.append(child_node)
+                    if event_name not in {"Other", "No further action"} and len(row["path"]) <= depth and users > 0:
+                        next_frontier.append(list(row["path"]))
+                parent_node = node_map.get(tuple(parent_path))
+                if parent_node is not None:
+                    parent_node["children"] = children
+            frontier = next_frontier
 
-        named_rows.append({
-            "path": [start_event, parent_event, event_name],
-            "values": values,
-            "_sort_pct": sort_pct,
-            "_sort_count": sort_count,
+        cohort_trees.append({
+            "cohort_id": cohort_id,
+            "cohort_name": cohort_name,
+            "user_count": root_count,
+            "tree": root,
         })
 
-    named_rows.sort(key=lambda r: (-r["_sort_pct"], -r["_sort_count"]))
-
-    output_rows = []
-    for row in named_rows:
-        output_rows.append({
-            "path": row["path"],
-            "values": row["values"],
-        })
-
-    if cohort_other:
-        other_values: dict[str, dict] = {}
-        for cid, _ in cohorts:
-            if cid in cohort_other:
-                other_values[str(cid)] = cohort_other[cid]
-            else:
-                other_values[str(cid)] = {"count": 0, "pct": 0.0}
-        output_rows.append({
-            "path": [start_event, parent_event, "Other"],
-            "values": other_values,
-        })
-
-    return {"parent_path": [start_event, parent_event], "rows": output_rows}
+    return {"cohorts": cohort_trees}

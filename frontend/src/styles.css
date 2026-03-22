@@ -3072,3 +3072,9 @@ th.flow-path-col {
   margin-left: auto;
   line-height: 1;
 }
+
+.flow-subtle-label {
+  font-size: 11px;
+  color: #888;
+  margin-left: 4px;
+}

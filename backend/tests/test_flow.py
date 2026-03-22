@@ -54,6 +54,13 @@ def _make_cohort(client: TestClient, name: str, event: str) -> int:
     return int(resp.json()["cohort_id"])
 
 
+def _value_pct(value: dict) -> float:
+    parent_users = float(value.get("parent_users", 0) or 0)
+    if parent_users <= 0:
+        return 0.0
+    return float(value.get("user_count", 0) or 0) / parent_users
+
+
 # ---------------------------------------------------------------------------
 # Test 1: Basic forward L1
 # ---------------------------------------------------------------------------
@@ -102,11 +109,11 @@ def test_l1_forward_basic_top_events_and_percentages(client: TestClient) -> None
     pv_row = by_event["product_view"]
     co_row = by_event["checkout"]
 
-    assert pv_row["values"][cid]["count"] == 2
-    assert abs(pv_row["values"][cid]["pct"] - 2 / 3) < 1e-4
+    assert pv_row["values"][cid]["user_count"] == 2
+    assert abs(_value_pct(pv_row["values"][cid]) - 2 / 3) < 1e-4
 
-    assert co_row["values"][cid]["count"] == 1
-    assert abs(co_row["values"][cid]["pct"] - 1 / 3) < 1e-4
+    assert co_row["values"][cid]["user_count"] == 1
+    assert abs(_value_pct(co_row["values"][cid]) - 1 / 3) < 1e-4
 
     # product_view should appear first (higher pct)
     event_names = [r["path"][-1] for r in rows if r["path"][-1] != "Other"]
@@ -151,12 +158,12 @@ def test_l1_reverse_correct_previous_events(client: TestClient) -> None:
     by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
 
     assert "search" in by_event
-    assert by_event["search"]["values"][cid]["count"] == 2
-    assert abs(by_event["search"]["values"][cid]["pct"] - 2 / 3) < 1e-4
+    assert by_event["search"]["values"][cid]["user_count"] == 2
+    assert abs(_value_pct(by_event["search"]["values"][cid]) - 2 / 3) < 1e-4
 
     assert "login" in by_event
-    assert by_event["login"]["values"][cid]["count"] == 1
-    assert abs(by_event["login"]["values"][cid]["pct"] - 1 / 3) < 1e-4
+    assert by_event["login"]["values"][cid]["user_count"] == 1
+    assert abs(_value_pct(by_event["login"]["values"][cid]) - 1 / 3) < 1e-4
 
 
 # ---------------------------------------------------------------------------
@@ -205,14 +212,14 @@ def test_l2_expansion_respects_parent_event(client: TestClient) -> None:
     assert "checkout" in by_event, f"Expected checkout in L2: {[r['path'] for r in rows]}"
     assert "add_to_cart" in by_event, f"Expected add_to_cart in L2: {[r['path'] for r in rows]}"
 
-    assert by_event["checkout"]["values"][cid]["count"] == 1
-    assert abs(by_event["checkout"]["values"][cid]["pct"] - 0.5) < 1e-4
+    assert by_event["checkout"]["values"][cid]["user_count"] == 1
+    assert abs(_value_pct(by_event["checkout"]["values"][cid]) - 0.5) < 1e-4
 
-    assert by_event["add_to_cart"]["values"][cid]["count"] == 1
-    assert abs(by_event["add_to_cart"]["values"][cid]["pct"] - 0.5) < 1e-4
+    assert by_event["add_to_cart"]["values"][cid]["user_count"] == 1
+    assert abs(_value_pct(by_event["add_to_cart"]["values"][cid]) - 0.5) < 1e-4
 
     # u3 should NOT be included (their L1 was checkout, not product_view)
-    total_users = sum(r["values"][cid]["count"] for r in rows)
+    total_users = sum(r["values"][cid]["user_count"] for r in rows)
     assert total_users == 2, f"Expected 2 total users in L2 expansion, got {total_users}"
 
 
@@ -261,14 +268,14 @@ def test_l1_forward_multi_cohort_different_values(client: TestClient) -> None:
     # Cohort A sees purchase
     if "purchase" in by_event:
         cid_a_str = str(cid_a)
-        assert by_event["purchase"]["values"][cid_a_str]["count"] == 2
-        assert abs(by_event["purchase"]["values"][cid_a_str]["pct"] - 1.0) < 1e-4
+        assert by_event["purchase"]["values"][cid_a_str]["user_count"] == 2
+        assert abs(_value_pct(by_event["purchase"]["values"][cid_a_str]) - 1.0) < 1e-4
 
     # Cohort B sees browse
     if "browse" in by_event:
         cid_b_str = str(cid_b)
-        assert by_event["browse"]["values"][cid_b_str]["count"] == 1
-        assert abs(by_event["browse"]["values"][cid_b_str]["pct"] - 1.0) < 1e-4
+        assert by_event["browse"]["values"][cid_b_str]["user_count"] == 1
+        assert abs(_value_pct(by_event["browse"]["values"][cid_b_str]) - 1.0) < 1e-4
 
 
 # ---------------------------------------------------------------------------
@@ -310,12 +317,12 @@ def test_l1_forward_first_occurrence_only(client: TestClient) -> None:
 
     # product_view is the first event after the first search
     assert "product_view" in by_event
-    assert by_event["product_view"]["values"][cid]["count"] == 1
+    assert by_event["product_view"]["values"][cid]["user_count"] == 1
     # pct should be 1.0 (1/1 users)
-    assert abs(by_event["product_view"]["values"][cid]["pct"] - 1.0) < 1e-4
+    assert abs(_value_pct(by_event["product_view"]["values"][cid]) - 1.0) < 1e-4
 
     # Total transitions should equal 1 (only one user, one transition)
-    total = sum(r["values"][cid]["count"] for r in rows)
+    total = sum(r["values"][cid]["user_count"] for r in rows)
     assert total == 1, f"Expected 1 total transition (first occurrence only), got {total}"
 
 
@@ -386,16 +393,19 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
 
     other_row = other_rows[0]
     assert other_row["expandable"] is False
-    assert other_row["values"][cid]["count"] == 1
-    assert abs(other_row["values"][cid]["pct"] - 0.25) < 1e-4
+    assert other_row["values"][cid]["user_count"] == 1
+    assert abs(_value_pct(other_row["values"][cid]) - 0.25) < 1e-4
 
-    # Named rows should be exactly 3
+    # Named rows should include top 3 + No further action
     named_rows = [r for r in rows if r["path"][-1] != "Other"]
-    assert len(named_rows) == 3, f"Expected 3 named rows, got {len(named_rows)}"
+    assert len(named_rows) == 4, f"Expected 4 named rows (including No further action), got {len(named_rows)}"
 
-    # Named rows should be expandable
+    # Top rows should be expandable; No further action should not.
     for r in named_rows:
-        assert r["expandable"] is True
+        if r["path"][-1] == "No further action":
+            assert r["expandable"] is False
+        else:
+            assert r["expandable"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -591,6 +601,8 @@ def test_l1_named_rows_are_expandable_other_is_not(client: TestClient) -> None:
     for row in rows:
         if row["path"][-1] == "Other":
             assert row["expandable"] is False, "Other row must not be expandable"
+        elif row["path"][-1] == "No further action":
+            assert row["expandable"] is False, "No further action row must not be expandable"
         else:
             assert row["expandable"] is True, f"Named row {row['path']} should be expandable"
 
@@ -660,7 +672,7 @@ def test_l2_denominator_is_l1_parent_users(client: TestClient) -> None:
     by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
 
     assert "purchase" in by_event
-    purchase_pct = by_event["purchase"]["values"][cid]["pct"]
+    purchase_pct = _value_pct(by_event["purchase"]["values"][cid])
     # Should be 1/2 (only 2 users reached product_view)
     assert abs(purchase_pct - 0.5) < 1e-4, \
         f"Expected pct ≈ 0.5 (1/2), got {purchase_pct}"
