@@ -3081,66 +3081,113 @@ th.flow-path-col {
 
 .user-explorer-pane {
   display: grid;
-  gap: 12px;
-}
-
-.user-explorer-user-search {
-  margin-top: 8px;
-  width: 100%;
+  gap: 16px;
 }
 
 .user-explorer-summary-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
 }
 
-.user-explorer-summary-grid > div {
+.user-explorer-summary-grid strong {
+  font-size: 11px;
+  color: #666;
+}
+
+.user-explorer-summary-grid span {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.user-explorer-summary {
+  padding: 16px;
+}
+
+.user-explorer-properties {
+  margin-top: 12px;
+}
+
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #666;
+  margin-bottom: 8px;
+}
+
+.user-explorer-properties-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px 16px;
+}
+
+.user-explorer-property {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
+}
+
+.property-key {
+  font-size: 11px;
+  color: #888;
+  text-transform: lowercase;
+}
+
+.property-value {
+  font-size: 13px;
+  font-weight: 500;
+  color: #111;
+  word-break: break-word;
+}
+
+.user-explorer-controls {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  background: white;
+  padding: 12px 16px;
+  border-radius: 8px;
+  border: 1px solid #eee;
 }
 
 .user-explorer-controls-row {
   display: flex;
-  gap: 8px;
-  align-items: center;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
-.user-explorer-controls-row input[type='datetime-local'] {
-  min-width: 240px;
+.user-explorer-controls-row .searchable-select {
+  flex: 1;
 }
 
 .user-explorer-event-cell {
-  position: relative;
-  display: inline-flex;
-  gap: 8px;
+  display: flex;
   align-items: center;
+  gap: 10px;
 }
 
 .user-explorer-join-tag {
-  font-size: 12px;
+  font-size: 11px;
   color: #1f5fbf;
-  background: #eaf2ff;
-  border-radius: 10px;
-  padding: 2px 8px;
+  background: #eef4ff;
+  border-radius: 6px;
+  padding: 2px 6px;
 }
 
 .user-explorer-tooltip {
   display: none;
   position: absolute;
   left: 0;
-  top: 100%;
-  margin-top: 6px;
-  z-index: 10;
-  background: #101626;
-  color: #f4f7ff;
-  max-width: 520px;
-  max-height: 280px;
+  top: 110%;
+  z-index: 20;
+  background: #0f172a;
+  color: #e5e7eb;
+  max-width: 480px;
+  max-height: 260px;
   overflow: auto;
   border-radius: 8px;
-  padding: 8px;
+  padding: 10px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.2);
 }
 
 .user-explorer-event-cell:hover .user-explorer-tooltip {
@@ -3160,4 +3207,20 @@ th.flow-path-col {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.user-explorer-table,
+.user-explorer-table .table-responsive,
+.user-explorer-table table {
+  width: 100%;
+}
+
+.user-explorer-table th:first-child,
+.user-explorer-table td:first-child {
+  width: 200px;
+  white-space: nowrap;
+}
+
+.user-explorer-table tbody tr td {
+  padding: 10px 12px;
 }

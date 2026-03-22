@@ -12,7 +12,7 @@ const normalizeOption = (option) => {
   }
 }
 
-export default function SearchableSelect({ options, value, onChange, placeholder = 'Select...', disabled = false, className = '', style = {} }) {
+export default function SearchableSelect({ options, value, onChange, onSearch, placeholder = 'Select...', disabled = false, className = '', style = {} }) {
   const rootRef = useRef(null)
   const listboxId = useId()
   const [isOpen, setIsOpen] = useState(false)
@@ -47,6 +47,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
       if (!rootRef.current?.contains(event.target)) {
         setIsOpen(false)
         setSearchTerm('')
+        if (onSearch) onSearch('')
       }
     }
 
@@ -60,6 +61,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
     onChange(optionValue)
     setIsOpen(false)
     setSearchTerm('')
+    if (onSearch) onSearch('')
   }
 
   const handleKeyDown = (event) => {
@@ -90,6 +92,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
     if (event.key === 'Escape') {
       setIsOpen(false)
       setSearchTerm('')
+      if (onSearch) onSearch('')
     }
   }
 
@@ -112,6 +115,7 @@ export default function SearchableSelect({ options, value, onChange, placeholder
         onClick={() => setIsOpen(true)}
         onChange={(event) => {
           setSearchTerm(event.target.value)
+          if (onSearch) onSearch(event.target.value)
           if (!isOpen) {
             setIsOpen(true)
           }

@@ -322,9 +322,14 @@ def get_user_explorer(
     resolved_page = max(1, int(page))
     current_event_time = from_event_time.isoformat() if from_event_time else None
 
+    matched_event = None
     target = _resolve_target_row(connection, user_id, event_search, direction, from_event_time, jump_datetime)
     if target is not None:
         target_time, target_event_name = target
+        matched_event = {
+            "event_time": target_time.isoformat() if target_time else None,
+            "event_name": target_event_name,
+        }
         resolved_page = _compute_page_for_row(connection, user_id, target_time, target_event_name, safe_page_size)
         current_event_time = target_time.isoformat() if target_time else current_event_time
 
@@ -350,4 +355,5 @@ def get_user_explorer(
         "cursor": {
             "current_event_time": current_event_time,
         },
+        "matched_event": matched_event,
     }
