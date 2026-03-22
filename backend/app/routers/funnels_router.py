@@ -24,6 +24,7 @@ async def create_funnel_endpoint(
     steps = [
         {
             "event_name": step.event_name,
+            "step_order": step.step_order,
             "filters": [
                 {"property_key": f.property_key, "property_value": f.property_value}
                 for f in step.filters
@@ -31,7 +32,12 @@ async def create_funnel_endpoint(
         }
         for step in request.steps
     ]
-    return create_funnel(conn, request.name, steps)
+    conversion_window = (
+        {"value": request.conversion_window.value, "unit": request.conversion_window.unit}
+        if request.conversion_window
+        else None
+    )
+    return create_funnel(conn, request.name, steps, conversion_window)
 
 
 @router.get("/funnels")
@@ -50,6 +56,7 @@ async def update_funnel_endpoint(
     steps = [
         {
             "event_name": step.event_name,
+            "step_order": step.step_order,
             "filters": [
                 {"property_key": f.property_key, "property_value": f.property_value}
                 for f in step.filters
@@ -57,7 +64,12 @@ async def update_funnel_endpoint(
         }
         for step in request.steps
     ]
-    return update_funnel(conn, funnel_id, request.name, steps)
+    conversion_window = (
+        {"value": request.conversion_window.value, "unit": request.conversion_window.unit}
+        if request.conversion_window
+        else None
+    )
+    return update_funnel(conn, funnel_id, request.name, steps, conversion_window)
 
 
 @router.delete("/funnels/{funnel_id}")

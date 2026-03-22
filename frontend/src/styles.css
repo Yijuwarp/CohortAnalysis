@@ -2526,13 +2526,14 @@ tbody tr:hover {
 
 .funnel-bar-row {
   display: grid;
-  grid-template-columns: 140px 1fr auto;
+  grid-template-columns: 180px 1fr;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-height: 28px;
 }
 
 .funnel-cohort-label {
+  width: 180px;
   font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
@@ -2541,6 +2542,7 @@ tbody tr:hover {
 }
 
 .funnel-bar-track {
+  width: 100%;
   height: 20px;
   border-radius: 4px;
   background: #f3f4f6;
@@ -2556,12 +2558,18 @@ tbody tr:hover {
 }
 
 .funnel-bar-meta {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
   display: flex;
   gap: 4px;
   font-size: 12px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
   align-items: center;
+  pointer-events: none;
+  color: #111827;
 }
 
 .funnel-bar-users {
@@ -2748,6 +2756,68 @@ tbody tr:hover {
   margin: 0 0 8px;
 }
 
+.funnel-window-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.funnel-window-row label {
+  min-width: 130px;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.funnel-window-row > select {
+  width: 180px;
+}
+
+.funnel-window-custom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.funnel-window-custom input {
+  width: 90px;
+}
+
+.funnel-window-custom select {
+  width: 110px;
+}
+
+.funnel-window-help {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: -4px 0 10px;
+}
+
+.funnel-dnd-help {
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  margin: 0 0 8px;
+}
+
+.funnel-steps-scroll {
+  max-height: 420px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 4px;
+  margin-bottom: 8px;
+}
+
+.funnel-sortable-step {
+  width: 100%;
+}
+
+.funnel-sortable-step.drag-over {
+  border: 1px dashed var(--color-primary);
+  border-radius: var(--radius-sm);
+}
+
 .funnel-step-block {
   border: 1px solid var(--color-border);
   border-radius: var(--radius-sm);
@@ -2756,6 +2826,13 @@ tbody tr:hover {
   flex-direction: column;
   gap: 8px;
   background: #fafafa;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, opacity 0.15s ease;
+}
+
+.funnel-step-block:active {
+  cursor: grabbing;
+  transform: scale(1.02);
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15);
 }
 
 .funnel-step-header {
@@ -2776,6 +2853,27 @@ tbody tr:hover {
   font-size: 11px;
   font-weight: 700;
   flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.funnel-drag-handle {
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 16px;
+  line-height: 1;
+  cursor: grab;
+  width: auto;
+}
+
+.drag-overlay {
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: white;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.16);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .funnel-step-event-select {

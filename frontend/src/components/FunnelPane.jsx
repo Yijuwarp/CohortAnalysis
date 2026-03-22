@@ -2,26 +2,53 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFunnel, updateFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
 import { formatInteger } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
+import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay } from '@dnd-kit/core'
+import { SortableContext, useSortable, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
+import { CSS } from '@dnd-kit/utilities'
 
 // ---------------------------------------------------------------------------
 // Funnel Builder Modal
 // ---------------------------------------------------------------------------
 
-const EMPTY_STEP = () => ({ event_name: '', filters: [] })
+const MAX_FUNNEL_STEPS = 10
+const MIN_FUNNEL_STEPS = 2
+const STEP_WINDOW_NONE = 'none'
+const STEP_WINDOW_CUSTOM = 'custom'
+
+const EMPTY_STEP = (id) => ({ id, event_name: '', filters: [] })
 const EMPTY_FILTER = () => ({ property_key: '', property_value: '' })
+
+function SortableStep({ id, isDragOver, children }) {
+  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id })
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+  }
+  return (
+    <div ref={setNodeRef} style={style} className={`funnel-sortable-step${isDragOver ? ' drag-over' : ''}`}>
+      {children({ attributes, listeners })}
+    </div>
+  )
+}
 
 function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel }) {
   // events is string[] from backend e.g. ["signup", "purchase"]
   const safeEvents = Array.isArray(events) ? events : []
 
   const [name, setName] = useState('')
-  const [steps, setSteps] = useState([EMPTY_STEP(), EMPTY_STEP()])
+  const nextStepIdRef = useRef(1)
+  const [steps, setSteps] = useState([EMPTY_STEP(nextStepIdRef.current++), EMPTY_STEP(nextStepIdRef.current++)])
+  const [conversionWindowMode, setConversionWindowMode] = useState(STEP_WINDOW_NONE)
+  const [conversionWindowValue, setConversionWindowValue] = useState('10')
+  const [activeId, setActiveId] = useState(null)
+  const [overId, setOverId] = useState(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   // { eventName -> string[] } — property key lists per event
   const [propsByEvent, setPropsByEvent] = useState({})
   // { "eventName::propKey" -> string[] } — value lists per event+prop combo
   const [valuesByProp, setValuesByProp] = useState({})
+  const sensors = useSensors(useSensor(PointerSensor))
 
   const loadProps = useCallback(async (eventName) => {
     if (!eventName || propsByEvent[eventName] !== undefined) return
@@ -55,8 +82,10 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
 
     if (editingFunnel && editingFunnel.steps) {
       setName(editingFunnel.name)
+      setConversionWindowMode(editingFunnel.conversion_window ? STEP_WINDOW_CUSTOM : STEP_WINDOW_NONE)
+      setConversionWindowValue(String(editingFunnel.conversion_window?.value ?? 10))
       // Render steps without filters purely first while we load
-      const strippedSteps = editingFunnel.steps.map(s => ({ ...s, filters: [] }))
+      const strippedSteps = editingFunnel.steps.map(s => ({ ...s, id: nextStepIdRef.current++, filters: [] }))
       setSteps(strippedSteps)
       
       const hydrate = async () => {
@@ -89,14 +118,17 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
         setPropsByEvent(prev => ({ ...prev, ...newProps }))
         setValuesByProp(prev => ({ ...prev, ...newValues }))
         // THEN apply filters
-        setSteps(editingFunnel.steps)
+        setSteps(editingFunnel.steps.map(s => ({ ...s, id: nextStepIdRef.current++ })))
       }
       
       hydrate()
       
     } else {
       setName('')
-      setSteps([EMPTY_STEP(), EMPTY_STEP()])
+      setConversionWindowMode(STEP_WINDOW_NONE)
+      setConversionWindowValue('10')
+      nextStepIdRef.current = 1
+      setSteps([EMPTY_STEP(nextStepIdRef.current++), EMPTY_STEP(nextStepIdRef.current++)])
       setPropsByEvent({})
       setValuesByProp({})
     }
@@ -112,14 +144,29 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
   }
 
   const addStep = () => {
-    if (steps.length >= 5) return
-    setSteps(prev => [...prev, EMPTY_STEP()])
+    if (steps.length >= MAX_FUNNEL_STEPS) return
+    setSteps(prev => [...prev, EMPTY_STEP(nextStepIdRef.current++)])
   }
 
   const removeStep = (idx) => {
-    if (steps.length <= 2) return
+    if (steps.length <= MIN_FUNNEL_STEPS) return
     setSteps(prev => prev.filter((_, i) => i !== idx))
   }
+
+  const handleDragEnd = (event) => {
+    const { active, over } = event
+    setActiveId(null)
+    setOverId(null)
+    if (!over || active.id === over.id) return
+    setSteps(prev => {
+      const oldIndex = prev.findIndex(step => step.id === active.id)
+      const newIndex = prev.findIndex(step => step.id === over.id)
+      if (oldIndex < 0 || newIndex < 0) return prev
+      return arrayMove(prev, oldIndex, newIndex)
+    })
+  }
+
+  const activeStep = steps.find(step => step.id === activeId) || null
 
   const addFilter = (stepIdx) => {
     setSteps(prev => prev.map((s, i) =>
@@ -150,18 +197,37 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
     setError('')
     const trimmedName = name.trim()
     if (!trimmedName) { setError('Funnel name is required'); return }
+    if (steps.length < MIN_FUNNEL_STEPS || steps.length > MAX_FUNNEL_STEPS) {
+      setError(`Funnels must have between ${MIN_FUNNEL_STEPS} and ${MAX_FUNNEL_STEPS} steps`)
+      return
+    }
     for (let i = 0; i < steps.length; i++) {
       if (!steps[i].event_name.trim()) { setError(`Step ${i + 1}: select an event`); return }
+    }
+    let conversionWindow = null
+    if (conversionWindowMode === STEP_WINDOW_CUSTOM) {
+      const numericValue = Number(conversionWindowValue)
+      if (!Number.isInteger(numericValue) || numericValue <= 0) {
+        setError('Conversion window must be a positive number of minutes')
+        return
+      }
+      if (numericValue > 10080) {
+        setError('Conversion window cannot exceed 7 days (10080 minutes)')
+        return
+      }
+      conversionWindow = { value: numericValue, unit: 'minute' }
     }
 
     setSaving(true)
     try {
       const payload = {
         name: trimmedName,
-        steps: steps.map(s => ({
+        steps: steps.map((s, idx) => ({
           event_name: s.event_name,
+          step_order: idx,
           filters: s.filters.filter(f => f.property_key && f.property_value),
         })),
+        conversion_window: conversionWindow,
       }
       if (editingFunnel) {
         await updateFunnel(editingFunnel.id, payload)
@@ -200,14 +266,72 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
           </div>
 
           <div className="funnel-steps-section">
-            <p className="funnel-steps-label">Steps (2–5 required)</p>
+            <div className="funnel-window-row">
+              <label htmlFor="funnel-conversion-window-mode">Conversion Window</label>
+              <select
+                id="funnel-conversion-window-mode"
+                value={conversionWindowMode}
+                onChange={e => setConversionWindowMode(e.target.value)}
+                data-testid="funnel-conversion-window-mode"
+              >
+                <option value={STEP_WINDOW_NONE}>None (lifetime)</option>
+                <option value={STEP_WINDOW_CUSTOM}>Custom</option>
+              </select>
+              {conversionWindowMode === STEP_WINDOW_CUSTOM && (
+                <div className="funnel-window-custom">
+                  <input
+                    type="number"
+                    min="1"
+                    value={conversionWindowValue}
+                    onChange={e => setConversionWindowValue(e.target.value)}
+                    data-testid="funnel-conversion-window-value"
+                    placeholder="e.g. 10 (minutes)"
+                  />
+                  <select disabled data-testid="funnel-conversion-window-unit">
+                    <option>minutes</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            <p className="funnel-window-help">
+              {conversionWindowMode === STEP_WINDOW_NONE
+                ? 'No time restriction between steps (lifetime conversion)'
+                : 'Max time allowed between each step (e.g. 10 mins between Step 1 → Step 2)'}
+            </p>
+            <p className="funnel-dnd-help">Drag steps to reorder funnel</p>
+            <p className="funnel-steps-label">Steps (2–10 required)</p>
 
+            <div className="funnel-steps-scroll">
+            <DndContext
+              sensors={sensors}
+              collisionDetection={closestCenter}
+              onDragStart={({ active }) => setActiveId(active.id)}
+              onDragOver={({ over }) => setOverId(over?.id ?? null)}
+              onDragEnd={handleDragEnd}
+              onDragCancel={() => {
+                setActiveId(null)
+                setOverId(null)
+              }}
+            >
+            <SortableContext items={steps.map(s => s.id)} strategy={verticalListSortingStrategy}>
             {steps.map((step, stepIdx) => {
               const props = propsByEvent[step.event_name] || []
               return (
-                <div key={stepIdx} className="funnel-step-block" data-testid={`funnel-step-${stepIdx}`}>
+                <SortableStep key={step.id} id={step.id} isDragOver={overId === step.id}>
+                {({ attributes, listeners }) => (
+                <div className="funnel-step-block" data-testid={`funnel-step-${stepIdx}`}>
                   <div className="funnel-step-header">
                     <span className="funnel-step-number">{stepIdx + 1}</span>
+                    <button
+                      type="button"
+                      className="funnel-drag-handle"
+                      aria-label={`Drag step ${stepIdx + 1}`}
+                      title="Drag to reorder"
+                      {...attributes}
+                      {...listeners}
+                    >
+                      ⋮⋮
+                    </button>
 
                     {/* Issue #1: events is string[], not { value, label }[] */}
                     {/* Issue #2: unique key on each option */}
@@ -226,7 +350,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                       ))}
                     </select>
 
-                    {steps.length > 2 && (
+                    {steps.length > MIN_FUNNEL_STEPS && (
                       <button
                         className="funnel-remove-step"
                         onClick={() => removeStep(stepIdx)}
@@ -242,7 +366,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                     const vals = valuesByProp[cacheKey] || []
                     return (
                       <div
-                        key={filterIdx}  // Issue #2: unique key
+                        key={`${step.id}-filter-${filterIdx}`}
                         className="funnel-filter-row"
                         data-testid={`funnel-filter-${stepIdx}-${filterIdx}`}
                       >
@@ -301,10 +425,22 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                     data-testid={`funnel-add-filter-${stepIdx}`}
                   >+ Add filter</button>
                 </div>
+                )}
+                </SortableStep>
               )
             })}
+            </SortableContext>
+            <DragOverlay>
+              {activeStep ? (
+                <div className="drag-overlay">
+                  {activeStep.event_name || 'Step'}
+                </div>
+              ) : null}
+            </DragOverlay>
+            </DndContext>
+            </div>
 
-            {steps.length < 5 && (
+            {steps.length < MAX_FUNNEL_STEPS && (
               <button
                 type="button"
                 className="funnel-add-step-btn"
@@ -364,12 +500,9 @@ function FunnelChart({ result }) {
           <div className="funnel-bars">
             {cohorts.map((cohort, cohortIdx) => {
               const stepData = cohort.steps[stepIdx] || { users: 0, conversion_pct: 0, dropoff_pct: 0 }
-              // 1. Cast to Number (guards null / undefined / string from bad data)
-              // 2. Clamp to [0, 100] (guards backend rounding overflow)
-              // 3. Round to 1 decimal so bar width matches the displayed label exactly
-              const barWidth = Math.round(Math.max(0, Math.min(100, Number(stepData.conversion_pct) || 0)) * 10) / 10
+              const barWidth = Number(stepData.conversion_pct) || 0
               // 2px minimum so tiny values (e.g. 0.1%) are still visible
-              const minWidthPx = barWidth > 0 ? 2 : 0
+              const minWidthPx = barWidth > 0 ? '2px' : '0px'
               return (
                 <div
                   key={cohort.cohort_id}
@@ -389,18 +522,18 @@ function FunnelChart({ result }) {
                       style={{
                         width: `${barWidth}%`,
                         background: getCohortColor(cohort.cohort_id, cohortIdx),
-                        minWidth: `${minWidthPx}px`,
+                        minWidth: minWidthPx,
                       }}
                     />
-                  </div>
-                  <div className="funnel-bar-meta">
-                    <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
-                    <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
-                    {stepIdx > 0 && (Number(stepData.dropoff_pct) || 0) > 0 && (
-                      <span className="funnel-bar-dropoff" title="Drop-off from previous step">
-                        ↓{(Number(stepData.dropoff_pct) || 0).toFixed(1)}%
-                      </span>
-                    )}
+                    <div className="funnel-bar-meta">
+                      <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
+                      <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
+                      {stepIdx > 0 && (Number(stepData.dropoff_pct) || 0) > 0 && (
+                        <span className="funnel-bar-dropoff" title="Drop-off from previous step">
+                          ↓{(Number(stepData.dropoff_pct) || 0).toFixed(1)}%
+                        </span>
+                      )}
+                    </div>
                   </div>
                 </div>
               )

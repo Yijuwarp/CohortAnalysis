@@ -82,10 +82,10 @@ def test_create_funnel_rejects_fewer_than_two_steps(client: TestClient) -> None:
     assert r.status_code == 422  # Pydantic min_length=2
 
 
-def test_create_funnel_rejects_more_than_five_steps(client: TestClient) -> None:
-    steps = [{"event_name": f"event_{i}", "filters": []} for i in range(6)]
+def test_create_funnel_rejects_more_than_ten_steps(client: TestClient) -> None:
+    steps = [{"event_name": f"event_{i}", "filters": []} for i in range(11)]
     r = client.post("/funnels", json={"name": "too_many", "steps": steps})
-    assert r.status_code == 422  # Pydantic max_length=5
+    assert r.status_code == 422  # Pydantic max_length=10
 
 
 def test_create_funnel_with_property_filters(client: TestClient) -> None:
@@ -274,10 +274,9 @@ def test_run_funnel_ordering_is_enforced(client: TestClient) -> None:
     assert all_users["steps"][1]["users"] == 1   # only u2 (u1's purchase was before signup)
 
 
-def test_run_funnel_same_timestamp_events_not_dropped(client: TestClient) -> None:
+def test_run_funnel_same_timestamp_events_are_counted_for_next_step(client: TestClient) -> None:
     """
-    Issue #3 fix: events at the SAME timestamp as the previous step should qualify.
-    signup and search happen at exact same second → user should reach step 2.
+    Same-timestamp events should count for the next step.
     """
     csv_text = (
         "user_id,event_name,event_time\n"
@@ -319,10 +318,10 @@ def test_run_funnel_same_timestamp_events_not_dropped(client: TestClient) -> Non
         r for r in run.json()["results"] if r["cohort_name"] == "All Users"
     )
     steps = all_users["steps"]
-    # u1 and u2 both signed up and searched (u1 at same ts)
+    # u1 and u2 both signed up and searched
     assert steps[0]["users"] == 2
     assert steps[1]["users"] == 2, f"Same-timestamp search should count; got {steps[1]['users']}"
-    # Only u1 purchased after searching
+    # Only u1 purchased
     assert steps[2]["users"] == 1
 
 
@@ -614,3 +613,167 @@ def test_list_funnels_without_dataset_marks_funnels_as_invalid(client: TestClien
     target = next((f for f in funnels if f["name"] == "pre_upload_funnel"), None)
     assert target is not None
     assert target["is_valid"] is False
+
+
+def test_create_and_list_funnel_with_conversion_window(client: TestClient) -> None:
+    create = client.post(
+        "/funnels",
+        json={
+            "name": "windowed_funnel",
+            "conversion_window": {"value": 10, "unit": "minute"},
+            "steps": [
+                {"event_name": "signup", "filters": []},
+                {"event_name": "purchase", "filters": []},
+            ],
+        },
+    )
+    assert create.status_code == 200, create.text
+
+    funnels = client.get("/funnels").json()["funnels"]
+    target = next(f for f in funnels if f["name"] == "windowed_funnel")
+    assert target["conversion_window"] == {"value": 10, "unit": "minute"}
+
+
+def test_run_funnel_with_conversion_window_within_limit_progresses(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time\n"
+        "u1,a,2024-01-01 10:00:00\n"
+        "u1,b,2024-01-01 10:05:00\n"
+        "u1,c,2024-01-01 10:09:00\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    client.post(
+        "/map-columns",
+        json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"},
+    )
+
+    fid = client.post(
+        "/funnels",
+        json={
+            "name": "window_within",
+            "conversion_window": {"value": 10, "unit": "minute"},
+            "steps": [{"event_name": "a", "filters": []}, {"event_name": "b", "filters": []}, {"event_name": "c", "filters": []}],
+        },
+    ).json()["id"]
+    run = client.post("/funnels/run", json={"funnel_id": fid})
+    all_users = next(r for r in run.json()["results"] if r["cohort_name"] == "All Users")
+    assert [s["users"] for s in all_users["steps"]] == [1, 1, 1]
+
+
+def test_run_funnel_with_conversion_window_exceeds_limit_drops_user(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time\n"
+        "u1,a,2024-01-01 10:00:00\n"
+        "u1,b,2024-01-01 10:05:00\n"
+        "u1,c,2024-01-01 10:30:00\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    client.post(
+        "/map-columns",
+        json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"},
+    )
+
+    fid = client.post(
+        "/funnels",
+        json={
+            "name": "window_exceeds",
+            "conversion_window": {"value": 10, "unit": "minute"},
+            "steps": [{"event_name": "a", "filters": []}, {"event_name": "b", "filters": []}, {"event_name": "c", "filters": []}],
+        },
+    ).json()["id"]
+    run = client.post("/funnels/run", json={"funnel_id": fid})
+    all_users = next(r for r in run.json()["results"] if r["cohort_name"] == "All Users")
+    assert [s["users"] for s in all_users["steps"]] == [1, 1, 0]
+
+
+def test_conversion_window_first_valid_path_picks_earliest_valid_match(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time\n"
+        "u1,a,2024-01-01 10:00:00\n"
+        "u1,b,2024-01-01 10:20:00\n"
+        "u1,b,2024-01-01 10:08:00\n"
+        "u1,c,2024-01-01 10:12:00\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    client.post(
+        "/map-columns",
+        json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"},
+    )
+    fid = client.post(
+        "/funnels",
+        json={
+            "name": "first_valid",
+            "conversion_window": {"value": 10, "unit": "minute"},
+            "steps": [{"event_name": "a", "filters": []}, {"event_name": "b", "filters": []}, {"event_name": "c", "filters": []}],
+        },
+    ).json()["id"]
+    run = client.post("/funnels/run", json={"funnel_id": fid})
+    all_users = next(r for r in run.json()["results"] if r["cohort_name"] == "All Users")
+    assert [s["users"] for s in all_users["steps"]] == [1, 1, 1]
+
+
+def test_create_funnel_rejects_conversion_window_above_upper_bound(client: TestClient) -> None:
+    r = client.post(
+        "/funnels",
+        json={
+            "name": "invalid_window",
+            "conversion_window": {"value": 10081, "unit": "minute"},
+            "steps": [
+                {"event_name": "signup", "filters": []},
+                {"event_name": "purchase", "filters": []},
+            ],
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_create_funnel_rejects_non_integer_conversion_window_value(client: TestClient) -> None:
+    r = client.post(
+        "/funnels",
+        json={
+            "name": "invalid_window_type",
+            "conversion_window": {"value": "10", "unit": "minute"},
+            "steps": [
+                {"event_name": "signup", "filters": []},
+                {"event_name": "purchase", "filters": []},
+            ],
+        },
+    )
+    assert r.status_code == 422
+
+
+def test_step_order_in_payload_controls_execution_order(client: TestClient) -> None:
+    csv_text = (
+        "user_id,event_name,event_time\n"
+        "u1,signup,2024-01-01 08:00:00\n"
+        "u1,search,2024-01-01 09:00:00\n"
+        "u1,purchase,2024-01-01 10:00:00\n"
+    )
+    assert csv_upload(client, csv_text=csv_text).status_code == 200
+    client.post(
+        "/map-columns",
+        json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"},
+    )
+    create = client.post(
+        "/funnels",
+        json={
+            "name": "ordered_explicitly",
+            "steps": [
+                {"event_name": "purchase", "step_order": 2, "filters": []},
+                {"event_name": "signup", "step_order": 0, "filters": []},
+                {"event_name": "search", "step_order": 1, "filters": []},
+            ],
+        },
+    )
+    assert create.status_code == 200, create.text
+    fid = create.json()["id"]
+
+    listed = client.get("/funnels").json()["funnels"]
+    target = next(f for f in listed if f["id"] == fid)
+    assert [s["event_name"] for s in target["steps"]] == ["signup", "search", "purchase"]
+    assert [s["step_order"] for s in target["steps"]] == [0, 1, 2]
+
+    run = client.post("/funnels/run", json={"funnel_id": fid})
+    assert run.status_code == 200
+    all_users = next(r for r in run.json()["results"] if r["cohort_name"] == "All Users")
+    assert [s["users"] for s in all_users["steps"]] == [1, 1, 1]
