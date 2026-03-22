@@ -12,6 +12,11 @@ function formatTime(sec) {
   return `${h}h ${m}m`
 }
 
+function computePct(userCount, parentUsers) {
+  if (!parentUsers || parentUsers <= 0) return 0
+  return userCount / parentUsers
+}
+
 function nodeKey(path) {
   return path.join('||')
 }
@@ -32,21 +37,22 @@ export default function FlowTable({
 
     cohorts.forEach((cid) => {
       const parentVal = parentRow.values?.[cid]
-      const parentUsers = parentVal?.pct_of_parent > 0
-        ? Math.round(parentVal.user_count / parentVal.pct_of_parent)
-        : (parentVal?.user_count || 0)
-      const childUsers = (children || []).reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
+      const parentUsers = parentVal?.parent_users || 0
+      const hasChildren = children && children.length > 0
+      const childUsers = hasChildren
+        ? children.reduce((sum, row) => sum + (row.values?.[cid]?.user_count || 0), 0)
+        : 0
       const noFurtherActionUsers = Math.max(0, parentUsers - childUsers)
-      const show = parentUsers > 0 && (noFurtherActionUsers / parentUsers) >= 0.01
+      const pct = computePct(noFurtherActionUsers, parentUsers)
+      const show = parentUsers > 0 && pct >= 0.01
       if (show) {
         hasAny = true
         values[cid] = {
           user_count: noFurtherActionUsers,
-          pct_of_parent: noFurtherActionUsers / parentUsers,
-          count: noFurtherActionUsers,
-          pct: noFurtherActionUsers / parentUsers,
+          parent_users: parentUsers,
           median_time_sec: null,
-          p90_time_sec: null,
+          p20_time_sec: null,
+          p80_time_sec: null,
         }
       }
     })
@@ -62,12 +68,13 @@ export default function FlowTable({
   const renderValueCell = (row, cid) => {
     const val = row.values[cid]
     if (!val) return <td key={cid}>—</td>
+    const pct = computePct(val.user_count, val.parent_users)
 
     return (
-      <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | Median ${formatTime(val.median_time_sec)} | P90 ${formatTime(val.p90_time_sec)}`}>
+      <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | Median ${formatTime(val.median_time_sec)} | P20 ${formatTime(val.p20_time_sec)} | P80 ${formatTime(val.p80_time_sec)}`}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontWeight: 700 }}>{formatPct(val.pct)}</div>
-          <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.median_time_sec)} / {formatTime(val.p90_time_sec)}</div>
+          <div style={{ fontWeight: 700 }}>{formatPct(pct)}</div>
+          <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.p20_time_sec)} / {formatTime(val.p80_time_sec)}</div>
         </div>
       </td>
     )
@@ -133,4 +140,4 @@ export default function FlowTable({
   )
 }
 
-export { formatTime, formatPct, nodeKey }
+export { formatTime, formatPct, nodeKey, computePct }

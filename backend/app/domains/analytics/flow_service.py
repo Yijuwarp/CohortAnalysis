@@ -140,18 +140,14 @@ def _build_level_sql(
             FROM {prev_cte}
             GROUP BY cohort_id
         ),
-        continuing AS (
-            SELECT cohort_id, COUNT(*) AS continuing_users
-            FROM transition_candidates
-            GROUP BY cohort_id
-        ),
         agg AS (
             SELECT
                 cohort_id,
                 next_event,
                 COUNT(*) AS transition_users,
                 MEDIAN(time_diff_sec) AS median_time_sec,
-                APPROX_QUANTILE(time_diff_sec, 0.9) AS p90_time_sec
+                APPROX_QUANTILE(time_diff_sec, 0.2) AS p20_time_sec,
+                APPROX_QUANTILE(time_diff_sec, 0.8) AS p80_time_sec
             FROM transition_candidates
             GROUP BY cohort_id, next_event
         )
@@ -165,12 +161,11 @@ def _build_level_sql(
             a.next_event,
             a.transition_users,
             d.total_users,
-            COALESCE(c.continuing_users, 0) AS continuing_users,
             a.median_time_sec,
-            a.p90_time_sec
+            a.p20_time_sec,
+            a.p80_time_sec
         FROM agg a
         JOIN denominators d ON d.cohort_id = a.cohort_id
-        LEFT JOIN continuing c ON c.cohort_id = a.cohort_id
         ORDER BY a.cohort_id, a.transition_users DESC
     """
     return sql, params
@@ -183,8 +178,7 @@ def _prune_and_aggregate(events_with_counts: list[tuple[str, int]], anchor_users
 
     top_rows = []
     for event_name, count in top:
-        pct = (count / anchor_users) if anchor_users > 0 else 0.0
-        top_rows.append({"event_name": event_name, "count": count, "pct": round(pct, 6)})
+        top_rows.append({"event_name": event_name, "count": count})
 
     other_count = sum(c for _, c in rest)
     return top_rows, other_count
@@ -220,11 +214,11 @@ def _rows_payload(
     top_k_enabled: bool,
 ) -> list[dict]:
     per_cohort: dict[int, dict[str, object]] = {}
-    for cohort_id, next_event, transition_users, total_users, continuing_users, median_time_sec, p90_time_sec in raw_rows:
+    for cohort_id, next_event, transition_users, total_users, median_time_sec, p20_time_sec, p80_time_sec in raw_rows:
         cid = int(cohort_id)
         if cid not in per_cohort:
-            per_cohort[cid] = {"anchor": int(total_users), "continuing": int(continuing_users), "events": []}
-        per_cohort[cid]["events"].append((str(next_event), int(transition_users), median_time_sec, p90_time_sec))
+            per_cohort[cid] = {"anchor": int(total_users), "events": []}
+        per_cohort[cid]["events"].append((str(next_event), int(transition_users), median_time_sec, p20_time_sec, p80_time_sec))
 
     if not per_cohort:
         return []
@@ -235,45 +229,35 @@ def _rows_payload(
 
     for cohort_id, data in per_cohort.items():
         anchor_users = int(data["anchor"])
-        continuing_users = int(data["continuing"])
-        continue_pct = round((continuing_users / anchor_users) if anchor_users > 0 else 0.0, 6)
-        dropoff_pct = round(1.0 - continue_pct, 6)
 
         if top_k_enabled:
-            top_rows, other_count = _prune_and_aggregate([(n, c) for n, c, _, _ in data["events"]], anchor_users)
+            top_rows, other_count = _prune_and_aggregate([(n, c) for n, c, _, _, _ in data["events"]], anchor_users)
         else:
             top_rows = [
-                {"event_name": name, "count": count, "pct": round((count / anchor_users) if anchor_users > 0 else 0.0, 6)}
-                for name, count, _, _ in sorted(data["events"], key=lambda item: item[1], reverse=True)
+                {"event_name": name, "count": count}
+                for name, count, _, _, _ in sorted(data["events"], key=lambda item: item[1], reverse=True)
             ]
             other_count = 0
-        timing_map = {n: (m, p) for n, _, m, p in data["events"]}
+        timing_map = {n: (m, p20, p80) for n, _, m, p20, p80 in data["events"]}
 
         for row in top_rows:
             event_name = row["event_name"]
-            median, p90 = timing_map.get(event_name, (None, None))
+            median, p20, p80 = timing_map.get(event_name, (None, None, None))
             event_cohort_data.setdefault(event_name, {})[cohort_id] = {
                 "user_count": row["count"],
-                "pct_of_parent": row["pct"],
-                "count": row["count"],
-                "pct": row["pct"],
-                "continue_pct": continue_pct,
-                "dropoff_pct": dropoff_pct,
+                "parent_users": anchor_users,
                 "median_time_sec": float(median) if median is not None else None,
-                "p90_time_sec": float(p90) if p90 is not None else None,
+                "p20_time_sec": float(p20) if p20 is not None else None,
+                "p80_time_sec": float(p80) if p80 is not None else None,
             }
 
         if other_count > 0:
-            other_pct = round(other_count / anchor_users, 6) if anchor_users > 0 else 0.0
             cohort_other[cohort_id] = {
                 "user_count": other_count,
-                "pct_of_parent": other_pct,
-                "count": other_count,
-                "pct": other_pct,
-                "continue_pct": continue_pct,
-                "dropoff_pct": dropoff_pct,
+                "parent_users": anchor_users,
                 "median_time_sec": None,
-                "p90_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
             }
 
     named_rows = []
@@ -282,16 +266,14 @@ def _rows_payload(
         for cid, _ in cohorts:
             values[str(cid)] = cohort_vals.get(cid, {
                 "user_count": 0,
-                "pct_of_parent": 0.0,
-                "count": 0,
-                "pct": 0.0,
-                "continue_pct": 0.0,
-                "dropoff_pct": 1.0,
+                "parent_users": 0,
                 "median_time_sec": None,
-                "p90_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
             })
-        sort_pct = cohort_vals.get(first_cohort_id, {}).get("pct", 0.0) if first_cohort_id else 0.0
-        sort_count = cohort_vals.get(first_cohort_id, {}).get("count", 0) if first_cohort_id else 0
+        sort_count = cohort_vals.get(first_cohort_id, {}).get("user_count", 0) if first_cohort_id else 0
+        sort_parent = cohort_vals.get(first_cohort_id, {}).get("parent_users", 0) if first_cohort_id else 0
+        sort_pct = (sort_count / sort_parent) if sort_parent else 0.0
         named_rows.append({"path": [*path_prefix, event_name], "values": values, "expandable": True, "_sp": sort_pct, "_sc": sort_count})
 
     named_rows.sort(key=lambda row: (-row["_sp"], -row["_sc"]))
@@ -302,13 +284,10 @@ def _rows_payload(
         for cid, _ in cohorts:
             other_values[str(cid)] = cohort_other.get(cid, {
                 "user_count": 0,
-                "pct_of_parent": 0.0,
-                "count": 0,
-                "pct": 0.0,
-                "continue_pct": 0.0,
-                "dropoff_pct": 1.0,
+                "parent_users": 0,
                 "median_time_sec": None,
-                "p90_time_sec": None,
+                "p20_time_sec": None,
+                "p80_time_sec": None,
             })
         output.append({"path": [*path_prefix, "Other"], "values": other_values, **({"expandable": False} if include_expandable else {})})
 

@@ -203,16 +203,16 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       }
 
       const val = row.values?.[cohortId]
-      const users = Number(val?.user_count ?? val?.count ?? 0)
+      const users = Number(val?.user_count ?? 0)
       if (users <= 0) return
-      const pctOfParent = Number(val?.pct_of_parent ?? val?.pct ?? 0)
-      const parentUsers = users / (pctOfParent || 1)
+      const parentUsers = Number(val?.parent_users ?? 0)
+      if (parentUsers <= 0) return
 
       const key = `${source}→${target}`
       const existing = edgeAgg.get(key)
       if (existing) {
         existing.users += users
-        existing.parentUsers += parentUsers
+        existing.parentUsers = Math.max(existing.parentUsers, parentUsers)
       } else {
         edgeAgg.set(key, {
           id: key,
@@ -220,10 +220,9 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
           target,
           users,
           parentUsers,
-          continue_pct: Number(val?.continue_pct ?? 0),
-          dropoff_pct: Number(val?.dropoff_pct ?? 0),
           median_time_sec: val?.median_time_sec ?? null,
-          p90_time_sec: val?.p90_time_sec ?? null,
+          p20_time_sec: val?.p20_time_sec ?? null,
+          p80_time_sec: val?.p80_time_sec ?? null,
         })
       }
 
@@ -308,33 +307,33 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
 
     return {
       id: nodeId,
-    data: {
-      label: isNoFurtherAction ? 'No further action' : `${event}${isLoop ? ' ↺' : ''}`,
-      users,
-      isRoot: nodeId === rootNodeId,
-      isLoop,
-      isNoFurtherAction,
-    },
+      data: {
+        label: isNoFurtherAction ? 'No further action' : `${event}${isLoop ? ' ↺' : ''}`,
+        users,
+        isRoot: nodeId === rootNodeId,
+        isLoop,
+        isNoFurtherAction,
+      },
       width,
       height,
-    position: { x: 0, y: 0 },
-    style: {
-      width,
-      minHeight: height,
-      border: isNoFurtherAction ? '1px dashed #d1d5db' : (isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb')),
-      borderRadius: '10px',
-      background: isNoFurtherAction ? '#f9fafb' : (isLoop ? '#fffbeb' : '#fff'),
-      boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
-      padding: '8px 12px',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      textAlign: 'center',
-      whiteSpace: 'normal',
-    },
-    title: isNoFurtherAction ? 'Users who did not perform any tracked event after this step' : (isLoop ? 'Users returned to this event (loop)' : ''),
-    sourcePosition: 'right',
-    targetPosition: 'left',
+      position: { x: 0, y: 0 },
+      style: {
+        width,
+        minHeight: height,
+        border: isNoFurtherAction ? '1px dashed #d1d5db' : (isLoop ? '2px dashed #f59e0b' : (nodeId === rootNodeId ? '2px solid #2563eb' : '1px solid #e5e7eb')),
+        borderRadius: '10px',
+        background: isNoFurtherAction ? '#f9fafb' : (isLoop ? '#fffbeb' : '#fff'),
+        boxShadow: '0 1px 2px rgba(0,0,0,0.06)',
+        padding: '8px 12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        textAlign: 'center',
+        whiteSpace: 'normal',
+      },
+      title: isNoFurtherAction ? 'Users who did not perform any tracked event after this step' : (isLoop ? 'Users returned to this event (loop)' : ''),
+      sourcePosition: 'right',
+      targetPosition: 'left',
       rank: depth,
     }
   })
@@ -357,7 +356,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
       stroke: '#3b82f6',
       opacity: Math.max(0.3, pct / 20),
     },
-    data: { ...edge, pct, users, sourceLabel, targetLabel },
+    data: { ...edge, pct, users, sourceLabel, targetLabel, parentUsers: edge.parentUsers },
   })})
 
   noFurtherActionEdges.forEach((edge) => {
@@ -376,6 +375,7 @@ export function buildGraphFromTree(flowTree, rootEvent, direction, options = {})
         sourceLabel: edge.sourceLabel,
         targetLabel: 'No further action',
         users: edge.users,
+        parentUsers,
         pct: edge.pct,
       },
       title: `${edge.sourceLabel} → No further action\n${(edge.pct * 100).toFixed(1)}% (${Math.round(edge.users).toLocaleString()} users)`,
@@ -441,6 +441,7 @@ export default function FlowDiagram({ data }) {
         }
       } else {
         unique[key].data.users += edge.data?.users || 0
+        unique[key].data.parentUsers += edge.data?.parentUsers || 0
       }
     })
 
@@ -473,7 +474,7 @@ export default function FlowDiagram({ data }) {
 
       const edges = data.edges.map((edge) => ({
         ...edge,
-        title: `Continue ${formatPct(edge.data?.continue_pct)} | Drop-off ${formatPct(edge.data?.dropoff_pct)} | Median ${formatTime(edge.data?.median_time_sec)} | P90 ${formatTime(edge.data?.p90_time_sec)}`,
+        title: `${formatPct(edge.data?.pct)} (${Number(edge.data?.users || 0).toLocaleString()} users) | Median ${formatTime(edge.data?.median_time_sec)} | P20 ${formatTime(edge.data?.p20_time_sec)} | P80 ${formatTime(edge.data?.p80_time_sec)}`,
       }))
 
       const layoutedNodes = await buildLayout(nodes, edges)
@@ -546,7 +547,11 @@ export default function FlowDiagram({ data }) {
         >
           {tooltip.edges.map((edge) => (
             <div key={edge.id}>
-              {edge.data?.sourceLabel} → {edge.data?.targetLabel} — {(Number(edge.data?.pct || 0) * 100).toFixed(1)}% ({Number(edge.data?.users || 0).toLocaleString()})
+              {edge.data?.sourceLabel} → {edge.data?.targetLabel} — {formatPct(
+                Number(edge.data?.parentUsers || 0) > 0
+                  ? Number(edge.data?.users || 0) / Number(edge.data?.parentUsers || 0)
+                  : Number(edge.data?.pct || 0)
+              )} ({Number(edge.data?.users || 0).toLocaleString()})
             </div>
           ))}
         </div>
