@@ -523,7 +523,9 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
         tab="usage"
         maxDay={maxDay}
         currentEvent={event}
+        retentionEvent={retentionEvent}
         defaultMetric={metricType === 'per_active_user' ? 'per_retained_user' : metricType !== 'count' ? metricType : 'per_installed_user'}
+        propertyFilter={propertyFilter}
       />
     </section>
   )

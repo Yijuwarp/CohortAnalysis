@@ -13,6 +13,7 @@ from scipy import stats
 
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.queries.retention_queries import fetch_retention_active_rows
+from app.queries.usage_queries import build_usage_property_filter_clause
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -274,11 +275,12 @@ def _compute_retention_vectors(
     """
     unit = "day" if granularity == "day" else "hour"
     
-    event_filter = ""
-    params: list = [cohort_id, day]
     if retention_event and retention_event != "any":
         event_filter = "AND es.event_name = ?"
         params = [cohort_id, retention_event, day]
+    else:
+        event_filter = ""
+        params = [cohort_id, day]
 
     # NOTE:
     # Day = calendar day difference (DATE_TRUNC)
@@ -286,6 +288,9 @@ def _compute_retention_vectors(
     # Classic retention MUST match previous implementation exactly.
     # Do not modify query structure without updating regression tests.
     
+    # Align date logic: use CAS event_time
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', cas.event_time))"
+
     if retention_type == "classic":
         query = f"""
         SELECT DISTINCT cm.user_id
@@ -298,7 +303,7 @@ def _compute_retention_vectors(
          AND es.event_name = cas.event_name
         WHERE cm.cohort_id = ?
           {event_filter}
-          AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) = ?
+          AND {diff_expr} = ?
         """
     else:
         query = f"""
@@ -311,10 +316,9 @@ def _compute_retention_vectors(
                 ON es.user_id = cas.user_id
                AND es.event_time = cas.event_time
                AND es.event_name = cas.event_name
-              WHERE cas.cohort_id = cm.cohort_id
-                AND cas.user_id = cm.user_id
+              WHERE cas.cohort_id = cm.cohort_id AND cas.user_id = cm.user_id
                 {event_filter}
-                AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) >= ?
+                AND {diff_expr} >= ?
           )
         """
 
@@ -337,6 +341,9 @@ def _compute_usage_volume_vectors(
     day: int,
     metric: str,
     granularity: str = "day",
+    property: str | None = None,
+    operator: str = "=",
+    value: str | None = None,
 ) -> list[float]:
     """
     Returns per-user metric vector for volume-based usage metrics.
@@ -345,6 +352,15 @@ def _compute_usage_volume_vectors(
     cumulative = metric in ("cumulative_per_installed_user",)
     day_condition = "<= ?" if cumulative else "= ?"
 
+    property_clause, property_params = build_usage_property_filter_clause(
+        property=property,
+        operator=operator,
+        value=value,
+        table_alias="es",
+    )
+
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     rows = conn.execute(
         f"""
         SELECT cm.user_id, COALESCE(SUM(es.event_count), 0) AS event_count
@@ -352,12 +368,12 @@ def _compute_usage_volume_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0{property_clause}
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
-        [event, day, cohort_id],
+        [event, day, *property_params, cohort_id],
     ).fetchall()
 
     cohort_size = conn.execute(
@@ -372,17 +388,13 @@ def _compute_usage_volume_vectors(
     if metric == "per_retained_user":
         # Denominator: retained users on day
         retained_rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT cm.user_id
             FROM cohort_membership cm
-            JOIN cohort_activity_snapshot cas
-              ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
             JOIN events_scoped es
-              ON es.user_id = cas.user_id
-             AND es.event_time = cas.event_time
-             AND es.event_name = cas.event_name
+              ON es.user_id = cm.user_id
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', cas.event_time)) = ?
+              AND {diff_expr} = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -404,6 +416,9 @@ def _compute_unique_users_vectors(
     day: int,
     metric: str,
     granularity: str = "day",
+    property: str | None = None,
+    operator: str = "=",
+    value: str | None = None,
 ) -> tuple[list[float], int, int]:
     """
     Returns (binary_vector, n_success, n_total) for unique user proportion metrics.
@@ -412,6 +427,15 @@ def _compute_unique_users_vectors(
     cumulative = metric == "unique_users_cumulative_percent"
     day_condition = "<= ?" if cumulative else "= ?"
 
+    property_clause, property_params = build_usage_property_filter_clause(
+        property=property,
+        operator=operator,
+        value=value,
+        table_alias="es",
+    )
+
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     fired_rows = conn.execute(
         f"""
         SELECT DISTINCT cm.user_id
@@ -419,11 +443,11 @@ def _compute_unique_users_vectors(
         JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0{property_clause}
         WHERE cm.cohort_id = ?
         """,
-        [event, day, cohort_id],
+        [event, day, *property_params, cohort_id],
     ).fetchall()
 
     fired_set = {r[0] for r in fired_rows}
@@ -450,6 +474,8 @@ def _compute_revenue_vectors(
     cumulative = metric == "cumulative_revenue_per_acquired_user"
     day_condition = "<= ?" if cumulative else "= ?"
 
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     rows = conn.execute(
         f"""
         SELECT cm.user_id, COALESCE(SUM(es.modified_revenue), 0.0) AS revenue
@@ -457,8 +483,8 @@ def _compute_revenue_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name IN (SELECT event_name FROM revenue_event_selection WHERE is_included = TRUE)
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -470,17 +496,13 @@ def _compute_revenue_vectors(
 
     if metric == "revenue_per_retained_user":
         retained_rows = conn.execute(
-            """
+            f"""
             SELECT DISTINCT cm.user_id
             FROM cohort_membership cm
-            JOIN cohort_activity_snapshot cas
-              ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
             JOIN events_scoped es
-              ON es.user_id = cas.user_id
-             AND es.event_time = cas.event_time
-             AND es.event_name = cas.event_name
+              ON es.user_id = cm.user_id
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('{unit}', cm.join_time, cas.event_time) = ?
+              AND {diff_expr} = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -504,6 +526,9 @@ def compare_cohorts(
     event: str | None = None,
     granularity: str = "day",
     retention_type: str = "classic",
+    property: str | None = None,
+    operator: str = "=",
+    value: str | None = None,
 ) -> dict:
     if metric != "retention_rate" and granularity != "day":
         raise HTTPException(
@@ -546,6 +571,9 @@ def compare_cohorts(
         if not row:
             raise HTTPException(status_code=404, detail=f"Cohort {cid} not found or inactive")
 
+    count = conn.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
+    print("COMPARE: using events_scoped row count:", count)
+
     # ------------------------------------------------------------------
     # Compute vectors
     # ------------------------------------------------------------------
@@ -558,16 +586,16 @@ def compare_cohorts(
     elif metric in ("unique_users_percent", "unique_users_cumulative_percent"):
         if not event:
             raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a, s_a, n_a = _compute_unique_users_vectors(conn, cohort_a, event, day, metric, granularity)
-        vec_b, s_b, n_b = _compute_unique_users_vectors(conn, cohort_b, event, day, metric, granularity)
+        vec_a, s_a, n_a = _compute_unique_users_vectors(conn, cohort_a, event, day, metric, granularity, property, operator, value)
+        vec_b, s_b, n_b = _compute_unique_users_vectors(conn, cohort_b, event, day, metric, granularity, property, operator, value)
         val_a = s_a / n_a if n_a > 0 else 0.0
         val_b = s_b / n_b if n_b > 0 else 0.0
 
     elif metric in {"per_installed_user", "cumulative_per_installed_user", "per_retained_user", "per_event_firer"}:
         if not event:
             raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a = _compute_usage_volume_vectors(conn, cohort_a, event, day, metric, granularity)
-        vec_b = _compute_usage_volume_vectors(conn, cohort_b, event, day, metric, granularity)
+        vec_a = _compute_usage_volume_vectors(conn, cohort_a, event, day, metric, granularity, property, operator, value)
+        vec_b = _compute_usage_volume_vectors(conn, cohort_b, event, day, metric, granularity, property, operator, value)
         n_a, n_b = len(vec_a), len(vec_b)
         s_a = s_b = None
         val_a = sum(vec_a) / n_a if n_a > 0 else 0.0

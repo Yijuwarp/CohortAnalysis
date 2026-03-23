@@ -520,7 +520,7 @@ function FunnelChart({ result }) {
                     <div
                       className="funnel-bar-fill"
                       style={{
-                        width: `${barWidth}%`,
+                        width: `${Number(Math.min(100, barWidth).toFixed(1))}%`,
                         background: getCohortColor(cohort.cohort_id, cohortIdx),
                         minWidth: minWidthPx,
                       }}

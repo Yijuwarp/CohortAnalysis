@@ -61,6 +61,7 @@ function renderPane(props = {}) {
       tab="retention"
       maxDay={7}
       defaultMetric="retention_rate"
+      retentionEvent={null}
       {...props}
     />
   )

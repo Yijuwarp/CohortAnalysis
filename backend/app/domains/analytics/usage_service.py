@@ -158,6 +158,9 @@ def get_usage(
         end_timer(event=event, max_day=max_day, retention_event=retention_event, error="event_not_found")
         return empty_response
 
+    count = connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
+    print("USAGE: using events_scoped row count:", count)
+
     known_columns = {
         row[0]
         for row in connection.execute(
