@@ -15,7 +15,7 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-export default function MonetizationTable({ refreshToken, maxDay }) {
+export default function MonetizationTable({ refreshToken, maxDay, retentionEvent }) {
   const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState('table')
   const [revenueRows, setRevenueRows] = useState([])
@@ -307,6 +307,7 @@ export default function MonetizationTable({ refreshToken, maxDay }) {
           onClose={() => setIsComparePaneOpen(false)}
           tab="monetization"
           maxDay={safeMaxDay}
+          retentionEvent={retentionEvent}
           defaultMetric={metricType === 'cumulative_revenue' || metricType === 'total_revenue' ? 'revenue_per_acquired_user' : metricType}
         />
       </div>

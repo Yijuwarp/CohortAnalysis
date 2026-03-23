@@ -235,6 +235,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         granularity={mode}
         retentionType={retentionType}
         defaultMetric="retention_rate"
+        retentionEvent={retentionEvent}
       />
     </section>
   )

@@ -392,6 +392,7 @@ export default function App() {
                 <MonetizationTable
                   refreshToken={retentionRefreshToken}
                   maxDay={globalMaxDay}
+                  retentionEvent={selectedRetentionEvent}
                 />
               )}
               {activeTab === 'funnels' && (

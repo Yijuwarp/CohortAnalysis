@@ -275,11 +275,12 @@ def _compute_retention_vectors(
     """
     unit = "day" if granularity == "day" else "hour"
     
-    event_filter = ""
-    params: list = [cohort_id, day]
     if retention_event and retention_event != "any":
         event_filter = "AND es.event_name = ?"
         params = [cohort_id, retention_event, day]
+    else:
+        event_filter = ""
+        params = [cohort_id, day]
 
     # NOTE:
     # Day = calendar day difference (DATE_TRUNC)
@@ -287,15 +288,22 @@ def _compute_retention_vectors(
     # Classic retention MUST match previous implementation exactly.
     # Do not modify query structure without updating regression tests.
     
+    # Align date logic: use CAS event_time
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', cas.event_time))"
+
     if retention_type == "classic":
         query = f"""
         SELECT DISTINCT cm.user_id
         FROM cohort_membership cm
+        JOIN cohort_activity_snapshot cas
+          ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
         JOIN events_scoped es
-          ON es.user_id = cm.user_id
+          ON es.user_id = cas.user_id
+         AND es.event_time = cas.event_time
+         AND es.event_name = cas.event_name
         WHERE cm.cohort_id = ?
           {event_filter}
-          AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) = ?
+          AND {diff_expr} = ?
         """
     else:
         query = f"""
@@ -303,10 +311,14 @@ def _compute_retention_vectors(
         FROM cohort_membership cm
         WHERE cm.cohort_id = ?
           AND EXISTS (
-              SELECT 1 FROM events_scoped es
-              WHERE es.user_id = cm.user_id
-                {event_filter.replace('AND es.event_name', 'AND es.event_name')}
-                AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= ?
+              SELECT 1 FROM cohort_activity_snapshot cas
+              JOIN events_scoped es
+                ON es.user_id = cas.user_id
+               AND es.event_time = cas.event_time
+               AND es.event_name = cas.event_name
+              WHERE cas.cohort_id = cm.cohort_id AND cas.user_id = cm.user_id
+                {event_filter}
+                AND {diff_expr} >= ?
           )
         """
 
@@ -347,6 +359,8 @@ def _compute_usage_volume_vectors(
         table_alias="es",
     )
 
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     rows = conn.execute(
         f"""
         SELECT cm.user_id, COALESCE(SUM(es.event_count), 0) AS event_count
@@ -354,8 +368,8 @@ def _compute_usage_volume_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0{property_clause}
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0{property_clause}
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -380,7 +394,7 @@ def _compute_usage_volume_vectors(
             JOIN events_scoped es
               ON es.user_id = cm.user_id
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) = ?
+              AND {diff_expr} = ?
             """,
             [cohort_id, day],
         ).fetchall()
@@ -420,6 +434,8 @@ def _compute_unique_users_vectors(
         table_alias="es",
     )
 
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     fired_rows = conn.execute(
         f"""
         SELECT DISTINCT cm.user_id
@@ -427,8 +443,8 @@ def _compute_unique_users_vectors(
         JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name = ?
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0{property_clause}
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0{property_clause}
         WHERE cm.cohort_id = ?
         """,
         [event, day, *property_params, cohort_id],
@@ -458,6 +474,8 @@ def _compute_revenue_vectors(
     cumulative = metric == "cumulative_revenue_per_acquired_user"
     day_condition = "<= ?" if cumulative else "= ?"
 
+    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
+
     rows = conn.execute(
         f"""
         SELECT cm.user_id, COALESCE(SUM(es.modified_revenue), 0.0) AS revenue
@@ -465,8 +483,8 @@ def _compute_revenue_vectors(
         LEFT JOIN events_scoped es
           ON es.user_id = cm.user_id
          AND es.event_name IN (SELECT event_name FROM revenue_event_selection WHERE is_included = TRUE)
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) {day_condition}
-         AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) >= 0
+         AND {diff_expr} {day_condition}
+         AND {diff_expr} >= 0
         WHERE cm.cohort_id = ?
         GROUP BY cm.user_id
         """,
@@ -484,7 +502,7 @@ def _compute_revenue_vectors(
             JOIN events_scoped es
               ON es.user_id = cm.user_id
             WHERE cm.cohort_id = ?
-              AND DATE_DIFF('{unit}', DATE_TRUNC('{unit}', cm.join_time), DATE_TRUNC('{unit}', es.event_time)) = ?
+              AND {diff_expr} = ?
             """,
             [cohort_id, day],
         ).fetchall()
