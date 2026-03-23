@@ -348,91 +348,92 @@ export default function ComparePane({
         {error && <p className="error compare-error">{error}</p>}
 
         {/* Results */}
-        {result && (
-          <div className="compare-results" data-testid="compare-results">
-            <div className="compare-header">
-              {result.metric_label || `${labelPrefix} ${selectedDay} Comparison`}
-            </div>
+        {result && (() => {
+          const impactValue = result.difference;
+          const isPositive = impactValue > 0;
+          const isNegative = impactValue < 0;
+          const valueColor = isPositive ? '#16A34A' : (isNegative ? '#DC2626' : 'inherit');
+          
+          const isSig = result.p_value !== null && result.p_value !== undefined && result.p_value < 0.05;
+          const sigColor = isSig ? '#16A34A' : '#A16207';
+          const sigText = result.p_value === null || result.p_value === undefined ? 'Not enough variation to compare cohorts' : (isSig ? 'Significant' : 'Not significant');
+          
+          const variantCohort = cohorts.find(c => String(c.cohort_id) === String(cohortA));
+          const baselineCohort = cohorts.find(c => String(c.cohort_id) === String(cohortB));
+          
+          const formattedDiff = `${impactValue >= 0 ? '+' : ''}${formatValue(impactValue, selectedMetric)}`;
+          const formattedLift = result.relative_lift !== null && result.relative_lift !== undefined 
+            ? `(${result.relative_lift >= 0 ? '+' : ''}${(result.relative_lift * 100).toFixed(2)}%)` 
+            : '';
 
-            <div className="compare-result-hero section">
-              <div className="lift">
-                {result.relative_lift !== null && result.relative_lift !== undefined 
-                  ? `${result.relative_lift >= 0 ? '+' : ''}${(result.relative_lift * 100).toFixed(2)}%`
-                  : '—'}
-              </div>
-              <div 
-                className={result.p_value !== null && result.p_value !== undefined && result.p_value < 0.05 ? "status significant" : "status not-significant"}
-                data-testid={result.p_value === null || result.p_value === undefined ? "compare-null" : (result.p_value < 0.05 ? "compare-significant" : "compare-not-significant")}
-              >
-                ● {result.p_value === null || result.p_value === undefined ? 'Not enough variation to compare cohorts' : (result.p_value < 0.05 ? 'Statistically significant' : 'Not statistically significant')}
-              </div>
-            </div>
+          return (
+            <div className="compare-results" data-testid="compare-results">
 
-            <div className="compare-values section">
-              <div className="value-block">
-                <div className="label">
-                  Variant {(() => {
-                    const c = cohorts.find(c => String(c.cohort_id) === String(cohortA))
-                    return c ? `(${c.cohort_name})` : ''
-                  })()}
-                </div>
-                <div className="value" data-testid="compare-value-a">
-                  {formatValue(result.cohort_a_value, selectedMetric)}
-                </div>
-              </div>
-
-              <div className="value-block">
-                <div className="label">
-                  Baseline {(() => {
-                    const c = cohorts.find(c => String(c.cohort_id) === String(cohortB))
-                    return c ? `(${c.cohort_name})` : ''
-                  })()}
-                </div>
-                <div className="value" data-testid="compare-value-b">
-                  {formatValue(result.cohort_b_value, selectedMetric)}
+              <div className="section">
+                <div className="section-header">RESULT</div>
+                <div className="section-content">
+                  <div className="metric-label">{result.metric_label || `${labelPrefix} ${selectedDay} Comparison`}</div>
+                  <div className="impact">
+                    Impact: <span className="impact-value" style={{ color: valueColor }}>
+                      {result.relative_lift !== null && result.relative_lift !== undefined 
+                        ? `${result.relative_lift >= 0 ? '+' : ''}${(result.relative_lift * 100).toFixed(2)}%`
+                        : '—'}
+                    </span>
+                  </div>
+                  <div className="significance">
+                    Significance: <span className="significance-value" style={{ color: sigColor }}>
+                      {sigText}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
 
-            <div className="difference section">
-              {result.difference >= 0 ? '+' : ''}{formatValue(result.difference, selectedMetric)} 
-              {result.relative_lift !== null && result.relative_lift !== undefined ? ` (${(result.relative_lift * 100).toFixed(2)}%)` : ''}
-            </div>
+              <div className="divider" />
 
-            <div className="pvalue section">
-              Statistical Test (Mann-Whitney)
-              <div data-testid="compare-p-value">
-                p = {formatPValue(result.p_value)}
+              <div className="section">
+                <div className="section-header">VALUES</div>
+                <div className="section-content grid">
+                  <div>Baseline {baselineCohort ? `(${baselineCohort.cohort_name})` : ''}</div>
+                  <div>Variant {variantCohort ? `(${variantCohort.cohort_name})` : ''}</div>
+
+                  <div data-testid="compare-value-b">{formatValue(result.cohort_b_value, selectedMetric)}</div>
+                  <div data-testid="compare-value-a">{formatValue(result.cohort_a_value, selectedMetric)}</div>
+
+                  <div></div>
+                  <div style={{ color: valueColor }}>{formattedDiff} {formattedLift}</div>
+                </div>
               </div>
-            </div>
 
-            {/* Expandable test details */}
-            <div className="test-details-container section">
-              <button
-                type="button"
-                className="compare-details-toggle"
-                onClick={() => setShowTestDetails(prev => !prev)}
-                aria-expanded={showTestDetails}
-                data-testid="compare-test-details-toggle"
-              >
-                Test Details {showTestDetails ? '▾' : '▸'}
-              </button>
+              <div className="divider" />
 
-              {showTestDetails && (
-                <div className="test-details" data-testid="compare-test-details">
-                  {result.tests.map(t => (
-                    <div key={t.name} className="compare-test-row">
-                      <span className="compare-test-name">{t.name.replace(/_/g, ' ')}</span>
-                      <span className="compare-test-pvalue">
-                        p = {formatPValue(t.p_value)}
-                      </span>
+              <div className="section">
+                <div className="section-header">STATISTICS</div>
+                <div className="section-content">
+                  <div>Statistical Test (Mann-Whitney)</div>
+                  <div data-testid="compare-p-value">p = {formatPValue(result.p_value)}</div>
+
+                  <div 
+                    className="test-details-header" 
+                    onClick={() => setShowTestDetails(v => !v)}
+                  >
+                    Test Details {showTestDetails ? '▾' : '▸'}
+                  </div>
+
+                  {showTestDetails && (
+                    <div className="test-details" data-testid="compare-test-details">
+                      {result.tests.map(t => (
+                        <div key={t.name}>
+                          - {t.name.replace(/_/g, ' ')}: p = {formatPValue(t.p_value)}
+                        </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
                 </div>
-              )}
+              </div>
+
             </div>
-          </div>
-        )}
+          );
+        })()}
       </aside>
     </>
   )
