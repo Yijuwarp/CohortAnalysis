@@ -82,6 +82,7 @@ export default function ComparePane({
   currentEvent,     // for usage tab: the event that's currently selected in UsageTable
   granularity = 'day',
   retentionType = 'classic',
+  propertyFilter = null,
 }) {
   const paneRef = useRef(null)
   const [cohorts, setCohorts] = useState([])
@@ -182,6 +183,9 @@ export default function ComparePane({
         event: needsEvent ? currentEvent : null,
         granularity: tab === 'retention' ? granularity : 'day',
         retention_type: tab === 'retention' ? retentionType : 'classic',
+        property: propertyFilter ? propertyFilter.property : undefined,
+        operator: propertyFilter ? propertyFilter.operator : undefined,
+        value: propertyFilter ? propertyFilter.value : undefined,
       })
       setResult(res)
     } catch (err) {
@@ -381,7 +385,7 @@ export default function ComparePane({
                     </span>
                   </div>
                   <div className="significance">
-                    Significance: <span className="significance-value" style={{ color: sigColor }}>
+                    Significance: <span data-testid="compare-significant" className="significance-value" style={{ color: sigColor }}>
                       {sigText}
                     </span>
                   </div>
