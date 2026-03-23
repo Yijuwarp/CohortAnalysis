@@ -2209,12 +2209,76 @@ tbody tr:hover {
 .compare-results {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  background: #f8fafb;
-  border: 1px solid var(--color-border, #e5e7eb);
-  border-radius: 10px;
-  padding: 16px;
+  font-size: 13px;
   animation: compareFadeIn 0.22s ease;
+}
+
+.compare-results .section {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+}
+
+.compare-results .section-header {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+  color: #6B7280;
+}
+
+.compare-results .section-content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.compare-results .grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 8px;
+}
+
+.compare-results .grid div {
+  font-size: 14px;
+}
+
+.compare-results .divider {
+  height: 1px;
+  background: #E5E7EB;
+  margin: 4px 0;
+}
+
+.impact {
+  font-size: 18px;
+  font-weight: 600;
+  color: #111827;
+}
+
+.metric-label {
+  font-size: 12px;
+  color: #6B7280;
+}
+
+.significance {
+  font-size: 12px;
+  font-weight: 500;
+  color: #111827;
+}
+
+.test-details-header {
+  cursor: pointer;
+  color: #6B7280;
+  font-size: 12px;
+  margin-top: 6px;
+}
+
+.test-details-header:hover {
+  color: #111827;
+}
+
+.test-details {
+  color: #6B7280;
 }
 
 @keyframes compareFadeIn {
@@ -2228,112 +2292,6 @@ tbody tr:hover {
 
 .full-width {
   width: 100%;
-}
-
-.compare-header {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 12px;
-}
-
-.compare-result-hero {
-  text-align: center;
-  padding: 16px;
-  border-radius: 8px;
-  background: #F9FAFB;
-}
-
-.compare-result-hero .lift {
-  font-size: 20px;
-  font-weight: 600;
-}
-
-.compare-result-hero .status {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-.compare-result-hero .status.significant {
-  color: #2E7D32;
-}
-
-.compare-result-hero .status.not-significant {
-  color: #6B7280;
-}
-
-.compare-values {
-  display: flex;
-  justify-content: space-between;
-  margin-top: 12px;
-}
-
-.value-block .label {
-  font-size: 12px;
-  color: #6B7280;
-}
-
-.value-block .value {
-  font-weight: 600;
-  font-size: 16px;
-}
-
-.difference {
-  font-size: 14px;
-  font-weight: 600;
-  color: #111827;
-}
-
-.pvalue {
-  font-size: 12px;
-  color: #6B7280;
-  margin-top: 12px;
-}
-
-.test-details-container {
-  margin-top: 12px;
-  padding-top: 8px;
-  border-top: 1px solid #E5E7EB;
-}
-
-.compare-details-toggle {
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  font-size: 13px;
-  color: var(--color-primary, #2e7d32);
-  padding: 0;
-  font-weight: 600;
-  text-align: left;
-}
-
-.compare-details-toggle:hover {
-  text-decoration: underline;
-}
-
-.test-details {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 10px;
-  background: #fff;
-  border-radius: 6px;
-}
-
-.compare-test-row {
-  display: flex;
-  justify-content: space-between;
-  font-size: 12px;
-}
-
-.compare-test-name {
-  text-transform: capitalize;
-  color: var(--color-text-secondary, #6b7280);
-}
-
-.compare-test-pvalue {
-  font-variant-numeric: tabular-nums;
-  font-weight: 600;
-  color: var(--color-text-primary, #111827);
 }
 
 /* "Compare" trigger button used in each tab header */
