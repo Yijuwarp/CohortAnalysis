@@ -1106,6 +1106,25 @@ td.sticky-col-size {
   width: 100%;
 }
 
+.cohort-picker-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 12px;
+  margin-bottom: 12px;
+}
+
+.cohort-select {
+  flex: 4;
+  min-width: 0;
+}
+
+.add-cohort-btn {
+  flex: 1;
+  white-space: nowrap;
+  height: 36px;
+}
+
 .searchable-select-input {
   height: 36px;
 }
@@ -1142,7 +1161,7 @@ td.sticky-col-size {
 }
 
 .searchable-select-list {
-  max-height: 240px;
+  max-height: 300px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -1153,10 +1172,10 @@ td.sticky-col-size {
   border: none;
   background: transparent;
   text-align: left;
-  padding: var(--space-2);
+  padding: 8px 12px;
   border-radius: var(--radius-sm);
   cursor: pointer;
-  font-size: var(--font-size-sm);
+  font-size: 14px;
 }
 
 .searchable-select-option:hover,

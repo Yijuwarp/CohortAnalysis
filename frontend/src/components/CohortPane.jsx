@@ -273,18 +273,17 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
       <div className="cohorts-section-card create-cohorts-card">
         <h3>Add Cohort</h3>
         <p className="secondary-text">Select a saved cohort to materialize into the active dataset, or manage saved definitions globally.</p>
-        <div className="grid" style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '12px', marginBottom: '12px', overflow: 'visible' }}>
-          <div style={{ flex: 1, position: 'relative' }}>
+        <div className="cohort-picker-row">
+          <div className="cohort-select">
             <SearchableSelect
               options={cohortOptions}
               value={selectedCohortId}
               onChange={setSelectedCohortId}
               placeholder="Select Saved Cohort"
-              style={{ flex: 1, minWidth: "200px" }}
             />
           </div>
           <button 
-            className="button button-primary" 
+            className="button button-primary add-cohort-btn" 
             onClick={handleAddCohort} 
             disabled={!selectedCohortId || isSelectedInvalid}
           >
