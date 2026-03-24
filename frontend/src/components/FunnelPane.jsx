@@ -642,17 +642,24 @@ function FunnelSelector({ funnels, value, onChange }) {
 // Main FunnelPane
 // ---------------------------------------------------------------------------
 
-export default function FunnelPane({ refreshToken, events }) {
+export default function FunnelPane({ refreshToken, events, state, setState }) {
   // Issue #1: safe-guard against undefined/null events prop
   const safeEvents = Array.isArray(events) ? events : []
 
   const [funnels, setFunnels] = useState([])
-  const [selectedFunnelId, setSelectedFunnelId] = useState(null)
+  const [selectedFunnelId, setSelectedFunnelId] = useState(state?.selectedFunnelId || null)
   const [editingFunnel, setEditingFunnel] = useState(null)
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState(state?.result || null)
   // Issue #6: running flag disables the button and prevents duplicate runs
   const [running, setRunning] = useState(false)
   const [runError, setRunError] = useState('')
+
+  useEffect(() => {
+    setState({
+      selectedFunnelId,
+      result
+    })
+  }, [selectedFunnelId, result, setState])
   const [showBuilder, setShowBuilder] = useState(false)
   const [deleting, setDeleting] = useState(null)
   // Guard against stale-response races

@@ -31,11 +31,11 @@ function cleanTree(node) {
   }
 }
 
-export default function FlowPane({ refreshToken }) {
+export default function FlowPane({ refreshToken, state, setState }) {
   const [events, setEvents] = useState([])
-  const [controls, setControls] = useState({ event: null, property: null, direction: 'forward' })
+  const [controls, setControls] = useState(state?.controls || { event: null, property: null, direction: 'forward' })
   const [propertyValues, setPropertyValues] = useState([])
-  const [propertyFilterValue, setPropertyFilterValue] = useState('')
+  const [propertyFilterValue, setPropertyFilterValue] = useState(state?.propertyFilterValue || '')
   const [properties, setProperties] = useState([])
 
   const [cohortMap, setCohortMap] = useState({})
@@ -43,12 +43,21 @@ export default function FlowPane({ refreshToken }) {
   const [expandedNodes, setExpandedNodes] = useState(new Set())
   const [cache, setCache] = useState({})
   const [loadingNodes, setLoadingNodes] = useState({})
-  const [viewMode, setViewMode] = useState('table')
+  const [viewMode, setViewMode] = useState(state?.viewMode || 'table')
   const [loadingRoot, setLoadingRoot] = useState(false)
 
-  const [graphDepth, setGraphDepth] = useState(3)
+  const [graphDepth, setGraphDepth] = useState(state?.graphDepth ?? 3)
   const [graphData, setGraphData] = useState(null)
   const [graphLoading, setGraphLoading] = useState(false)
+
+  useEffect(() => {
+    setState({
+      controls,
+      propertyFilterValue,
+      viewMode,
+      graphDepth
+    })
+  }, [controls, propertyFilterValue, viewMode, graphDepth, setState])
 
   const reqIdRef = useRef(0)
   const graphReqIdRef = useRef(0)

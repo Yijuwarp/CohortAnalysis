@@ -8,18 +8,30 @@ function formatNumber(n) {
   return new Intl.NumberFormat().format(n);
 }
 
-export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true }) {
-  const [isPinned, setIsPinned] = useState(true)
+export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true, state, setState }) {
+  const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [includeCI, setIncludeCI] = useState(false)
-  const [confidence, setConfidence] = useState(0.95)
-  const [viewMode, setViewMode] = useState('table')
-  const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
-  const [mode, setMode] = useState("day") // "day" | "hour"
-  const [retentionType, setRetentionType] = useState("classic") // "classic" | "ever_after"
+  const [includeCI, setIncludeCI] = useState(state?.includeCI ?? false)
+  const [confidence, setConfidence] = useState(state?.confidence ?? 0.95)
+  const [viewMode, setViewMode] = useState(state?.viewMode || 'table')
+  const [isComparePaneOpen, setIsComparePaneOpen] = useState(state?.isComparePaneOpen ?? false)
+  const [mode, setMode] = useState(state?.mode || "day") // "day" | "hour"
+  const [retentionType, setRetentionType] = useState(state?.retentionType || "classic") // "classic" | "ever_after"
+
+  useEffect(() => {
+    setState({
+      isPinned,
+      includeCI,
+      confidence,
+      viewMode,
+      isComparePaneOpen,
+      mode,
+      retentionType
+    })
+  }, [isPinned, includeCI, confidence, viewMode, isComparePaneOpen, mode, retentionType, setState])
 
   const loadRetention = async () => {
     setLoading(true)

@@ -147,22 +147,31 @@ function PaginationBar({ page, totalPages, onChangePage, disabled }) {
   )
 }
 
-export default function UserExplorer() {
-  const [selectedUser, setSelectedUser] = useState('')
+export default function UserExplorer({ state, setState }) {
+  const [selectedUser, setSelectedUser] = useState(state?.selectedUser || '')
   const [userOptions, setUserOptions] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [events, setEvents] = useState([])
   const [summary, setSummary] = useState(null)
-  const [page, setPage] = useState(1)
+  const [page, setPage] = useState(state?.page || 1)
   const [totalPages, setTotalPages] = useState(1)
   const [currentEventTime, setCurrentEventTime] = useState(null)
   const [highlightedEventTime, setHighlightedEventTime] = useState(null)
   const [highlightedEventName, setHighlightedEventName] = useState(null)
-  const [eventSearchTerm, setEventSearchTerm] = useState('')
-  const [jumpDatetime, setJumpDatetime] = useState('')
+  const [eventSearchTerm, setEventSearchTerm] = useState(state?.eventSearchTerm || '')
+  const [jumpDatetime, setJumpDatetime] = useState(state?.jumpDatetime || '')
   const [loading, setLoading] = useState(false)
   const [noMorePrev, setNoMorePrev] = useState(false)
   const [noMoreNext, setNoMoreNext] = useState(false)
+
+  useEffect(() => {
+    setState({
+      selectedUser,
+      page,
+      eventSearchTerm,
+      jumpDatetime
+    })
+  }, [selectedUser, page, eventSearchTerm, jumpDatetime, setState])
 
   useEffect(() => {
     setNoMorePrev(false)

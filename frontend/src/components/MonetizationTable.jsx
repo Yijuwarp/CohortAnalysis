@@ -15,20 +15,33 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-export default function MonetizationTable({ refreshToken, maxDay, retentionEvent }) {
-  const [metricType, setMetricType] = useState('cumulative_revenue_per_acquired_user')
-  const [viewMode, setViewMode] = useState('table')
+export default function MonetizationTable({ refreshToken, maxDay, retentionEvent, state, setState }) {
+  const [metricType, setMetricType] = useState(state?.metricType || 'cumulative_revenue_per_acquired_user')
+  const [viewMode, setViewMode] = useState(state?.viewMode || 'table')
   const [revenueRows, setRevenueRows] = useState([])
   const [cohortSizes, setCohortSizes] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [predictions, setPredictions] = useState(null)
-  const [predictionHorizon, setPredictionHorizon] = useState(90)
-  const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(false)
-  const [predictionBaseline, setPredictionBaseline] = useState(null)
-  const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
-  const [showPredictionSummary, setShowPredictionSummary] = useState(true)
+  const [predictions, setPredictions] = useState(state?.predictions || null)
+  const [predictionHorizon, setPredictionHorizon] = useState(state?.predictionHorizon ?? 90)
+  const [isTuningPaneOpen, setIsTuningPaneOpen] = useState(state?.isTuningPaneOpen ?? false)
+  const [predictionBaseline, setPredictionBaseline] = useState(state?.predictionBaseline || null)
+  const [isComparePaneOpen, setIsComparePaneOpen] = useState(state?.isComparePaneOpen ?? false)
+  const [showPredictionSummary, setShowPredictionSummary] = useState(state?.showPredictionSummary ?? true)
+
+  useEffect(() => {
+    setState({
+      metricType,
+      viewMode,
+      predictions,
+      predictionHorizon,
+      isTuningPaneOpen,
+      predictionBaseline,
+      isComparePaneOpen,
+      showPredictionSummary
+    })
+  }, [metricType, viewMode, predictions, predictionHorizon, isTuningPaneOpen, predictionBaseline, isComparePaneOpen, showPredictionSummary, setState])
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)
