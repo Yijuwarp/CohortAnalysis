@@ -1915,6 +1915,7 @@ tbody tr:hover {
   align-items: flex-end;
   flex-wrap: wrap;
   margin-bottom: 16px;
+  justify-content: flex-start;
 }
 
 .monetization-controls label {
@@ -1937,9 +1938,6 @@ tbody tr:hover {
   background: var(--color-primary-hover);
 }
 
-.monetization-controls .compare-btn-align {
-  margin-left: auto;
-}
 
 /* Align Monetization headers and values right for clean numeric columns */
 .analytics-table.monetization-data-table th,
