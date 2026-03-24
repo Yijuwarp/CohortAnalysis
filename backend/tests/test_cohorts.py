@@ -444,7 +444,7 @@ def test_list_cohorts_returns_logic_and_conditions(client: TestClient) -> None:
     cohorts = response.json()["cohorts"]
     created_cohort = next(row for row in cohorts if row["cohort_id"] == created.json()["cohort_id"])
     assert created_cohort["logic_operator"] == "AND"
-    assert created_cohort["conditions"] == [{"event_name": "purchase", "min_event_count": 1, "property_filter": None}]
+    assert created_cohort["conditions"] == [{"event_name": "purchase", "min_event_count": 1, "property_filter": None, "is_negated": False}]
 
 
 def test_update_cohort_replaces_conditions_and_rebuilds_membership(client: TestClient, db_connection) -> None:
@@ -1336,3 +1336,125 @@ def test_delete_parent_cohort_cascades_split_children(client: TestClient, db_con
         [parent_id],
     ).fetchone()[0]
     assert child_memberships_after == 0
+
+
+# ─────────────────────────────────────────────
+# Negation tests (DID / DIDN'T)
+# ─────────────────────────────────────────────
+
+def _prepare_negation_events(client: TestClient) -> None:
+    """
+    Dataset:
+      u1 – purchased (once)
+      u2 – searched (once)
+      u3 – purchased (once) AND searched (once)
+    """
+    csv_text = (
+        "user_id,event_name,event_time,channel\n"
+        "u1,purchase,2024-01-01 09:00:00,ads\n"
+        "u2,search,2024-01-02 09:00:00,organic\n"
+        "u3,purchase,2024-01-03 09:00:00,email\n"
+        "u3,search,2024-01-03 10:00:00,email\n"
+    )
+    from tests.utils import csv_upload
+    upload = csv_upload(client, csv_text=csv_text)
+    assert upload.status_code == 200, f"Upload failed: {upload.text}"
+    mapping = client.post(
+        "/map-columns",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert mapping.status_code == 200, f"Mapping failed: {mapping.text}"
+
+
+def test_negated_condition_returns_users_who_never_performed_event(
+    client: TestClient,
+    db_connection,
+) -> None:
+    """DIDN'T purchase → {u2} (u1 and u3 purchased, u2 never did)"""
+    _prepare_negation_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "never_purchased",
+            "logic_operator": "AND",
+            "conditions": [{"event_name": "purchase", "min_event_count": 1, "is_negated": True}],
+        },
+    )
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 1, "Only u2 never purchased"
+
+    members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert members == [("u2",)], f"Expected [u2] but got {members}"
+
+
+def test_did_and_didnt_conditions_with_and_logic(
+    client: TestClient,
+    db_connection,
+) -> None:
+    """DID search AND DIDN'T purchase → {u2} (u3 did both, u1 only purchased, u2 only searched)"""
+    _prepare_negation_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "searched_not_purchased",
+            "logic_operator": "AND",
+            "conditions": [
+                {"event_name": "search", "min_event_count": 1, "is_negated": False},
+                {"event_name": "purchase", "min_event_count": 1, "is_negated": True},
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 1, "Only u2 searched and did NOT purchase"
+
+    members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert members == [("u2",)], f"Expected [u2] but got {members}"
+
+
+def test_negated_condition_with_property_filter(
+    client: TestClient,
+    db_connection,
+) -> None:
+    """DIDN'T purchase where channel=ads → users who did not purchase via ads.
+       u1 purchased via ads, u3 via email. So DIDN'T purchase (channel=ads) = {u2, u3}."""
+    _prepare_negation_events(client)
+
+    response = client.post(
+        "/cohorts",
+        json={
+            "name": "not_purchased_via_ads",
+            "logic_operator": "AND",
+            "conditions": [
+                {
+                    "event_name": "purchase",
+                    "min_event_count": 1,
+                    "is_negated": True,
+                    "property_filter": {"column": "channel", "operator": "=", "values": "ads"},
+                }
+            ],
+        },
+    )
+    assert response.status_code == 200, response.text
+    cohort_id = response.json()["cohort_id"]
+    assert response.json()["users_joined"] == 2, "u2 and u3 did NOT purchase via ads channel"
+
+    members = db_connection.execute(
+        "SELECT user_id FROM cohort_membership WHERE cohort_id = ? ORDER BY user_id",
+        [cohort_id],
+    ).fetchall()
+    assert members == [("u2",), ("u3",)], f"Expected [u2, u3] but got {members}"
+

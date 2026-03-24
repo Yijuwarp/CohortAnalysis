@@ -83,7 +83,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             min_event_count INTEGER NOT NULL,
             property_column VARCHAR,
             property_operator VARCHAR,
-            property_values TEXT
+            property_values TEXT,
+            is_negated BOOLEAN DEFAULT FALSE
         )
         """
     )
@@ -91,6 +92,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     if existing_condition_columns:
         if "property_values" not in existing_condition_columns:
             connection.execute("ALTER TABLE cohort_conditions ADD COLUMN property_values TEXT")
+        if "is_negated" not in existing_condition_columns:
+            connection.execute("ALTER TABLE cohort_conditions ADD COLUMN is_negated BOOLEAN DEFAULT FALSE")
 
     # Add source_saved_id to snapshot if missing
     snapshot_columns = {
@@ -201,9 +204,10 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
                 min_event_count,
                 property_column,
                 property_operator,
-                property_values
+                property_values,
+                is_negated
             )
-            VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
+            VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 cohort_id,
@@ -212,6 +216,7 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
                 property_column,
                 property_operator,
                 property_values,
+                bool(getattr(condition, 'is_negated', False)),
             ],
         )
 
@@ -253,6 +258,33 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
         """
     ).fetchall()
 
+    # Fetch all conditions in one query and group by cohort_id
+    condition_rows = connection.execute(
+        """
+        SELECT cohort_id, event_name, min_event_count, property_column,
+               property_operator, property_values, COALESCE(is_negated, FALSE) as is_negated
+        FROM cohort_conditions
+        ORDER BY cohort_id, condition_id
+        """
+    ).fetchall()
+
+    conditions_by_cohort: dict[int, list[dict]] = {}
+    for crow in condition_rows:
+        cid = int(crow[0])
+        property_filter = None
+        if crow[3] and crow[4] and crow[5] is not None:
+            property_filter = {
+                "column": str(crow[3]),
+                "operator": str(crow[4]),
+                "values": json.loads(str(crow[5])),
+            }
+        conditions_by_cohort.setdefault(cid, []).append({
+            "event_name": str(crow[1]),
+            "min_event_count": int(crow[2]),
+            "property_filter": property_filter,
+            "is_negated": bool(crow[6]),
+        })
+
     return {
         "cohorts": [
             {
@@ -268,10 +300,12 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
                 "split_group_index": int(row[8]) if row[8] is not None else None,
                 "split_group_total": int(row[9]) if row[9] is not None else None,
                 "source_saved_id": str(row[10]) if row[10] else None,
+                "conditions": conditions_by_cohort.get(int(row[0]), []),
             }
             for row in rows
         ]
     }
+
 
 
 def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload: CreateCohortRequest) -> dict[str, int]:
@@ -327,9 +361,10 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
                 min_event_count,
                 property_column,
                 property_operator,
-                property_values
+                property_values,
+                is_negated
             )
-            VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?)
+            VALUES (nextval('cohort_condition_id_sequence'), ?, ?, ?, ?, ?, ?, ?)
             """,
             [
                 cohort_id,
@@ -338,6 +373,7 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
                 property_column,
                 property_operator,
                 property_values,
+                bool(getattr(condition, 'is_negated', False)),
             ],
         )
 
@@ -547,7 +583,8 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
             cc.property_column,
             cc.property_operator,
             cc.property_values,
-            COALESCE(sub.size, 0) as size
+            COALESCE(sub.size, 0) as size,
+            COALESCE(cc.is_negated, FALSE) as is_negated
         FROM cohorts c
         LEFT JOIN cohort_conditions cc
             ON c.cohort_id = cc.cohort_id
@@ -605,6 +642,7 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
                 "event_name": str(event_name),
                 "min_event_count": int(min_event_count),
                 "property_filter": property_filter,
+                "is_negated": bool(row[17]),
             }
         )
 

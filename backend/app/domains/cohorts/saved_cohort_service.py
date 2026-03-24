@@ -200,11 +200,20 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
         query = f"SELECT DISTINCT user_id FROM {source_table}"
         params = []
     else:
+        has_negated = any(bool(getattr(cond, 'is_negated', False)) for cond in conditions)
+
         cte_parts: list[str] = []
         query_params: list[object] = []
+
+        if has_negated:
+            cte_parts.append(
+                f"all_users AS (SELECT DISTINCT user_id FROM {source_table})"
+            )
+
         for index, cond in enumerate(conditions):
             event_name = cond.event_name
             min_event_count = cond.min_event_count
+            is_negated = bool(getattr(cond, 'is_negated', False))
             event_conditions = ["event_name = ?"]
             event_params: list[object] = [event_name]
 
@@ -225,9 +234,11 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
                     event_params.append(scalar_value)
 
             where_clause = " AND ".join(event_conditions)
+
+            # Base CTE: users who DID perform the event
             cte_parts.append(
                 f"""
-                c{index} AS (
+                c{index}_base AS (
                     SELECT user_id, MIN(event_time) AS event_time
                     FROM (
                         SELECT
@@ -247,6 +258,21 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
                 """
             )
             query_params.extend([*event_params, min_event_count])
+
+            if is_negated:
+                cte_parts.append(
+                    f"""
+                    c{index} AS (
+                        SELECT au.user_id, MIN(e.event_time) AS event_time
+                        FROM all_users au
+                        LEFT JOIN {source_table} e ON au.user_id = e.user_id
+                        WHERE au.user_id NOT IN (SELECT user_id FROM c{index}_base)
+                        GROUP BY au.user_id
+                    )
+                    """
+                )
+            else:
+                cte_parts.append(f"c{index} AS (SELECT user_id, event_time FROM c{index}_base)")
 
         if logic_operator == "AND":
             if len(conditions) == 1:

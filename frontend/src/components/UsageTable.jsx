@@ -26,7 +26,7 @@ function formatCountValue(value) {
   return Number(value).toLocaleString()
 }
 
-export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState }) {
+export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState, scopeVersion }) {
   const [event, setEvent] = useState(state?.event || '')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(state?.effectiveMaxDayVolume || maxDay))
   const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(state?.effectiveMaxDayUsers || maxDay))
@@ -143,14 +143,14 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   }, [refreshToken, retentionEvent])
 
   useEffect(() => {
-    if (event) {
+    if (event && !propertyFilterRequiresValue) {
       loadUsage(event)
-    } else {
+    } else if (!event) {
       setVolumeRows([])
       setUserRows([])
       setRetainedRows([])
     }
-  }, [event, maxDay, retentionEvent])
+  }, [event, maxDay, retentionEvent, scopeVersion, eventProperty, propertyOperator, propertyValue])
 
   useEffect(() => {
     if (!event) {

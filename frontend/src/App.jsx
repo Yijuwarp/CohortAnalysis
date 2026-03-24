@@ -63,6 +63,7 @@ export default function App() {
   const [events, setEvents] = useState([])
   const [activeFilterCount, setActiveFilterCount] = useState(0)
   const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
+  const [scopeVersion, setScopeVersion] = useState(0)
 
   const updateAnalyticsState = useCallback((tab, newState) => {
     setAnalyticsState((prev) => ({
@@ -104,7 +105,10 @@ export default function App() {
     return () => clearTimeout(id)
   }, [banner])
 
-  const refreshRetention = () => setRetentionRefreshToken((current) => current + 1)
+  const refreshRetention = () => {
+    setRetentionRefreshToken((current) => current + 1)
+    setScopeVersion((current) => current + 1)
+  }
 
   const refreshDatasetInfo = useCallback(async () => {
     if (appState !== 'workspace') return
@@ -412,6 +416,7 @@ export default function App() {
                   maxDay={globalMaxDay}
                   state={analyticsState.usage}
                   setState={(s) => updateAnalyticsState('usage', s)}
+                  scopeVersion={scopeVersion}
                 />
               )}
               {activeTab === 'monetization' && (
