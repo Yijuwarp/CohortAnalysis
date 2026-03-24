@@ -4,7 +4,12 @@ import duckdb
 from fastapi import HTTPException
 
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
-from app.utils.sql import quote_identifier
+from app.utils.sql import (
+    get_allowed_operators,
+    get_column_kind,
+    get_column_type_map,
+    quote_identifier,
+)
 
 _TOP_N = 3
 _MAX_DEPTH = 20
@@ -19,11 +24,82 @@ def _fetch_active_cohorts(connection: duckdb.DuckDBPyConnection) -> list[tuple[i
     return [(int(r[0]), str(r[1])) for r in rows]
 
 
-def _snapshot_exists(connection: duckdb.DuckDBPyConnection) -> bool:
-    count = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'cohort_activity_snapshot' AND table_schema = 'main'"
-    ).fetchone()[0]
-    return bool(count)
+def _scoped_has_data(connection: duckdb.DuckDBPyConnection) -> bool:
+    """Returns True if events_scoped exists and has at least one row."""
+    tables = {
+        row[0]
+        for row in connection.execute(
+            "SELECT table_name FROM information_schema.tables WHERE table_schema = 'main'"
+        ).fetchall()
+    }
+    if "events_scoped" not in tables or "events_normalized" not in tables:
+        return False
+
+    try:
+        count = connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
+        return bool(count and count > 0)
+    except Exception:
+        return False
+
+
+def _get_column_type_map_resilient(connection: duckdb.DuckDBPyConnection, table_name: str) -> dict[str, str]:
+    # Try information_schema first
+    res = get_column_type_map(connection, table_name)
+    if res:
+        return res
+    # Fallback to PRAGMA table_info (works for views too)
+    rows = connection.execute(f"PRAGMA table_info({quote_identifier(table_name)})").fetchall()
+    return {row[1]: str(row[2]).upper() for row in rows}
+
+
+def _validate_property_column(
+    connection: duckdb.DuckDBPyConnection,
+    property_column: str | None,
+    property_operator: str | None,
+) -> str | None:
+    """Validates property_column and returns its canonical name as found in metadata."""
+    if not property_column:
+        return None
+
+    metadata = _get_column_type_map_resilient(connection, "events_scoped")
+    metadata_lower = {k.lower(): k for k in metadata}
+    
+    canonical_name = metadata_lower.get(property_column.lower())
+    if not canonical_name:
+        col_list = ", ".join(sorted(metadata.keys()))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown property column: {property_column}. Available: {col_list}"
+        )
+
+    data_type = metadata[canonical_name]
+    kind = get_column_kind(data_type)
+    allowed = get_allowed_operators(kind)
+
+    operator = (property_operator or "=").upper()
+    if operator not in allowed:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Operator {operator} not supported for {kind.lower()} column {canonical_name}",
+        )
+    
+    return canonical_name
+
+
+def _ensure_performance_indexes(connection: duckdb.DuckDBPyConnection):
+    if hasattr(connection, "_flow_index_initialized"):
+        return
+
+    try:
+        # events_normalized does NOT have cohort_id. 
+        # The lateral join pattern e.user_id = s.user_id AND e.event_time > s.parent_time
+        # is best served by an index on (user_id, event_time).
+        connection.execute(
+            "CREATE INDEX IF NOT EXISTS idx_events_normalized_user_time ON events_normalized(user_id, event_time, event_name)"
+        )
+        connection._flow_index_initialized = True
+    except Exception:
+        pass
 
 
 def _validate_depth(depth: int) -> int:
@@ -58,36 +134,40 @@ def _build_level_sql(
     direction: str,
     parent_path: list[str],
     property_clause: str,
+    property_params: list[object],
 ) -> tuple[str, list[object]]:
     order_dir = "ASC" if direction == "forward" else "DESC"
     time_op = ">" if direction == "forward" else "<"
 
-    params: list[object] = [parent_path[0]]
-    if property_clause:
-        pass
+    params: list[object] = []
+    params.append(parent_path[0])  # root_step parent_event
+    params.append(parent_path[0])  # root_step WHERE event_name = ?
+    params.extend(property_params)  # root_step {property_clause}
 
     ctes: list[str] = [
         f"""
+        scoped_events AS (
+            SELECT es.*, cm.cohort_id
+            FROM events_scoped es
+            JOIN cohort_membership cm ON es.user_id = cm.user_id
+        ),
         root_step AS (
-            SELECT cohort_id, user_id, event_time AS parent_time, ? AS parent_event
+            SELECT e.cohort_id, e.user_id, e.event_time AS parent_time, ? AS parent_event
             FROM (
                 SELECT
-                    cohort_id,
-                    user_id,
-                    event_time,
-                    ROW_NUMBER() OVER (PARTITION BY cohort_id, user_id ORDER BY event_time) AS rn
-                FROM cohort_activity_snapshot
-                WHERE event_name = ?{property_clause}
-            ) r
+                    e.cohort_id,
+                    e.user_id,
+                    e.event_time,
+                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time) AS rn
+                FROM scoped_events e
+                WHERE e.event_name = ?{property_clause}
+            ) e
             WHERE rn = 1
         )
         """
     ]
-    params = [parent_path[0], parent_path[0]]
 
     prev_cte = "root_step"
-    prev_event = parent_path[0]
-
     for idx, target_event in enumerate(parent_path[1:], start=1):
         cte_name = f"step_{idx}"
         ctes.append(
@@ -97,9 +177,9 @@ def _build_level_sql(
                 FROM {prev_cte} s
                 JOIN LATERAL (
                     SELECT e.event_name, e.event_time
-                    FROM cohort_activity_snapshot e
-                    WHERE e.cohort_id = s.cohort_id
-                      AND e.user_id = s.user_id
+                    FROM scoped_events e
+                    WHERE e.user_id = s.user_id
+                      AND e.cohort_id = s.cohort_id
                       AND e.event_time {time_op} s.parent_time
                       AND e.event_name <> s.parent_event
                     ORDER BY e.event_time {order_dir}
@@ -111,7 +191,6 @@ def _build_level_sql(
         )
         params.append(target_event)
         prev_cte = cte_name
-        prev_event = target_event
 
     ctes.append(
         f"""
@@ -124,9 +203,9 @@ def _build_level_sql(
             FROM {prev_cte} s
             JOIN LATERAL (
                 SELECT e.event_name, e.event_time
-                FROM cohort_activity_snapshot e
-                WHERE e.cohort_id = s.cohort_id
-                  AND e.user_id = s.user_id
+                FROM scoped_events e
+                WHERE e.user_id = s.user_id
+                  AND e.cohort_id = s.cohort_id
                   AND e.event_time {time_op} s.parent_time
                   AND e.event_name <> s.parent_event
                 ORDER BY e.event_time {order_dir}
@@ -205,9 +284,8 @@ def _run_level_query(
         raise HTTPException(status_code=400, detail="parent_path must start with start_event")
 
     property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
-    sql, params = _build_level_sql(direction, parent_path, property_clause)
-    full_params = [params[0], *property_params, *params[1:]]
-    return connection.execute(sql, full_params).fetchall(), parent_depth
+    sql, params = _build_level_sql(direction, parent_path, property_clause, property_params)
+    return connection.execute(sql, params).fetchall(), parent_depth
 
 
 def _root_user_count(
@@ -219,24 +297,32 @@ def _root_user_count(
     cohort_id: int | None = None,
 ) -> int:
     property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
-    cohort_clause = " AND cohort_id = ?" if cohort_id is not None else ""
+    cohort_clause = " AND cm.cohort_id = ?" if cohort_id is not None else ""
     sql = f"""
-        WITH root_step AS (
-            SELECT cohort_id, user_id
+        WITH scoped_events AS (
+            SELECT es.*, cm.cohort_id
+            FROM events_scoped es
+            JOIN cohort_membership cm ON es.user_id = cm.user_id
+        ),
+        root_step AS (
+            SELECT e.cohort_id, e.user_id
             FROM (
                 SELECT
-                    cohort_id,
-                    user_id,
-                    event_time,
-                    ROW_NUMBER() OVER (PARTITION BY cohort_id, user_id ORDER BY event_time) AS rn
-                FROM cohort_activity_snapshot
-                WHERE event_name = ?{property_clause}{cohort_clause}
-            ) r
+                    e.cohort_id,
+                    e.user_id,
+                    e.event_time,
+                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time) AS rn
+                FROM scoped_events e
+                WHERE e.event_name = ?{property_clause}{cohort_clause}
+            ) e
             WHERE rn = 1
         )
         SELECT COUNT(*) FROM root_step
     """
-    params = [start_event, *property_params, *([cohort_id] if cohort_id is not None else [])]
+    params = [start_event]
+    params.extend(property_params)
+    if cohort_id is not None:
+        params.append(cohort_id)
     return int(connection.execute(sql, params).fetchone()[0] or 0)
 
 
@@ -380,14 +466,17 @@ def get_l1_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _snapshot_exists(connection):
+    if not _scoped_has_data(connection):
         return {"rows": []}
+
+    canonical_col = _validate_property_column(connection, property_column, property_operator)
+    _ensure_performance_indexes(connection)
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
         return {"rows": []}
 
-    raw_rows, _ = _run_level_query(connection, start_event, [start_event], direction, depth, property_column, property_operator, property_values)
+    raw_rows, _ = _run_level_query(connection, start_event, [start_event], direction, depth, canonical_col, property_operator, property_values)
     return {"rows": _rows_payload(raw_rows, cohorts, [start_event], include_expandable=True, top_k_enabled=include_top_k)}
 
 
@@ -407,14 +496,17 @@ def get_l2_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _snapshot_exists(connection):
+    if not _scoped_has_data(connection):
         return {"parent_path": parent_path, "rows": []}
+
+    canonical_col = _validate_property_column(connection, property_column, property_operator)
+    _ensure_performance_indexes(connection)
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
         return {"parent_path": parent_path, "rows": []}
 
-    raw_rows, parent_depth = _run_level_query(connection, start_event, parent_path, direction, depth, property_column, property_operator, property_values)
+    raw_rows, parent_depth = _run_level_query(connection, start_event, parent_path, direction, depth, canonical_col, property_operator, property_values)
     if parent_depth >= depth:
         return {"parent_path": parent_path, "rows": []}
 
@@ -439,8 +531,11 @@ def get_flow_graph(
     depth = max(1, min(depth, 10))
 
     ensure_cohort_tables(connection)
-    if not _snapshot_exists(connection):
+    if not _scoped_has_data(connection):
         return {"cohorts": []}
+
+    canonical_col = _validate_property_column(connection, property_column, property_operator)
+    _ensure_performance_indexes(connection)
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
@@ -449,7 +544,7 @@ def get_flow_graph(
     cohort_trees = []
     for cohort_id, cohort_name in cohorts:
         cohort_scope = [(cohort_id, cohort_name)]
-        root_count = _root_user_count(connection, start_event, property_column, property_operator, property_values, cohort_id=cohort_id)
+        root_count = _root_user_count(connection, start_event, canonical_col, property_operator, property_values, cohort_id=cohort_id)
         root = {"name": start_event, "user_count": root_count, "children": []}
 
         node_map: dict[tuple[str, ...], dict] = {(start_event,): root}
