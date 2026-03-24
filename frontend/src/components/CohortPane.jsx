@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react'
+import cloneDeep from 'lodash/cloneDeep'
 import { createCohort, deleteCohort, listCohorts, randomSplitCohort, toggleCohortHide, getSavedCohorts } from '../api'
 import CohortForm from './CohortForm'
 import SavedCohortsPanel from './SavedCohortsPanel'
@@ -239,6 +240,33 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     }
   }
 
+  const handleDuplicate = (cohort) => {
+    if (!cohort?.definition) {
+      setError('Cannot duplicate cohort: invalid definition')
+      return
+    }
+    
+    const def = cohort.definition || {}
+    const duplicated = {
+      name: `Copy of ${cohort.name || 'Untitled Cohort'}`,
+      definition: {
+        logic_operator: ['AND', 'OR'].includes(def.logic_operator) ? def.logic_operator : 'AND',
+        join_type: ['condition_met', 'first_event'].includes(def.join_type) ? def.join_type : 'condition_met',
+        conditions: Array.isArray(def.conditions) ? cloneDeep(def.conditions) : [],
+      },
+    }
+    
+    setError('')
+    setEditData(duplicated)
+    setFormMode('create_saved')
+    
+    // Safety timeout to prevent state batching/race issues
+    setTimeout(() => {
+      setIsFormOpen(true)
+      setIsPanelOpen(false)
+    }, 0)
+  }
+
   const onFormSaved = () => {
     setIsFormOpen(false)
     loadData()
@@ -447,6 +475,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
               onCohortsChanged()
            }}
            onEdit={handleEditSaved}
+           onDuplicate={handleDuplicate}
         />
       )}
     </section>
