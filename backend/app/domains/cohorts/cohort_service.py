@@ -50,6 +50,12 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     connection.execute(
         """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_cohort_user_unique
+        ON cohort_membership(cohort_id, user_id)
+        """
+    )
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS cohort_activity_snapshot (
             cohort_id INTEGER,
             user_id TEXT,
@@ -85,59 +91,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     if existing_condition_columns:
         if "property_values" not in existing_condition_columns:
             connection.execute("ALTER TABLE cohort_conditions ADD COLUMN property_values TEXT")
-        if "property_value" in existing_condition_columns:
-            connection.execute(
-                """
-                UPDATE cohort_conditions
-                SET property_values = COALESCE(property_values, json_array(property_value))
-                WHERE property_value IS NOT NULL
-                """
-            )
-            connection.execute("ALTER TABLE cohort_conditions DROP COLUMN property_value")
-        connection.execute(
-            """
-            UPDATE cohort_conditions
-            SET property_operator = '='
-            WHERE property_column IS NOT NULL
-              AND property_values IS NOT NULL
-              AND (property_operator IS NULL OR property_operator = '')
-            """
-        )
 
-    existing_columns = {
-        row[0]
-        for row in connection.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'cohorts'
-            """
-        ).fetchall()
-    }
-    if "logic_operator" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN logic_operator TEXT")
-    if "join_type" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN join_type TEXT DEFAULT 'condition_met'")
-    connection.execute(
-        """
-        UPDATE cohorts
-        SET join_type = 'condition_met'
-        WHERE join_type IS NULL OR join_type = ''
-        """
-    )
-    if "is_active" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN is_active BOOLEAN DEFAULT TRUE")
-    if "hidden" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN hidden BOOLEAN DEFAULT FALSE")
-    if "split_parent_cohort_id" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN split_parent_cohort_id INTEGER")
-    if "split_group_index" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_index INTEGER")
-    if "split_group_total" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN split_group_total INTEGER")
-    if "source_saved_id" not in existing_columns:
-        connection.execute("ALTER TABLE cohorts ADD COLUMN source_saved_id UUID")
-
+    # Add source_saved_id to snapshot if missing
     snapshot_columns = {
         row[0]
         for row in connection.execute(
@@ -161,6 +116,34 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             """
         )
 
+    if "source_saved_id" not in snapshot_columns:
+        connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN source_saved_id UUID")
+
+
+def get_events_source_table(connection: duckdb.DuckDBPyConnection) -> str:
+    exists = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'events_scoped'
+          AND table_schema = 'main'
+        """
+    ).fetchone()[0]
+    return "events_scoped" if exists else "events_normalized"
+
+
+def normalize_values(values: object) -> list[object]:
+    if isinstance(values, str):
+        try:
+            import json
+            parsed = json.loads(values)
+            return parsed if isinstance(parsed, list) else [parsed]
+        except Exception:
+            return [values]
+    elif not isinstance(values, list):
+        return [values]
+    return values
+
 
 def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRequest) -> dict[str, int]:
     normalized_exists = connection.execute(
@@ -173,11 +156,12 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
         )
 
     ensure_cohort_tables(connection)
+    source_table = get_events_source_table(connection)
 
     if not payload.conditions:
         raise HTTPException(status_code=400, detail="At least one condition is required")
 
-    validate_cohort_conditions(connection, "events_normalized", payload.conditions)
+    validate_cohort_conditions(connection, source_table, payload.conditions)
 
     cohort_id = connection.execute(
         """
@@ -195,7 +179,18 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
         if condition.property_filter:
             property_column = condition.property_filter.column
             property_operator = condition.property_filter.operator.upper()
-            property_values = json.dumps(condition.property_filter.values)
+            
+            # Normalize to list (handles scalar, list, and stringified JSON)
+            values = normalize_values(condition.property_filter.values)
+            property_values = json.dumps(values)
+
+        if property_values is not None:
+            try:
+                parsed = json.loads(property_values)
+                if not isinstance(parsed, list):
+                    raise ValueError
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid property_values format")
 
         connection.execute(
             """
@@ -220,7 +215,7 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
             ],
         )
 
-    build_cohort_membership(connection, cohort_id, "events_normalized")
+    build_cohort_membership(connection, cohort_id, source_table)
 
     users_joined = int(
         connection.execute(
@@ -242,80 +237,46 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
             c.is_active,
             c.logic_operator,
             c.join_type,
+            COALESCE(sub.size, 0) as size,
             c.hidden,
             c.split_parent_cohort_id,
             c.split_group_index,
             c.split_group_total,
-            c.source_saved_id,
-            cc.event_name,
-            cc.min_event_count,
-            cc.property_column,
-            cc.property_operator,
-            cc.property_values
+            c.source_saved_id
         FROM cohorts c
-        LEFT JOIN cohort_conditions cc ON c.cohort_id = cc.cohort_id
-        ORDER BY c.cohort_id, cc.condition_id
+        LEFT JOIN (
+            SELECT cohort_id, COUNT(*) as size
+            FROM cohort_membership
+            GROUP BY cohort_id
+        ) sub ON c.cohort_id = sub.cohort_id
+        ORDER BY c.cohort_id ASC
         """
     ).fetchall()
-
-    cohorts: dict[int, dict[str, object]] = {}
-    for cohort_id, name, is_active, logic_operator, join_type, hidden, split_parent_cohort_id, split_group_index, split_group_total, source_saved_id, event_name, min_event_count, property_column, property_operator, property_values in rows:
-        cohort_id = int(cohort_id)
-        if cohort_id not in cohorts:
-            logic = str(logic_operator or "AND").upper()
-            cohorts[cohort_id] = {
-                "cohort_id": cohort_id,
-                "cohort_name": str(name),
-                "is_active": bool(is_active),
-                "logic_operator": logic,
-                "condition_logic": logic,
-                "join_type": str(join_type or "condition_met"),
-                "hidden": bool(hidden),
-                "split_parent_cohort_id": int(split_parent_cohort_id) if split_parent_cohort_id is not None else None,
-                "split_group_index": int(split_group_index) if split_group_index is not None else None,
-                "split_group_total": int(split_group_total) if split_group_total is not None else None,
-                "source_saved_id": str(source_saved_id) if source_saved_id is not None else None,
-                "conditions": [],
-            }
-
-        if event_name is not None and min_event_count is not None:
-            property_filter = None
-            if property_column and property_operator and property_values is not None:
-                property_filter = {
-                    "column": str(property_column),
-                    "operator": str(property_operator),
-                    "values": json.loads(str(property_values)),
-                }
-            cohorts[cohort_id]["conditions"].append(
-                {
-                    "event_name": str(event_name),
-                    "min_event_count": int(min_event_count),
-                    "property_filter": property_filter,
-                }
-            )
-
-    size_rows = connection.execute(
-        """
-        SELECT cohort_id, COUNT(*)
-        FROM cohort_membership
-        GROUP BY cohort_id
-        """
-    ).fetchall()
-    size_by_id = {int(row[0]): int(row[1]) for row in size_rows}
-    for cohort in cohorts.values():
-        cohort["size"] = size_by_id.get(int(cohort["cohort_id"]), 0)
 
     return {
-        "cohorts": sorted(cohorts.values(), key=lambda cohort: cohort["cohort_id"])
+        "cohorts": [
+            {
+                "cohort_id": int(row[0]),
+                "cohort_name": str(row[1]),
+                "name": str(row[1]),
+                "is_active": bool(row[2]),
+                "logic_operator": str(row[3]) if row[3] else "AND",
+                "join_type": str(row[4]) if row[4] else "condition_met",
+                "size": int(row[5]),
+                "hidden": bool(row[6]),
+                "split_parent_cohort_id": int(row[7]) if row[7] is not None else None,
+                "split_group_index": int(row[8]) if row[8] is not None else None,
+                "split_group_total": int(row[9]) if row[9] is not None else None,
+                "source_saved_id": str(row[10]) if row[10] else None,
+            }
+            for row in rows
+        ]
     }
 
 
 def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload: CreateCohortRequest) -> dict[str, int]:
     ensure_cohort_tables(connection)
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
-    source_table = "events_scoped" if scoped_exists else "events_normalized"
+    source_table = get_events_source_table(connection)
 
     cohort_row = connection.execute(
         "SELECT name FROM cohorts WHERE cohort_id = ?",
@@ -344,7 +305,18 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
         if condition.property_filter:
             property_column = condition.property_filter.column
             property_operator = condition.property_filter.operator.upper()
-            property_values = json.dumps(condition.property_filter.values)
+            
+            # Normalize to list (handles scalar, list, and stringified JSON)
+            values = normalize_values(condition.property_filter.values)
+            property_values = json.dumps(values)
+
+        if property_values is not None:
+            try:
+                parsed = json.loads(property_values)
+                if not isinstance(parsed, list):
+                    raise ValueError
+            except Exception:
+                raise HTTPException(status_code=400, detail="Invalid property_values format")
 
         connection.execute(
             """
@@ -553,3 +525,87 @@ def toggle_cohort_hide(connection: duckdb.DuckDBPyConnection, cohort_id: int) ->
         [cohort_id],
     ).fetchone()[0]
     return {"cohort_id": int(cohort_id), "hidden": bool(updated_hidden)}
+
+
+def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, object]:
+    ensure_cohort_tables(connection)
+    rows = connection.execute(
+        """
+        SELECT
+            c.cohort_id,
+            c.name,
+            c.is_active,
+            c.logic_operator,
+            c.join_type,
+            c.hidden,
+            c.split_parent_cohort_id,
+            c.split_group_index,
+            c.split_group_total,
+            c.source_saved_id,
+            cc.event_name,
+            cc.min_event_count,
+            cc.property_column,
+            cc.property_operator,
+            cc.property_values,
+            COALESCE(sub.size, 0) as size
+        FROM cohorts c
+        LEFT JOIN cohort_conditions cc
+            ON c.cohort_id = cc.cohort_id
+        LEFT JOIN (
+            SELECT cohort_id, COUNT(*) as size
+            FROM cohort_membership
+            GROUP BY cohort_id
+        ) sub ON c.cohort_id = sub.cohort_id
+        WHERE c.cohort_id = ?
+        ORDER BY cc.condition_id
+        """,
+        [cohort_id],
+    ).fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+
+    # Build response
+    first = rows[0]
+
+    cohort: dict[str, object] = {
+        "cohort_id": int(first[0]),
+        "cohort_name": str(first[1]),
+        "name": str(first[1]),
+        "is_active": bool(first[2]),
+        "logic_operator": str(first[3] or "AND"),
+        "condition_logic": str(first[3] or "AND"),
+        "join_type": str(first[4] or "condition_met"),
+        "hidden": bool(first[5]),
+        "split_parent_cohort_id": int(first[6]) if first[6] is not None else None,
+        "split_group_index": int(first[7]) if first[7] is not None else None,
+        "split_group_total": int(first[8]) if first[8] is not None else None,
+        "source_saved_id": str(first[9]) if first[9] is not None else None,
+        "size": int(first[15]),
+        "conditions": [],
+    }
+
+    for row in rows:
+        event_name = row[10]
+        min_event_count = row[11]
+
+        if event_name is None:
+            continue
+
+        property_filter = None
+        if row[12] and row[13] and row[14] is not None:
+            property_filter = {
+                "column": str(row[12]),
+                "operator": str(row[13]),
+                "values": json.loads(str(row[14])),
+            }
+
+        cohort["conditions"].append(
+            {
+                "event_name": str(event_name),
+                "min_event_count": int(min_event_count),
+                "property_filter": property_filter,
+            }
+        )
+
+    return cohort

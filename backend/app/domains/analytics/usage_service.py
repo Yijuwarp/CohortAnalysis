@@ -1,8 +1,11 @@
 """
 Short summary: service for computing event usage and frequency.
 """
+import logging
 import duckdb
 from fastapi import HTTPException
+
+logger = logging.getLogger(__name__)
 from app.utils.perf import time_block
 from app.utils.sql import quote_identifier, classify_column
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
@@ -334,31 +337,60 @@ def get_usage_frequency(
 
     rows = connection.execute(
         """
-        WITH user_event_counts AS (
+        WITH deduped_membership AS (
+            SELECT DISTINCT cohort_id, user_id, join_time
+            FROM cohort_membership
+        ),
+        filtered_membership AS (
+            SELECT dm.*
+            FROM deduped_membership dm
+            JOIN cohorts c ON c.cohort_id = dm.cohort_id
+            WHERE c.hidden = FALSE
+        ),
+        user_event_counts AS (
             SELECT
                 cm.cohort_id,
                 cm.user_id,
-                COALESCE(SUM(e.event_count), 0) AS event_count
-            FROM cohort_membership cm
-            LEFT JOIN events_scoped e
+                SUM(e.event_count) AS event_count
+            FROM filtered_membership cm
+            JOIN events_scoped e
                 ON e.user_id = cm.user_id
                 AND e.event_name = ?
                 AND e.event_time >= cm.join_time{property_clause}
             GROUP BY cm.cohort_id, cm.user_id
+        ),
+        non_zero_buckets AS (
+            SELECT
+                cohort_id,
+                CASE
+                    WHEN event_count = 1 THEN '1'
+                    WHEN event_count BETWEEN 2 AND 5 THEN '2-5'
+                    WHEN event_count BETWEEN 6 AND 10 THEN '6-10'
+                    WHEN event_count BETWEEN 11 AND 20 THEN '11-20'
+                    ELSE '20+'
+                END AS bucket,
+                COUNT(DISTINCT user_id) AS users
+            FROM user_event_counts
+            GROUP BY cohort_id, bucket
+        ),
+        zero_bucket AS (
+            SELECT
+                cm.cohort_id,
+                '0' AS bucket,
+                COUNT(DISTINCT cm.user_id) AS users
+            FROM filtered_membership cm
+            LEFT JOIN user_event_counts u
+                ON cm.user_id = u.user_id
+                AND cm.cohort_id = u.cohort_id
+            WHERE u.user_id IS NULL
+            GROUP BY cm.cohort_id
+        ),
+        all_buckets AS (
+            SELECT * FROM zero_bucket
+            UNION ALL
+            SELECT * FROM non_zero_buckets
         )
-        SELECT
-            cohort_id,
-            CASE
-                WHEN event_count = 0 THEN '0'
-                WHEN event_count = 1 THEN '1'
-                WHEN event_count BETWEEN 2 AND 5 THEN '2-5'
-                WHEN event_count BETWEEN 6 AND 10 THEN '6-10'
-                WHEN event_count BETWEEN 11 AND 20 THEN '11-20'
-                ELSE '20+'
-            END AS bucket,
-            COUNT(*) AS users
-        FROM user_event_counts
-        GROUP BY cohort_id, bucket
+        SELECT * FROM all_buckets
         ORDER BY
             cohort_id,
             CASE
@@ -380,6 +412,16 @@ def get_usage_frequency(
     for cohort_id, bucket, users in rows:
         if bucket in bucket_data:
             bucket_data[bucket][cohort_id] = users
+
+    # Validation: Buckets sum to cohort size
+    for cid, name in cohorts:
+        size = cohort_sizes_map.get(cid, 0)
+        total_bucket_users = sum(bucket_data[b].get(cid, 0) for b in bucket_order)
+        if total_bucket_users != size:
+            logger.error(
+                f"[Frequency Validation Failed] cohort={name} "
+                f"expected={size} got={total_bucket_users}"
+            )
             
     buckets = []
     for b in bucket_order:

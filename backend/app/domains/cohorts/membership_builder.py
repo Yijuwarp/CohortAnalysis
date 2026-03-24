@@ -55,7 +55,8 @@ def build_cohort_membership(
             event_params: list[object] = [event_name]
 
             if property_column and property_operator and property_values is not None:
-                parsed_values = json.loads(str(property_values))
+                from app.domains.cohorts.cohort_service import normalize_values
+                parsed_values = normalize_values(property_values)
                 normalized_operator = str(property_operator).upper()
                 if normalized_operator in {"IN", "NOT IN"}:
                     placeholders = ", ".join(["?"] * len(parsed_values))

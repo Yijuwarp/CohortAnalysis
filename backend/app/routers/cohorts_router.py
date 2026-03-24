@@ -9,6 +9,7 @@ from app.domains.cohorts.cohort_service import (
     delete_cohort,
     random_split_cohort,
     toggle_cohort_hide,
+    get_cohort_detail,
 )
 from app.models.cohort_models import SavedCohortCreate
 from app.domains.cohorts.saved_cohort_service import estimate_cohort
@@ -63,3 +64,11 @@ async def toggle_hide_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     return toggle_cohort_hide(conn, cohort_id)
+
+
+@router.get("/cohorts/{cohort_id}")
+async def get_cohort_detail_endpoint(
+    cohort_id: int,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return get_cohort_detail(conn, cohort_id)
