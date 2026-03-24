@@ -14,6 +14,7 @@ import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
 
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
+const ANALYTICS_STORAGE_KEY = 'analytics-state'
 const WORKSPACE_STORAGE_VERSION = 2
 const LEFT_PANE_WIDTH = 600
 
@@ -28,6 +29,15 @@ function readPersistedState() {
     return parsed.state
   } catch {
     return null
+  }
+}
+
+function readAnalyticsState() {
+  try {
+    const raw = localStorage.getItem(ANALYTICS_STORAGE_KEY)
+    return raw ? JSON.parse(raw) : {}
+  } catch {
+    return {}
   }
 }
 
@@ -52,6 +62,14 @@ export default function App() {
   const [leftPaneTab, setLeftPaneTab] = useState(persisted?.leftPaneTab || 'filters')
   const [events, setEvents] = useState([])
   const [activeFilterCount, setActiveFilterCount] = useState(0)
+  const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
+
+  const updateAnalyticsState = useCallback((tab, newState) => {
+    setAnalyticsState((prev) => ({
+      ...prev,
+      [tab]: newState,
+    }))
+  }, [])
 
   useEffect(() => {
     if (uploading) return
@@ -75,6 +93,10 @@ export default function App() {
       })
     )
   }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, detectedMaxDay, activeTab, leftPaneTab, uploading])
+
+  useEffect(() => {
+    localStorage.setItem(ANALYTICS_STORAGE_KEY, JSON.stringify(analyticsState))
+  }, [analyticsState])
 
   useEffect(() => {
     if (!banner) return
@@ -379,6 +401,8 @@ export default function App() {
                   maxDay={globalMaxDay}
                   setMaxDay={setGlobalMaxDay}
                   showGlobalControls={false}
+                  state={analyticsState.retention}
+                  setState={(s) => updateAnalyticsState('retention', s)}
                 />
               )}
               {activeTab === 'usage' && (
@@ -386,6 +410,8 @@ export default function App() {
                   refreshToken={retentionRefreshToken}
                   retentionEvent={selectedRetentionEvent}
                   maxDay={globalMaxDay}
+                  state={analyticsState.usage}
+                  setState={(s) => updateAnalyticsState('usage', s)}
                 />
               )}
               {activeTab === 'monetization' && (
@@ -393,19 +419,30 @@ export default function App() {
                   refreshToken={retentionRefreshToken}
                   maxDay={globalMaxDay}
                   retentionEvent={selectedRetentionEvent}
+                  state={analyticsState.monetization}
+                  setState={(s) => updateAnalyticsState('monetization', s)}
                 />
               )}
               {activeTab === 'funnels' && (
                 <FunnelPane
                   refreshToken={retentionRefreshToken}
                   events={events}
+                  state={analyticsState.funnels}
+                  setState={(s) => updateAnalyticsState('funnels', s)}
                 />
               )}
               {activeTab === 'flow' && (
-                <FlowPane refreshToken={retentionRefreshToken} />
+                <FlowPane
+                  refreshToken={retentionRefreshToken}
+                  state={analyticsState.flows}
+                  setState={(s) => updateAnalyticsState('flows', s)}
+                />
               )}
               {activeTab === 'user-explorer' && (
-                <UserExplorer />
+                <UserExplorer
+                   state={analyticsState.userExplorer}
+                   setState={(s) => updateAnalyticsState('userExplorer', s)}
+                />
               )}
             </section>
           </div>

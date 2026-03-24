@@ -26,23 +26,39 @@ function formatCountValue(value) {
   return Number(value).toLocaleString()
 }
 
-export default function UsageTable({ refreshToken, retentionEvent, maxDay }) {
-  const [event, setEvent] = useState('')
-  const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(maxDay))
-  const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(maxDay))
-  const [isPinned, setIsPinned] = useState(true)
-  const [modeUsers, setModeUsers] = useState('count')
-  const [metricType, setMetricType] = useState('count')
-  const [cumulativeMode, setCumulativeMode] = useState(false)
+export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState }) {
+  const [event, setEvent] = useState(state?.event || '')
+  const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(state?.effectiveMaxDayVolume || maxDay))
+  const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(state?.effectiveMaxDayUsers || maxDay))
+  const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
+  const [modeUsers, setModeUsers] = useState(state?.modeUsers || 'count')
+  const [metricType, setMetricType] = useState(state?.metricType || 'count')
+  const [cumulativeMode, setCumulativeMode] = useState(state?.cumulativeMode ?? false)
   const [events, setEvents] = useState([])
 
   const [eventProperties, setEventProperties] = useState([])
-  const [eventProperty, setEventProperty] = useState('')
-  const [propertyOperator, setPropertyOperator] = useState('=')
+  const [eventProperty, setEventProperty] = useState(state?.eventProperty || '')
+  const [propertyOperator, setPropertyOperator] = useState(state?.propertyOperator || '=')
   const [propertyValues, setPropertyValues] = useState([])
-  const [propertyValue, setPropertyValue] = useState('')
+  const [propertyValue, setPropertyValue] = useState(state?.propertyValue || '')
   const [propertyLoading, setPropertyLoading] = useState(false)
-  const [showPropertyFilter, setShowPropertyFilter] = useState(false)
+  const [showPropertyFilter, setShowPropertyFilter] = useState(state?.showPropertyFilter ?? false)
+
+  useEffect(() => {
+    setState({
+      event,
+      effectiveMaxDayVolume,
+      effectiveMaxDayUsers,
+      isPinned,
+      modeUsers,
+      metricType,
+      cumulativeMode,
+      eventProperty,
+      propertyOperator,
+      propertyValue,
+      showPropertyFilter
+    })
+  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter, setState])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])

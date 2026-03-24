@@ -1,0 +1,8 @@
+user_id,event_name,event_time,revenue,country
+u1,signup,2024-01-01 10:00:00,0,US
+u1,purchase,2024-01-01 11:00:00,50,US
+u2,signup,2024-01-02 10:00:00,0,UK
+u2,purchase,2024-01-02 12:00:00,30,UK
+u3,signup,2024-01-03 10:00:00,0,US
+u3,purchase,2024-01-04 10:00:00,20,US
+u1,purchase,2024-01-05 10:00:00,40,US
