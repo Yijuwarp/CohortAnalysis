@@ -127,4 +127,29 @@ describe('CohortForm auto-add logic', () => {
     expect(api.createCohort).not.toHaveBeenCalled()
     expect(onSave).not.toHaveBeenCalled()
   })
+
+  it('prefills data correctly when initialData is provided in create mode', async () => {
+    const initialData = {
+      name: 'Copy of Original',
+      definition: {
+        logic_operator: 'OR',
+        join_type: 'first_event',
+        conditions: [{ event_name: 'signup', min_event_count: 5 }]
+      }
+    }
+
+    render(
+      <CohortForm mode="create_saved" initialData={initialData} onSave={vi.fn()} onCancel={vi.fn()} />
+    )
+
+    await waitFor(() => expect(screen.getByTestId('mock-searchable-select')).toBeInTheDocument())
+
+    expect(screen.getByPlaceholderText('Cohort name (optional, defaults to description)').value).toBe('Copy of Original')
+    expect(screen.getByDisplayValue('ANY conditions (OR)')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Join on first qualifying event')).toBeInTheDocument()
+    
+    // Check if the condition event is set
+    expect(screen.getByDisplayValue('signup')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('5')).toBeInTheDocument()
+  })
 })

@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { deleteSavedCohort } from '../api'
 
-export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, onEdit }) {
+export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, onEdit, onDuplicate }) {
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
 
@@ -66,7 +66,21 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
                       }}
                       title="Edit global saved cohort"
                     >
-                      ✏
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/>
+                      </svg>
+                    </button>
+                    <button
+                      className="cohort-icon-button"
+                      type="button"
+                      onClick={() => onDuplicate?.(cohort)}
+                      title="Duplicate saved cohort"
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
                     </button>
                     <button
                       className="cohort-icon-button"
@@ -75,7 +89,17 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
                       disabled={deletingId === cohort.id}
                       title="Delete saved cohort"
                     >
-                      {deletingId === cohort.id ? '⏳' : '🗑'}
+                      {deletingId === cohort.id ? (
+                        '⏳'
+                      ) : (
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18"/>
+                          <path d="M8 6v-2h8v2"/>
+                          <path d="M19 6l-1 14H6L5 6"/>
+                          <path d="M10 11v6"/>
+                          <path d="M14 11v6"/>
+                        </svg>
+                      )}
                     </button>
                   </div>
                 </div>
