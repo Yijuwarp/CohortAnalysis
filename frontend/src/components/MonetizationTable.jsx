@@ -224,12 +224,11 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
               )}
 
               <button
+                className="button button-secondary"
                 type="button"
-                className={`compare-open-button button-secondary compare-btn-align ${isComparePaneOpen ? 'active' : ''}`}
-                onClick={() => setIsComparePaneOpen(prev => !prev)}
-                title="Compare two cohorts statistically"
+                onClick={() => setIsComparePaneOpen(true)}
               >
-                Compare
+                🔬 Compare
               </button>
           </div>
 
