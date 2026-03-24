@@ -22,6 +22,7 @@ const normalizeColumnType = (dataType = '') => {
 const createEmptyCondition = (defaultEvent = '') => ({
   event_name: defaultEvent,
   min_event_count: 1,
+  is_negated: false,
   property_filter: null,
   property_filter_expanded: false,
 })
@@ -41,8 +42,9 @@ function generateCohortName(currentConditions, currentLogicOperator) {
     const event = cond.event_name || 'event'
     const count = cond.min_event_count ?? 1
     const propertyFilter = cond.property_filter
+    const negated = cond.is_negated ? 'NOT ' : ''
 
-    let base = count > 1 ? `Triggered ${event} more than ${count} times` : `Triggered ${event}`
+    let base = count > 1 ? `${negated}Triggered ${event} more than ${count} times` : `${negated}Triggered ${event}`
     if (propertyFilter) {
       const values = Array.isArray(propertyFilter.values) ? propertyFilter.values.join(', ') : propertyFilter.values
       base += ` where ${propertyFilter.column} ${propertyFilter.operator} ${values}`
@@ -68,6 +70,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         const hasValues = Array.isArray(pf?.values) ? pf.values.length > 0 : pf?.values !== null && pf?.values !== undefined && pf?.values !== ''
         return {
           ...condition,
+          is_negated: condition.is_negated ?? false,
           property_filter: pf,
           property_filter_expanded: !!pf && hasValues,
           property_column: pf?.column || '',
@@ -317,7 +320,19 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
               <div className="cohort-condition-block">
                 <div className="cohort-condition-content">
                   <div className="cohort-condition-row">
-                    <p className="cohort-rule-text">Performed</p>
+                    <select
+                      className="cohort-negation-select"
+                      value={condition.is_negated ? 'true' : 'false'}
+                      onChange={(e) => {
+                        const updated = [...conditions]
+                        updated[index] = { ...updated[index], is_negated: e.target.value === 'true' }
+                        setConditions(updated)
+                      }}
+                    >
+                      <option value="false">DID</option>
+                      <option value="true">DIDN'T</option>
+                    </select>
+                    <span className="cohort-rule-text">perform</span>
                     <SearchableSelect
                       options={events}
                       value={condition.event_name}

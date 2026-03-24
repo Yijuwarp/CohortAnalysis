@@ -12,6 +12,7 @@ class CohortCondition(BaseModel):
     event_name: str
     min_event_count: int = Field(ge=1)
     property_filter: CohortPropertyFilter | None = None
+    is_negated: bool = False
 
     @field_validator("property_filter")
     @classmethod

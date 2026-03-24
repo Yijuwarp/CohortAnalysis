@@ -29,7 +29,8 @@ def build_cohort_membership(
     connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
     conditions = connection.execute(
         """
-        SELECT event_name, min_event_count, property_column, property_operator, property_values
+        SELECT event_name, min_event_count, property_column, property_operator, property_values,
+               COALESCE(is_negated, FALSE) as is_negated
         FROM cohort_conditions
         WHERE cohort_id = ?
         ORDER BY condition_id
@@ -48,9 +49,18 @@ def build_cohort_membership(
             [cohort_id],
         )
     else:
+        has_negated = any(bool(row[5]) for row in conditions)
+
         cte_parts: list[str] = []
         query_params: list[object] = []
-        for index, (event_name, min_event_count, property_column, property_operator, property_values) in enumerate(conditions):
+
+        # Compute all_users once if any condition is negated
+        if has_negated:
+            cte_parts.append(
+                f"all_users AS (SELECT DISTINCT user_id FROM {source_table})"
+            )
+
+        for index, (event_name, min_event_count, property_column, property_operator, property_values, is_negated) in enumerate(conditions):
             event_conditions = ["event_name = ?"]
             event_params: list[object] = [event_name]
 
@@ -68,9 +78,11 @@ def build_cohort_membership(
                     event_params.append(scalar_value)
 
             where_clause = " AND ".join(event_conditions)
+
+            # Base condition CTE: users who DID perform the event
             cte_parts.append(
                 f"""
-                c{index} AS (
+                c{index}_base AS (
                     SELECT user_id, MIN(event_time) AS event_time
                     FROM (
                         SELECT
@@ -90,6 +102,23 @@ def build_cohort_membership(
                 """
             )
             query_params.extend([*event_params, min_event_count])
+
+            if bool(is_negated):
+                # Negated: all_users EXCEPT users who DID perform the event
+                # For join_time, use the user's earliest event in the source table
+                cte_parts.append(
+                    f"""
+                    c{index} AS (
+                        SELECT au.user_id, MIN(e.event_time) AS event_time
+                        FROM all_users au
+                        LEFT JOIN {source_table} e ON au.user_id = e.user_id
+                        WHERE au.user_id NOT IN (SELECT user_id FROM c{index}_base)
+                        GROUP BY au.user_id
+                    )
+                    """
+                )
+            else:
+                cte_parts.append(f"c{index} AS (SELECT user_id, event_time FROM c{index}_base)")
 
         if logic_operator == "AND":
             if len(conditions) == 1:
