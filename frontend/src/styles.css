@@ -834,27 +834,41 @@ td.sticky-col-size {
   margin: var(--space-4) 0;
 }
 
-.cohort-list-table {
+.existing-cohorts-container {
+  width: 100%;
+}
+
+.existing-cohorts-list {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
 
-.cohort-list-row {
+.existing-cohort-header,
+.existing-cohort-row {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 90px auto;
-  gap: var(--space-3);
+  grid-template-columns: 1fr 90px 140px;
   align-items: center;
-  padding: 8px 10px;
+  gap: 12px;
+  width: 100%;
+}
+
+.existing-cohort-row {
+  padding: 6px 8px;
   border-radius: var(--radius-sm);
   font-size: var(--font-size-sm);
 }
 
-.cohort-list-header {
-  font-weight: 600;
-  color: var(--color-text-secondary);
+.existing-cohort-header {
+  font-weight: 500;
+  color: #6b7280;
   border-bottom: 1px solid var(--color-border);
   border-radius: 0;
+  padding: 8px;
+}
+
+.existing-cohort-header .cohort-actions {
+  justify-content: flex-end;
 }
 
 .cohort-row:hover {
@@ -872,13 +886,20 @@ td.sticky-col-size {
   gap: var(--space-2);
 }
 
-.cohort-list-name {
+.cohort-name {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
 }
 
-.cohort-list-size {
+.cohort-size {
+  text-align: right;
   font-variant-numeric: tabular-nums;
   color: var(--color-text-secondary);
+  font-size: 15px;
+  font-weight: 500;
 }
 
 .badge-inactive {
@@ -903,16 +924,21 @@ td.sticky-col-size {
 .cohort-actions {
   display: flex;
   justify-content: flex-end;
-  gap: 10px;
   align-items: center;
+  gap: 6px;
+  position: relative;
 }
 
 .cohort-icon-button {
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
   border: none;
   background: transparent;
   cursor: pointer;
-  font-size: 16px;
-  line-height: 1;
   opacity: 0.6;
   padding: 0;
 }
@@ -924,6 +950,33 @@ td.sticky-col-size {
 .cohort-icon-button:disabled {
   opacity: 0.3;
   cursor: not-allowed;
+}
+
+.cohort-info-tooltip {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 100;
+  max-width: 220px;
+  width: max-content;
+  background: #1f2937;
+  color: white;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1.4;
+  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+  margin-top: 8px;
+  white-space: normal;
+  text-align: left;
+  pointer-events: auto;
+  animation: tooltipFade 0.15s ease;
+}
+
+@keyframes tooltipFade {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 
