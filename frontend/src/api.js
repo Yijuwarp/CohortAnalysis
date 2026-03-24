@@ -52,6 +52,10 @@ export async function listCohorts() {
   return request('/cohorts', { method: 'GET' })
 }
 
+export async function getCohortDetail(cohortId) {
+  return request(`/cohorts/${cohortId}`, { method: 'GET' })
+}
+
 export async function updateCohort(cohortId, payload) {
   return request(`/cohorts/${cohortId}`, {
     method: 'PUT',

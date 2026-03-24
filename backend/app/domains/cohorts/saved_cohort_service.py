@@ -154,8 +154,15 @@ def update_saved_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: str, p
     ).fetchall()
     
     from app.models.cohort_models import CreateCohortRequest
+    from app.domains.cohorts.cohort_service import normalize_values
     for (act_id,) in affected_cohorts:
         def_dict = payload.model_dump()
+        # Normalize property values in definition
+        for condition in def_dict.get("conditions", []):
+            if condition.get("property_filter"):
+                vals = condition["property_filter"].get("values")
+                condition["property_filter"]["values"] = normalize_values(vals)
+                
         c_req = CreateCohortRequest(**def_dict)
         c_req.source_saved_id = cohort_id
         update_cohort(connection, int(act_id), c_req)

@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import cloneDeep from 'lodash/cloneDeep'
-import { createCohort, deleteCohort, listCohorts, randomSplitCohort, toggleCohortHide, getSavedCohorts } from '../api'
+import { createCohort, deleteCohort, listCohorts, randomSplitCohort, toggleCohortHide, getSavedCohorts, getCohortDetail } from '../api'
+import { buildCohortDefinition } from '../utils/cohortUtils'
 import CohortForm from './CohortForm'
 import SavedCohortsPanel from './SavedCohortsPanel'
 import SearchableSelect from './SearchableSelect'
@@ -16,34 +17,7 @@ const formatCohortSize = (size) => {
   return String(numeric)
 }
 
-const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
 
-const formatPropertyFilter = (propertyFilter) => {
-  if (!propertyFilter) {
-    return ''
-  }
-
-  const formattedValues = Array.isArray(propertyFilter.values)
-    ? propertyFilter.values.join(', ')
-    : propertyFilter.values
-
-  if (isMultiOperator(propertyFilter.operator)) {
-    return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} (${formattedValues})`
-  }
-
-  return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`
-}
-
-const describeJoinType = (joinType) => (joinType === 'first_event' ? 'Join on first event' : 'Join when condition is met')
-
-const buildCohortDefinition = (cohort) => {
-  const logic = cohort.condition_logic || cohort.logic_operator || 'AND'
-  const conditionLines = (cohort.conditions || []).map((condition) => {
-    const property = condition.property_filter ? formatPropertyFilter(condition.property_filter) : ''
-    return `${condition.event_name} ≥ ${condition.min_event_count}${property}`
-  })
-  return [`Logic: ${logic}`, ...conditionLines, describeJoinType(cohort.join_type)].join(' • ')
-}
 
 
 export default function CohortPane({ refreshToken, onCohortsChanged }) {
@@ -52,6 +26,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [selectedCohortId, setSelectedCohortId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
   const [splittingId, setSplittingId] = useState(null)
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   
   // Modals state
@@ -62,17 +37,33 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [activeTooltipId, setActiveTooltipId] = useState(null)
 
   const loadData = async () => {
+    setLoading(true)
+    setError('')
     try {
-      const [cohortsRes, savedRes] = await Promise.all([
+      const [cohortsListRes, savedRes] = await Promise.all([
         listCohorts(),
         getSavedCohorts()
       ])
-      setCohorts(cohortsRes.cohorts || [])
+      
+      const cohortsList = cohortsListRes.cohorts || []
+      
+      // Fetch full details for each cohort in the list to get conditions/definitions
+      const detailedCohorts = await Promise.all(
+        cohortsList.map(c => getCohortDetail(c.cohort_id).catch(err => {
+          console.error(`Failed to fetch detail for cohort ${c.cohort_id}`, err)
+          return c // Fallback to lightweight if detail fails
+        }))
+      )
+      
+      setCohorts(detailedCohorts)
       setSavedCohorts(savedRes || [])
-    } catch {
-      // Best effort
+    } catch (err) {
+      console.error("Failed to load cohort data", err)
+      setError("Failed to load cohort data")
       setCohorts([])
       setSavedCohorts([])
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -314,8 +305,14 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
       </div>
 
       <div className="cohorts-section-card existing-cohorts-card existing-cohorts-container">
-        <h3>Existing Cohorts</h3>
-        {cohorts.length === 0 ? (
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+          <h3 style={{ margin: 0 }}>Existing Cohorts</h3>
+          {loading && <span className="secondary-text" style={{ fontSize: '12px' }}>Loading...</span>}
+        </div>
+        
+        {loading && cohorts.length === 0 ? (
+          <p className="secondary-text">Loading cohorts...</p>
+        ) : cohorts.length === 0 ? (
           <p className="secondary-text">No cohorts created yet.</p>
         ) : (
           <div className="existing-cohorts-list">
@@ -343,9 +340,11 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
                     <div className="cohort-actions">
                       <button 
-                        className="cohort-icon-button" 
+                        className="cohort-icon-button info-icon" 
                         type="button" 
                         aria-label="View cohort definition" 
+                        onMouseEnter={() => setActiveTooltipId(cohort.cohort_id)}
+                        onMouseLeave={() => setActiveTooltipId(null)}
                         onClick={(e) => {
                           e.stopPropagation();
                           setActiveTooltipId(prev => prev === cohort.cohort_id ? null : cohort.cohort_id);
@@ -445,9 +444,11 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
                         <div className="cohort-actions">
                           <button
-                            className="cohort-icon-button"
+                            className="cohort-icon-button info-icon"
                             type="button"
                             aria-label="View cohort definition"
+                            onMouseEnter={() => setActiveTooltipId(child.cohort_id)}
+                            onMouseLeave={() => setActiveTooltipId(null)}
                             onClick={(e) => {
                               e.stopPropagation();
                               setActiveTooltipId(prev => prev === child.cohort_id ? null : child.cohort_id);

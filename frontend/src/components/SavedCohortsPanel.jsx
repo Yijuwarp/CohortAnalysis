@@ -1,9 +1,11 @@
 import React, { useState } from 'react'
 import { deleteSavedCohort } from '../api'
+import { buildCohortDefinition } from '../utils/cohortUtils'
 
 export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, onEdit, onDuplicate }) {
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
+  const [activeTooltipId, setActiveTooltipId] = useState(null)
 
   const handleDelete = async (id) => {
     setError('')
@@ -44,8 +46,8 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
               
               return (
                 <div key={cohort.id} className="cohort-list-row cohort-row">
-                  <div className="cohort-list-name cohort-left" style={{ flex: 2 }}>
-                    <span>{cohort.name}</span>
+                  <div className="cohort-list-name-group" style={{ flex: 2 }}>
+                    <span style={{ fontWeight: 500 }}>{cohort.name}</span>
                   </div>
 
                   <span className="cohort-list-size">
@@ -56,7 +58,30 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
                     )}
                   </span>
 
-                  <div className="cohort-actions">
+                   <div className="cohort-actions">
+                    <button
+                      className="cohort-icon-button info-icon"
+                      type="button"
+                      aria-label="View cohort definition"
+                      onMouseEnter={() => setActiveTooltipId(cohort.id)}
+                      onMouseLeave={() => setActiveTooltipId(null)}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setActiveTooltipId(prev => prev === cohort.id ? null : cohort.id);
+                      }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="12" cy="12" r="10"/>
+                        <path d="M12 16v-4"/>
+                        <path d="M12 8h.01"/>
+                      </svg>
+                      {activeTooltipId === cohort.id && (
+                        <div className="cohort-info-tooltip">
+                          {buildCohortDefinition(cohort)}
+                        </div>
+                      )}
+                    </button>
+
                     <button
                       className="cohort-icon-button"
                       type="button"
