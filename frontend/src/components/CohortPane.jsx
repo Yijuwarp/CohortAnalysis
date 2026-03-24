@@ -59,6 +59,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [formMode, setFormMode] = useState('create_saved') // 'create_saved', 'edit_saved'
   const [editData, setEditData] = useState(null)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
+  const [activeTooltipId, setActiveTooltipId] = useState(null)
 
   const loadData = async () => {
     try {
@@ -78,6 +79,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   useEffect(() => {
     loadData()
   }, [refreshToken])
+
+  useEffect(() => {
+    setActiveTooltipId(null)
+  }, [cohorts])
 
   const handleToggleHide = async (cohortId) => {
     setError('')
@@ -308,16 +313,16 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
         {error && <p className="error" style={{marginTop: '12px'}}>{error}</p>}
       </div>
 
-      <div className="cohorts-section-card existing-cohorts-card">
+      <div className="cohorts-section-card existing-cohorts-card existing-cohorts-container">
         <h3>Existing Cohorts</h3>
         {cohorts.length === 0 ? (
           <p className="secondary-text">No cohorts created yet.</p>
         ) : (
-          <div className="cohort-list-table">
-            <div className="cohort-list-header cohort-list-row">
-              <span>Name</span>
-              <span>Size</span>
-              <span>Actions</span>
+          <div className="existing-cohorts-list">
+            <div className="existing-cohort-header existing-cohort-row">
+              <div className="cohort-name">Name</div>
+              <div className="cohort-size">Size</div>
+              <div className="cohort-actions">Actions</div>
             </div>
             {enrichedParentCohorts.map((cohort) => {
               const isSystemCohort = cohort.cohort_name === 'All Users'
@@ -327,22 +332,35 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
               return (
                 <Fragment key={cohort.cohort_id}>
-                  <div className="cohort-list-row cohort-row" title={cohort.is_active ? '' : 'No matching members under current filters'}>
-                    <div className="cohort-list-name cohort-left">
+                  <div className="existing-cohort-row cohort-row" title={cohort.is_active ? '' : 'No matching members under current filters'}>
+                    <div className="cohort-name cohort-left">
                       <span>{cohort.cohort_name}</span>
                       {cohort.hidden && <span className="badge-hidden">Hidden</span>}
                       {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
                     </div>
 
-                    <span className="cohort-list-size">{formatCohortSize(cohort.size)}</span>
+                    <div className="cohort-size">{formatCohortSize(cohort.size)}</div>
 
                     <div className="cohort-actions">
-                      <button className="cohort-icon-button" type="button" aria-label="View cohort definition" title={definitionTooltip}>
+                      <button 
+                        className="cohort-icon-button" 
+                        type="button" 
+                        aria-label="View cohort definition" 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveTooltipId(prev => prev === cohort.cohort_id ? null : cohort.cohort_id);
+                        }}
+                      >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                           <circle cx="12" cy="12" r="10"/>
                           <path d="M12 16v-4"/>
                           <path d="M12 8h.01"/>
                         </svg>
+                        {activeTooltipId === cohort.cohort_id && (
+                          <div className="cohort-info-tooltip">
+                            {definitionTooltip}
+                          </div>
+                        )}
                       </button>
 
                       <button
@@ -415,17 +433,37 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                     const isChildSystemCohort = child.cohort_name === 'All Users'
                     const childDefinitionTooltip = childDefinitionTooltips[child.cohort_id]
                     return (
-                      <div key={child.cohort_id} className="cohort-list-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
-                        <div className="cohort-list-name cohort-left">
+                      <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
+                        <div className="cohort-name cohort-left">
                           <span className="child-prefix">↳</span>
                           <span>{child.cohort_name}</span>
                           {child.hidden && <span className="badge-hidden">Hidden</span>}
                           {!child.is_active && <span className="badge-inactive">Inactive</span>}
                         </div>
 
-                        <span className="cohort-list-size">{formatCohortSize(child.size)}</span>
+                        <div className="cohort-size">{formatCohortSize(child.size)}</div>
 
                         <div className="cohort-actions">
+                          <button
+                            className="cohort-icon-button"
+                            type="button"
+                            aria-label="View cohort definition"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setActiveTooltipId(prev => prev === child.cohort_id ? null : child.cohort_id);
+                            }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10"/>
+                              <path d="M12 16v-4"/>
+                              <path d="M12 8h.01"/>
+                            </svg>
+                            {activeTooltipId === child.cohort_id && (
+                              <div className="cohort-info-tooltip">
+                                {childDefinitionTooltip}
+                              </div>
+                            )}
+                          </button>
                           <button
                             className="cohort-icon-button"
                             type="button"
