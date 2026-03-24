@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
 import { deleteSavedCohort } from '../api'
-import { buildCohortDefinition } from '../utils/cohortUtils'
+import { formatCohortLogic } from '../utils/cohortUtils'
 
 export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, onEdit, onDuplicate }) {
   const [error, setError] = useState('')
@@ -77,7 +77,7 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
                       </svg>
                       {activeTooltipId === cohort.id && (
                         <div className="cohort-info-tooltip">
-                          {buildCohortDefinition(cohort)}
+                          {formatCohortLogic(cohort)}
                         </div>
                       )}
                     </button>

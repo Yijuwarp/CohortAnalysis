@@ -81,7 +81,7 @@ const MOCK_RUN_RESULT_ZERO_USERS = {
 // ---------------------------------------------------------------------------
 
 function renderFunnelPane(events = MOCK_EVENTS_STR) {
-  return render(<FunnelPane refreshToken={0} events={events} />)
+  return render(<FunnelPane refreshToken={0} events={events} state={{}} setState={() => {}} />)
 }
 
 beforeEach(() => {
@@ -158,7 +158,7 @@ describe('FunnelPane – events dropdown', () => {
 
   test('builder_dropdown_handles_undefined_events_gracefully', async () => {
     // events prop is undefined — should not crash
-    render(<FunnelPane refreshToken={0} events={undefined} />)
+    render(<FunnelPane refreshToken={0} events={undefined} state={{}} setState={() => {}} />)
     await waitFor(() => expect(screen.getByTestId('funnel-pane')).toBeInTheDocument())
 
     fireEvent.click(screen.getByTestId('funnel-new-button'))

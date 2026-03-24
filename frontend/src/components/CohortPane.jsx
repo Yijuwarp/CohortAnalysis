@@ -1,7 +1,7 @@
 import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import cloneDeep from 'lodash/cloneDeep'
 import { createCohort, deleteCohort, listCohorts, randomSplitCohort, toggleCohortHide, getSavedCohorts, getCohortDetail } from '../api'
-import { buildCohortDefinition } from '../utils/cohortUtils'
+import { formatCohortLogic } from '../utils/cohortUtils'
 import CohortForm from './CohortForm'
 import SavedCohortsPanel from './SavedCohortsPanel'
 import SearchableSelect from './SearchableSelect'
@@ -178,7 +178,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   }, [parentCohorts, parentIdsWithChildren])
 
   const parentDefinitionTooltips = useMemo(
-    () => Object.fromEntries(parentCohorts.map((cohort) => [cohort.cohort_id, buildCohortDefinition(cohort)])),
+    () => Object.fromEntries(parentCohorts.map((cohort) => [cohort.cohort_id, formatCohortLogic(cohort)])),
     [parentCohorts]
   )
 
@@ -186,7 +186,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     const map = {}
     Object.values(childCohortsByParent).forEach((children) => {
       children.forEach((child) => {
-        map[child.cohort_id] = buildCohortDefinition(child)
+        map[child.cohort_id] = formatCohortLogic(child)
       })
     })
     return map

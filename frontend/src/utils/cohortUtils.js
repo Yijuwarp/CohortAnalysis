@@ -18,11 +18,12 @@ const formatPropertyFilter = (propertyFilter) => {
 
 const describeJoinType = (joinType) => (joinType === 'first_event' ? 'Join on first event' : 'Join when condition is met')
 
-export const buildCohortDefinition = (cohort) => {
-  const logic = cohort.condition_logic || cohort.logic_operator || 'AND'
-  const conditionLines = (cohort.conditions || []).map((condition) => {
+export const formatCohortLogic = (cohort) => {
+  const data = cohort.definition || cohort
+  const logic = data.condition_logic || data.logic_operator || 'AND'
+  const conditionLines = (data.conditions || []).map((condition) => {
     const property = condition.property_filter ? formatPropertyFilter(condition.property_filter) : ''
     return `${condition.event_name} ≥ ${condition.min_event_count}${property}`
   })
-  return [`Logic: ${logic}`, ...conditionLines, describeJoinType(cohort.join_type)].join(' • ')
+  return [`Logic: ${logic}`, ...conditionLines, describeJoinType(data.join_type)].join(' • ')
 }
