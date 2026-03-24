@@ -116,6 +116,28 @@ Response:
 - Window functions (`ROW_NUMBER`) are used instead of `DISTINCT` for correctness on multi-event users.
 - All returned numeric types are Python-native `int` / `float` (no numpy).
 
+## Funnel Analytics (`POST /funnels/run`)
+
+### Behavior
+- **Greedy Matching**: Funnels use a greedy earliest-path matching algorithm. For each step in the funnel, the system searches for the earliest valid event that occurs after the previous step's matched event.
+- **Conversion Window**: Supports optional time-bound conversion windows (e.g., "within 30 minutes"). If no window is specified, it defaults to "lifetime" (within the active scope).
+- **Step Ordering**: The frontend sends a sequential list of events. The backend enforces this order during the join process.
+
+### Response
+- `funnel_results[]`:
+    - `step_name`, `count`, `conversion_rate`, `drop_off_rate`.
+
+## User Explorer (`GET /user-explorer`)
+
+### Behavior
+- **Timeline View**: Provides a chronologically ordered list of all events performed by a specific user within the active scope.
+- **Search & Filter**: Supports searching for specific event names within the user's timeline.
+- **Pagination**: Results are paginated to handle users with extremely high event volumes.
+
+### Response
+- `events[]`: Detailed list of events with timestamps and all associated property metadata.
+- `user_properties`: A summary of the user's stable properties (extracted from the most recent events).
+
 ## Statistical Testing
 
 Primary test: Mann-Whitney U (non-parametric)

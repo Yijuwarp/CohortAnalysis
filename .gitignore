@@ -4,3 +4,6 @@ backend/cohort_analysis.duckdb
 frontend/node_modules/
 frontend/package-lock.json
 frontend/dist/
+
+# Documentation
+combined_docs.md

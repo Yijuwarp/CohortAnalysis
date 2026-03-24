@@ -40,9 +40,16 @@ Monetization tab includes:
 - Projection trigger
 - Optional tuning pane for per-cohort power-law params (A/B)
 
-## Funnels builder UI
-Funnels modal supports:
-- 2 to 10 ordered steps
-- Per-step event + property filters
-- Drag-and-drop step reordering with preserved filter state
-- Optional global pairwise conversion window (`None`/lifetime or custom minutes)
+## Flow analytics UI
+Flows tab includes:
+- Sankey diagrams for event transitions
+- L1/L2 expansion controls
+- Forward/Reverse direction toggle
+- Property filtering for flow anchoring
+
+## User Explorer UI
+User Explorer tab includes:
+- User search by ID
+- Detailed event timeline with properties
+- Event name filtering within timeline
+- Extraction of stable user properties

@@ -33,6 +33,18 @@
   - Supports multiple monetization metrics and projection features
   - Integrates `TunePredictionPane.jsx` for interactive model tuning
 
+- `FunnelPane.jsx`
+  - Uses `/funnels/run`
+  - Interactive conversion funnel builder and visualization
+
+- `FlowPane.jsx`
+  - Uses `/flow/l1`, `/flow/l2`, `/flow/graph`
+  - Sankey-based event transition exploring
+
+- `UserExplorer.jsx`
+  - Uses `/user-explorer`
+  - Deep-dive into individual user activity and profiles
+
 ## Shared helpers
 - `SearchableSelect.jsx`: reusable searchable dropdown.
 - `frontend/src/utils/*`: date, formatting, cohort colors, prediction helpers.

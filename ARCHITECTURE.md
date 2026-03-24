@@ -1,99 +1,62 @@
 # Architecture
 
-## System overview
-The application is a single FastAPI service (`backend/app/main.py`) plus a React SPA (`frontend/src`).
+## System Overview
+The application is a full-stack cohort analysis platform consisting of a FastAPI backend (`backend/app/main.py`) and a React/Vite frontend (`frontend/src`). It uses DuckDB as an embedded analytical database for high-performance event processing.
 
-Backend persistence uses one DuckDB file (`backend/cohort_analysis.duckdb`). Request handlers in `app/routers/*` delegate to functions in `app/domains/legacy_api.py`.
+## Detailed Architecture
+For deeper dives into specific areas, refer to:
+- [Backend Overview](docs/backend_overview.md)
+- [Frontend Overview](docs/frontend_overview.md)
+- [Data Model](docs/data_model.md)
+- [API Reference](docs/api_reference.md)
 
-## Data pipeline
-`events` (raw CSV) -> `events_normalized` (canonical + aggregated) -> `events_scoped` (active filter scope) -> cohort membership/snapshot tables -> analytics responses.
+## Data Pipeline
+The system processes data through several stages of refinement:
+1.  **Raw Ingestion**: `events` (raw CSV) -> initial schema and type detection.
+2.  **Normalization**: `events_normalized` -> canonical fields, type casting, and grouping.
+3.  **Scoping**: `events_scoped` -> subset of normalized data based on active filters and date range.
+4.  **Cohort Materialization**: `cohort_membership` -> users satisfying specific logic.
+5.  **Activity Snapshots**: `cohort_activity_snapshot` -> scoped events for cohort members.
+6.  **Analytics Execution**: Final responses generated from scoped data and snapshots.
 
-## Backend responsibilities
-- Ingestion: upload CSV and map source columns
-- Normalization: parse/cast columns and aggregate duplicate event rows
-- Scope: rebuild `events_scoped` and persist scope metadata
-- Cohorts: CRUD + membership materialization
-- Analytics: retention, usage, monetization
-- Revenue config: include/exclude events and optional override value
+## Backend Responsibilities
+- **Ingestion**: Column mapping and type inference.
+- **Normalization**: Grouping by canonical and metadata columns to reduce row count.
+- **Filtering**: Rebuilding `events_scoped` and refreshing dependent cohort memberships.
+- **Cohort Engine**: Evaluating frequency-based conditions with property filters.
+- **Analytics Models**: Retention, usage, monetization, funnels, and flows.
+- **Revenue System**: Managing inclusion and value overrides for monetization.
 
-## Frontend responsibilities
-- Upload + mapping wizard
-- Left pane for Filters, Analytics Settings, Cohorts
-- Analytics tabs: Retention, Usage, Monetization
-- Monetization includes projection controls and tune pane
-- Persist basic workspace state in `localStorage`
+## Frontend Responsibilities
+- **Workspace Management**: Coordinate state between mapping, filtering, and analytics.
+- **Interactive Analytics**: Tables and visualizations for various analytical lenses.
+- **Cohort Builder**: Interface for defining complex cohort logic.
+- **User Detail**: In-depth timeline exploration for individual users.
 
-## Database tables
+## Database Tables
+Refer to [data_model.md](docs/data_model.md) for detailed table schemas.
 
-### Core event tables
-1. `events`
-   - Raw uploaded CSV table with source columns.
+## Cohort Logic
+- Conditions use cumulative `SUM` of event counts.
+- Users satisfy conditions when they reach `min_event_count`.
+- Support for `AND`/`OR` logic operators.
+- Join types: `condition_met` (trigger time) or `first_event` (global earliest).
+- Memberships are materialized to optimize analytics query performance.
 
-2. `events_normalized`
-   - Canonical fields:
-     - `user_id`
-     - `event_name`
-     - `event_time`
-     - `original_event_count`
-     - `original_revenue`
-     - `modified_event_count`
-     - `modified_revenue`
-   - Includes unmapped source columns (cast to selected types).
-   - Built via `GROUP BY` across canonical + metadata columns.
+## Analytics Systems
 
-3. `events_scoped`
-   - Rebuilt from `events_normalized` after scope filters.
-   - Same column shape as `events_normalized`.
+### Retention
+Dynamic retention analysis with optional confidence intervals (Wilson score) and multiple algorithms (Classic, 1-Day, etc.).
 
-### Cohort tables
-4. `cohorts`
-   - `cohort_id`, `name`, `logic_operator`, `join_type`, `is_active`, `hidden`
-   - Split metadata: `split_parent_cohort_id`, `split_group_index`, `split_group_total`
+### Monetization
+Revenue analysis based on `modified_revenue` fields, allowing for event-level overrides and inclusion toggles.
 
-5. `cohort_conditions`
-   - One row per condition: `event_name`, `min_event_count`
-   - Optional property filter fields: `property_column`, `property_operator`, `property_values` (JSON text)
+### Funnels
+Greedy earliest-path matching for multi-step conversion tracking. Supports conversion windows from minutes to lifetime.
 
-6. `cohort_membership`
-   - Materialized members: `user_id`, `cohort_id`, `join_time`
+### Flows
+Sankey-style event transition analysis with expansion capabilities (L1/L2) and top-K event grouping.
 
-7. `cohort_activity_snapshot`
-   - Event snapshot for members: `cohort_id`, `user_id`, `event_time`, `event_name`
-
-8. `saved_cohorts`
-   - Global reusable definitions: `id`, `name`, `definition` (JSON)
-   - Independent of specific active datasets, used to instantiate new active cohorts.
-
-### Scope and metadata tables
-8. `dataset_scope`
-   - Singleton metadata row (`id=1`): filters JSON, row counts, total scoped events, updated timestamp
-
-9. `dataset_metadata`
-   - Singleton metadata row (`id=1`) with `has_revenue_mapping`
-
-10. `revenue_event_selection`
-   - Event-level monetization config:
-     - `event_name` (PK)
-     - `is_included`
-     - `override_value`
-
-## Cohort logic
-- Each condition computes per-user cumulative event count (`SUM(original_event_count)` ordered by event time/name).
-- User satisfies condition when cumulative count reaches `min_event_count`.
-- `AND` combines users present in all condition CTEs.
-- `OR` unions all condition CTEs.
-- Join time:
-  - `condition_met`: first qualifying condition time
-  - `first_event`: user’s earliest event in source table
-- Membership and snapshot rebuild after scope updates.
-
-## Analytics logic
-- Retention: active users by day offset from `join_time`, optionally filtered to one `retention_event`, optional Wilson CI.
-- Usage: per-cohort/day total event volume and distinct users for selected event.
-- Monetization: per-cohort/day sums of `modified_revenue` and `modified_event_count` for included revenue events.
-
-## Runtime defaults and limits
-- `max_day` default: 7 (retention, usage, monetization)
-- Cohort condition limit: 5
-- `column-values` sample limit: 100
-- CORS is open (`*`)
+## Persistence
+- Analytical data is stored in `backend/cohort_analysis.duckdb`.
+- Workspace UI state (collapsed panes, active tabs, etc.) is persisted in `localStorage`.
