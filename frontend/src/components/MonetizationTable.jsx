@@ -15,7 +15,7 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-export default function MonetizationTable({ refreshToken, maxDay, retentionEvent, state, setState }) {
+export default function MonetizationTable({ refreshToken, maxDay, retentionEvent, state, setState, cohorts = [] }) {
   const [metricType, setMetricType] = useState(state?.metricType || 'cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState(state?.viewMode || 'table')
   const [revenueRows, setRevenueRows] = useState([])
@@ -29,6 +29,60 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   const [predictionBaseline, setPredictionBaseline] = useState(state?.predictionBaseline || null)
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(state?.isComparePaneOpen ?? false)
   const [showPredictionSummary, setShowPredictionSummary] = useState(state?.showPredictionSummary ?? true)
+  const [sortConfig, setSortConfig] = useState({ key: 'size', direction: 'desc' })
+
+  // 1. Build Metadata Lookup
+  const cohortMetaMap = useMemo(() => {
+    const map = {}
+    cohorts.forEach(c => {
+      map[c.cohort_id] = c
+    })
+    return map
+  }, [cohorts])
+
+  const getSplitLabel = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (!cohort?.split_type) return "NA"
+
+    if (cohort.split_type === "random") {
+      return `Group ${cohort.split_value}`
+    }
+
+    if (cohort.split_type === "property") {
+      if (cohort.split_value === "__OTHER__") return "Other"
+      return `${cohort.split_property} = ${cohort.split_value}`
+    }
+
+    return "NA"
+  }
+
+  const getDisplayName = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (cohort?.split_parent_cohort_id) {
+      const parent = cohortMetaMap[cohort.split_parent_cohort_id]
+      return parent?.cohort_name || parent?.name || row.cohort_name
+    }
+    return row.cohort_name
+  }
+
+  const getSortValue = (row, key) => {
+    if (key === 'cohort_name') return row.cohort_name
+    if (key === 'split') return getSplitLabel(row)
+    if (key === 'size') return row.size || 0
+    if (key === 'predicted') return predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon] || 0
+    if (key.startsWith('D')) {
+      const day = key.slice(1)
+      return row.values?.[day] ?? 0
+    }
+    return row.values?.[key] ?? 0
+  }
+
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }))
+  }
 
   useEffect(() => {
     const nextState = {
@@ -88,6 +142,33 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
     dayColumns,
     metricType,
   }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
+
+  const showSplit = useMemo(() => {
+    return (cohorts || []).some(c => c.split_type != null)
+  }, [cohorts])
+
+  const sortedRows = useMemo(() => {
+    const rows = [...(displayRows || [])]
+    return rows.sort((a, b) => {
+      const valA = getSortValue(a, sortConfig.key)
+      const valB = getSortValue(b, sortConfig.key)
+
+      if (sortConfig.key === 'split') {
+        if (valA === "Other") return 1
+        if (valB === "Other") return -1
+        if (valA === "NA" && valB !== "NA") return 1
+        if (valB === "NA" && valA !== "NA") return -1
+      }
+
+      const order = sortConfig.direction === 'asc' ? 1 : -1
+      if (typeof valA === 'string') {
+        return valA.localeCompare(valB) * order
+      }
+      if (valA < valB) return -1 * order
+      if (valA > valB) return 1 * order
+      return 0
+    })
+  }, [displayRows, sortConfig, predictions, predictionHorizon, cohorts])
 
   const effectiveMaxDay = safeMaxDay
 
@@ -244,16 +325,50 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
               <table>
                 <thead>
                   <tr>
-                    <th className="sticky-col sticky-col-top sticky-col-left">Cohort</th>
-                    <th className="sticky-col sticky-col-top col-numeric">Size</th>
-                    {visibleDayColumns.map((day) => <th key={day} className="sticky-col sticky-col-top col-numeric">D{day}</th>)}
-                    <th className="col-prediction sticky-col sticky-col-top col-numeric predicted-col-header">Predicted ({predictionHorizon}D)</th>
+                    <th
+                      className="sticky-col sticky-col-top sticky-col-left sortable-header"
+                      onClick={() => handleSort('cohort_name')}
+                    >
+                      Cohort {sortConfig.key === 'cohort_name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    {showSplit && (
+                      <th
+                        className="sticky-col sticky-col-top sortable-header"
+                        onClick={() => handleSort('split')}
+                      >
+                        Split {sortConfig.key === 'split' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                    )}
+                    <th
+                      className="sticky-col sticky-col-top col-numeric sortable-header"
+                      onClick={() => handleSort('size')}
+                    >
+                      Size {sortConfig.key === 'size' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    {visibleDayColumns.map((day) => (
+                      <th
+                        key={day}
+                        className="sticky-col sticky-col-top col-numeric sortable-header"
+                        onClick={() => handleSort(`D${day}`)}
+                      >
+                        D{day} {sortConfig.key === `D${day}` && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                    ))}
+                    <th
+                      className="col-prediction sticky-col sticky-col-top col-numeric predicted-col-header sortable-header"
+                      onClick={() => handleSort('predicted')}
+                    >
+                      Predicted ({predictionHorizon}D) {sortConfig.key === 'predicted' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {displayRows.map((row) => (
+                  {sortedRows.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td className="sticky-col sticky-col-left cohort-name-cell" title={row.cohort_name}>{row.cohort_name}</td>
+                      <td className="sticky-col sticky-col-left cohort-name-cell" title={row.cohort_name}>{getDisplayName(row)}</td>
+                      {showSplit && (
+                        <td className="tabular-cell">{getSplitLabel(row)}</td>
+                      )}
                       <td className="col-numeric cohort-size-cell">{Number(row.size).toLocaleString()}</td>
                       {visibleDayColumns.map((day) => <td key={day} className="col-numeric tabular-cell">{row.displayValues[String(day)] ?? '—'}</td>)}
                       <td className="col-prediction col-numeric predicted-cell">{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>

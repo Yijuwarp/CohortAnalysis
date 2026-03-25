@@ -26,7 +26,7 @@ function formatCountValue(value) {
   return Number(value).toLocaleString()
 }
 
-export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState, scopeVersion }) {
+export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState, scopeVersion, cohorts = [] }) {
   const [event, setEvent] = useState(state?.event || '')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(state?.effectiveMaxDayVolume || maxDay))
   const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(state?.effectiveMaxDayUsers || maxDay))
@@ -66,7 +66,91 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(false)
+  const [sortConfigVolume, setSortConfigVolume] = useState({ key: 'size', direction: 'desc' })
+  const [sortConfigUsers, setSortConfigUsers] = useState({ key: 'size', direction: 'desc' })
 
+  // 1. Build Metadata Lookup
+  const cohortMetaMap = useMemo(() => {
+    const map = {}
+    ;(cohorts || []).forEach(c => {
+      map[c.cohort_id] = c
+    })
+    return map
+  }, [cohorts])
+
+  const getSplitLabel = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (!cohort?.split_type) return "NA"
+
+    if (cohort.split_type === "random") {
+      return `Group ${cohort.split_value}`
+    }
+
+    if (cohort.split_type === "property") {
+      if (cohort.split_value === "__OTHER__") return "Other"
+      return `${cohort.split_property} = ${cohort.split_value}`
+    }
+
+    return "NA"
+  }
+
+  const getDisplayName = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (cohort?.split_parent_cohort_id) {
+      const parent = cohortMetaMap[cohort.split_parent_cohort_id]
+      return parent?.cohort_name || parent?.name || row.cohort_name
+    }
+    return row.cohort_name
+  }
+
+  const getSortValue = (row, key) => {
+    if (key === 'cohort_name') return row.cohort_name
+    if (key === 'split') return getSplitLabel(row)
+    if (key === 'size') return row.size || 0
+    if (key.startsWith('D')) {
+      const day = key.slice(1)
+      return row.values?.[day] || 0
+    }
+    return 0
+  }
+
+  const handleSortVolume = (key) => {
+    setSortConfigVolume(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }))
+  }
+
+  const handleSortUsers = (key) => {
+    setSortConfigUsers(prev => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc'
+    }))
+  }
+
+  const sortRows = (rows, config) => {
+    const { key, direction } = config
+    const sorted = [...(rows || [])]
+    return sorted.sort((a, b) => {
+      const valA = getSortValue(a, key)
+      const valB = getSortValue(b, key)
+
+      if (key === 'split') {
+        if (valA === "Other") return 1
+        if (valB === "Other") return -1
+        if (valA === "NA" && valB !== "NA") return 1
+        if (valB === "NA" && valA !== "NA") return -1
+      }
+
+      const order = direction === 'asc' ? 1 : -1
+      if (typeof valA === 'string') {
+        return valA.localeCompare(valB) * order
+      }
+      if (valA < valB) return -1 * order
+      if (valA > valB) return 1 * order
+      return 0
+    })
+  }
 
   const propertyFilter = eventProperty ? { property: eventProperty, operator: propertyOperator, value: propertyValue } : null
   const propertyFilterRequiresValue = Boolean(eventProperty && !propertyValue)
@@ -285,6 +369,13 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     })
   }, [cumulativeMode, dayColumns, metricType, retainedRows, userRows, volumeRows])
 
+  const showSplit = useMemo(() => {
+    return (cohorts || []).some(c => c.split_type != null)
+  }, [cohorts])
+
+  const sortedVolumeRows = useMemo(() => sortRows(volumeDisplayRows, sortConfigVolume), [volumeDisplayRows, sortConfigVolume, cohorts])
+  const sortedUserRows = useMemo(() => sortRows(userDisplayRows, sortConfigUsers), [userDisplayRows, sortConfigUsers, cohorts])
+
   const cumulativeSupported = metricType === 'count' || metricType === 'per_installed_user'
 
   useEffect(() => {
@@ -449,22 +540,49 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           <table>
             <thead>
               <tr>
-                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                <th
+                  className={`${isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''} sortable-header`}
+                  onClick={() => handleSortVolume('cohort_name')}
+                >
+                  Cohort {sortConfigVolume.key === 'cohort_name' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                </th>
+                {showSplit && (
+                  <th
+                    className="sortable-header"
+                    onClick={() => handleSortVolume('split')}
+                  >
+                    Split {sortConfigVolume.key === 'split' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                  </th>
+                )}
+                <th
+                  className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  onClick={() => handleSortVolume('size')}
+                >
+                  Size {sortConfigVolume.key === 'size' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                </th>
                 {dayColumnsVolume.map((day) => (
-                  <th key={day}>D{day}</th>
+                  <th
+                    key={day}
+                    className="sortable-header"
+                    onClick={() => handleSortVolume(`D${day}`)}
+                  >
+                    D{day} {sortConfigVolume.key === `D${day}` && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {volumeDisplayRows.map((row) => (
+              {sortedVolumeRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    className={isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''}
                     title={row.cohort_name}
                   >
-                    {row.cohort_name}
+                    {getDisplayName(row)}
                   </td>
+                  {showSplit && (
+                    <td className="tabular-cell">{getSplitLabel(row)}</td>
+                  )}
                   <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
                   {dayColumnsVolume.map((day) => {
                     const value = row.values?.[String(day)] ?? null
@@ -489,22 +607,43 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           <table>
             <thead>
               <tr>
-                <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                <th className={`${isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''} sortable-header`} onClick={() => handleSortUsers('cohort_name')}>
+                  Cohort {sortConfigUsers.key === 'cohort_name' ? (sortConfigUsers.direction === 'asc' ? '↑' : '↓') : ''}
+                </th>
+                {showSplit && (
+                  <th className="sortable-header" onClick={() => handleSortUsers('split')}>
+                    Split {sortConfigUsers.key === 'split' ? (sortConfigUsers.direction === 'asc' ? '↑' : '↓') : ''}
+                  </th>
+                )}
+                <th
+                  className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  onClick={() => handleSortUsers('size')}
+                >
+                  Size {sortConfigUsers.key === 'size' && (sortConfigUsers.direction === 'asc' ? '↑' : '↓')}
+                </th>
                 {dayColumnsUsers.map((day) => (
-                  <th key={day}>D{day}</th>
+                  <th
+                    key={day}
+                    className="sortable-header"
+                    onClick={() => handleSortUsers(`D${day}`)}
+                  >
+                    D{day} {sortConfigUsers.key === `D${day}` && (sortConfigUsers.direction === 'asc' ? '↑' : '↓')}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {userDisplayRows.map((row) => (
+              {sortedUserRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    className={isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''}
                     title={row.cohort_name}
                   >
-                    {row.cohort_name}
+                    {getDisplayName(row)}
                   </td>
+                  {showSplit && (
+                    <td className="tabular-cell">{getSplitLabel(row)}</td>
+                  )}
                   <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
                   {dayColumnsUsers.map((day) => {
                     const value = row.values?.[String(day)] ?? null

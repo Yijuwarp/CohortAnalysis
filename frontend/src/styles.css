@@ -3593,3 +3593,13 @@ th.flow-path-col {
   to { opacity: 1; transform: translateY(0); }
 }
 
+.sortable-header {
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.15s ease;
+}
+
+.sortable-header:hover {
+  background-color: #f3f4f6 !important;
+}
+

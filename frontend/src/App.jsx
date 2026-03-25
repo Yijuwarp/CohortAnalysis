@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { getRetention, getScope, listEvents, uploadCSV } from './api'
+import { getRetention, getScope, listCohorts, listEvents, uploadCSV } from './api'
 import Mapping from './components/Mapping'
 import FilterData from './components/FilterData'
 import RevenueConfig from './components/RevenueConfig'
@@ -64,6 +64,7 @@ export default function App() {
   const [activeFilterCount, setActiveFilterCount] = useState(0)
   const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
   const [scopeVersion, setScopeVersion] = useState(0)
+  const [cohorts, setCohorts] = useState([])
 
   const updateAnalyticsState = useCallback((tab, newState) => {
     setAnalyticsState((prev) => {
@@ -227,10 +228,15 @@ export default function App() {
   useEffect(() => {
     const load = async () => {
       try {
-        const payload = await listEvents()
-        setEvents(payload.events || [])
+        const [eventsPayload, cohortsPayload] = await Promise.all([
+          listEvents(),
+          listCohorts()
+        ])
+        setEvents(eventsPayload.events || [])
+        setCohorts(cohortsPayload.cohorts || [])
       } catch {
         setEvents([])
+        setCohorts([])
       }
     }
     if (appState === 'workspace') {
@@ -401,7 +407,6 @@ export default function App() {
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
                 <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
-                <button className={activeTab === 'user-explorer' ? 'active' : ''} onClick={() => setActiveTab('user-explorer')}>User Explorer</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
@@ -413,6 +418,7 @@ export default function App() {
                   showGlobalControls={false}
                   state={analyticsState.retention}
                   setState={(s) => updateAnalyticsState('retention', s)}
+                  cohorts={cohorts}
                 />
               )}
               {activeTab === 'usage' && (
@@ -423,6 +429,7 @@ export default function App() {
                   state={analyticsState.usage}
                   setState={(s) => updateAnalyticsState('usage', s)}
                   scopeVersion={scopeVersion}
+                  cohorts={cohorts}
                 />
               )}
               {activeTab === 'monetization' && (
@@ -432,6 +439,7 @@ export default function App() {
                   retentionEvent={selectedRetentionEvent}
                   state={analyticsState.monetization}
                   setState={(s) => updateAnalyticsState('monetization', s)}
+                  cohorts={cohorts}
                 />
               )}
               {activeTab === 'funnels' && (
