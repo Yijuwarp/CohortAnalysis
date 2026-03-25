@@ -143,6 +143,23 @@ export async function randomSplitCohort(cohortId) {
   })
 }
 
+export async function splitCohort(cohortId, payload) {
+  return request(`/cohorts/${cohortId}/split`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function previewSplit(cohortId, payload) {
+  return request(`/cohorts/${cohortId}/split/preview`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+
 export async function getRetention(maxDay, retentionEvent = 'any', includeCI = false, confidence = 0.95, retentionType = 'classic', granularity = 'day') {
   const query = new URLSearchParams({
     max_day: String(maxDay),

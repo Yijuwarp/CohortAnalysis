@@ -28,6 +28,38 @@ export const formatCohortLogic = (cohort) => {
   return [`Logic: ${logic}`, ...conditionLines, describeJoinType(data.join_type)].join(' • ')
 }
 
+/**
+ * Returns tooltip text for a child (split) cohort.
+ *   For property splits: "Parent: X\nFilter: col = val"
+ *   For _other:          "Parent: X\nFilter: col NOT IN [v1, v2]"
+ *   For random splits:   "Parent: X\nGroup: N of total"
+ *   Fallback: same as formatCohortLogic
+ */
+export function formatChildCohortTooltip(child, parentName, siblings) {
+  const { split_type, split_property, split_value, split_group_index, split_group_total } = child
+
+  if (split_type === 'property') {
+    if (split_value === '__OTHER__') {
+      // Collect sibling non-other values for the NOT IN list
+      const selectedVals = (siblings || [])
+        .filter(s => s.split_type === 'property' && s.split_value !== '__OTHER__')
+        .map(s => s.split_value)
+      const valList = selectedVals.length ? selectedVals.join(', ') : '…'
+      return `Parent: ${parentName}\nFilter: ${split_property} NOT IN [${valList}]`
+    }
+    return `Parent: ${parentName}\nFilter: ${split_property} = ${split_value}`
+  }
+
+  if (split_type === 'random') {
+    const groupNum = split_value || (split_group_index != null ? split_group_index + 1 : '?')
+    const total = split_group_total || '?'
+    return `Parent: ${parentName}\nGroup: ${groupNum} of ${total} (random)`
+  }
+
+  // Fallback for legacy or unknown split types
+  return formatCohortLogic(child)
+}
+
 export function getNextName(name) {
   if (!name || name.trim() === '') return name
   const match = name.match(/\((\d+)\)$/)

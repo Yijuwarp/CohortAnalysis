@@ -1,5 +1,5 @@
 """
-Short summary: defines cohort request and configuration models.
+Short summary: defines cohort request and configuration models, including split operation models.
 """
 from pydantic import BaseModel, Field, field_validator
 
@@ -98,3 +98,50 @@ class SavedCohortResponse(BaseModel):
     definition: dict
     created_at: str
     updated_at: str
+
+
+# ---------------------------------------------------------------------------
+# Split request/response models
+# ---------------------------------------------------------------------------
+
+class RandomSplitOptions(BaseModel):
+    num_groups: int = Field(default=4, ge=1, le=10)
+
+
+class PropertySplitOptions(BaseModel):
+    column: str = Field(min_length=1)
+    values: list[str] = Field(min_length=1)
+
+
+class SplitRequest(BaseModel):
+    type: str  # "random" | "property"
+    random: RandomSplitOptions | None = None
+    property: PropertySplitOptions | None = None
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, value: str) -> str:
+        normalized = value.lower()
+        if normalized not in {"random", "property"}:
+            raise ValueError("type must be 'random' or 'property'")
+        return normalized
+
+
+class SplitChildCohort(BaseModel):
+    id: int
+    name: str
+
+
+class SplitResponse(BaseModel):
+    parent_cohort_id: int
+    child_cohorts: list[SplitChildCohort]
+
+
+class SplitPreviewItem(BaseModel):
+    name: str
+    count: int
+
+
+class SplitPreviewResponse(BaseModel):
+    parent_cohort_id: int
+    preview: list[SplitPreviewItem]
