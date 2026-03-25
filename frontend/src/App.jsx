@@ -13,6 +13,10 @@ import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
 
+if (!UserExplorer) {
+  console.error('UserExplorer component failed to load from ./components/UserExplorer')
+}
+
 const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
 const ANALYTICS_STORAGE_KEY = 'analytics-state'
 const WORKSPACE_STORAGE_VERSION = 2
@@ -407,6 +411,7 @@ export default function App() {
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
                 <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
+                <button className={activeTab === 'user-explorer' ? 'active' : ''} onClick={() => setActiveTab('user-explorer')}>User Explorer</button>
               </div>
               {activeTab === 'retention' && (
                 <RetentionTable
@@ -459,8 +464,8 @@ export default function App() {
               )}
               {activeTab === 'user-explorer' && (
                 <UserExplorer
-                   state={analyticsState.userExplorer}
-                   setState={(s) => updateAnalyticsState('userExplorer', s)}
+                   state={analyticsState['user-explorer']}
+                   setState={(s) => updateAnalyticsState('user-explorer', s)}
                 />
               )}
             </section>
