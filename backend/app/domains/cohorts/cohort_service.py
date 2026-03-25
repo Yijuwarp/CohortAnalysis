@@ -1,11 +1,11 @@
 """
-Short summary: cohort lifecycle management including creation and deletion.
+Short summary: cohort lifecycle management including creation, deletion, and split operations.
 """
 import json
 import duckdb
 from datetime import datetime, timezone
 from fastapi import HTTPException
-from app.models.cohort_models import CreateCohortRequest
+from app.models.cohort_models import CreateCohortRequest, SplitRequest, SplitResponse, SplitChildCohort, SplitPreviewItem, SplitPreviewResponse
 from app.domains.cohorts.validation import validate_cohort_conditions
 from app.domains.cohorts.membership_builder import build_cohort_membership
 from app.domains.cohorts.activity_service import refresh_cohort_activity
@@ -88,6 +88,18 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute("ALTER TABLE cohort_conditions ADD COLUMN property_values TEXT")
         if "is_negated" not in existing_condition_columns:
             connection.execute("ALTER TABLE cohort_conditions ADD COLUMN is_negated BOOLEAN DEFAULT FALSE")
+
+    # Migrate cohorts table: add split_type, split_property, split_value if missing
+    res_cohorts = connection.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'cohorts'"
+    )
+    cohort_columns = {row["column_name"] for row in to_dicts(res_cohorts, res_cohorts.fetchall())}
+    if "split_type" not in cohort_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_type TEXT")
+    if "split_property" not in cohort_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_property TEXT")
+    if "split_value" not in cohort_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN split_value TEXT")
 
     # Add source_saved_id to snapshot if missing
     res_snapshot = connection.execute(
@@ -239,6 +251,9 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
             c.split_parent_cohort_id,
             c.split_group_index,
             c.split_group_total,
+            c.split_type,
+            c.split_property,
+            c.split_value,
             c.source_saved_id
         FROM cohorts c
         LEFT JOIN (
@@ -293,6 +308,9 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
                 "split_parent_cohort_id": int(row["split_parent_cohort_id"]) if row["split_parent_cohort_id"] is not None else None,
                 "split_group_index": int(row["split_group_index"]) if row["split_group_index"] is not None else None,
                 "split_group_total": int(row["split_group_total"]) if row["split_group_total"] is not None else None,
+                "split_type": str(row["split_type"]) if row.get("split_type") else None,
+                "split_property": str(row["split_property"]) if row.get("split_property") else None,
+                "split_value": str(row["split_value"]) if row.get("split_value") else None,
                 "source_saved_id": str(row["source_saved_id"]) if row["source_saved_id"] else None,
                 "conditions": conditions_by_cohort.get(int(row["cohort_id"]), []),
             }
@@ -385,120 +403,336 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
 
 
 def random_split_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, int]:
-    ensure_cohort_tables(connection)
+    """Legacy backward-compat wrapper: 4 random groups."""
+    from app.models.cohort_models import SplitRequest, RandomSplitOptions
+    req = SplitRequest(type="random", random=RandomSplitOptions(num_groups=4))
+    result = split_cohort(connection, cohort_id, req)
+    return {"created": len(result.child_cohorts)}
+
+
+def _get_parent_for_split(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict:
+    """Validate parent cohort is eligible for split; return its row."""
     cursor = connection.execute(
-        """
-        SELECT name, split_parent_cohort_id, hidden
-        FROM cohorts
-        WHERE cohort_id = ?
-        """,
+        "SELECT name, split_parent_cohort_id, hidden FROM cohorts WHERE cohort_id = ?",
         [cohort_id],
     )
     parent_row = to_dict(cursor, cursor.fetchone())
     if not parent_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
-
-    parent_name = str(parent_row["name"])
     if parent_row["split_parent_cohort_id"] is not None:
-        raise HTTPException(status_code=400, detail="Cannot split sub-cohort")
+        raise HTTPException(status_code=400, detail="Cannot split a sub-cohort")
     if bool(parent_row["hidden"]):
-        raise HTTPException(status_code=400, detail="Cannot split hidden cohort")
+        raise HTTPException(status_code=400, detail="Cannot split a hidden cohort")
+    return parent_row
+
+
+def _clear_existing_splits(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> None:
+    """Remove all existing child cohorts (and their memberships) for a parent."""
+    connection.execute(
+        """
+        DELETE FROM cohort_membership
+        WHERE cohort_id IN (
+            SELECT cohort_id FROM cohorts WHERE split_parent_cohort_id = ?
+        )
+        """,
+        [cohort_id],
+    )
+    connection.execute("DELETE FROM cohorts WHERE split_parent_cohort_id = ?", [cohort_id])
+
+
+def split_cohort(
+    connection: duckdb.DuckDBPyConnection, cohort_id: int, request: SplitRequest
+) -> SplitResponse:
+    """Unified split: random or property-based."""
+    ensure_cohort_tables(connection)
+    parent_row = _get_parent_for_split(connection, cohort_id)
+    parent_name = str(parent_row["name"])
 
     parent_size = int(
         connection.execute(
-            "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?",
-            [cohort_id],
+            "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?", [cohort_id]
         ).fetchone()[0]
     )
-    if parent_size < 8:
-        raise HTTPException(status_code=400, detail="Minimum 8 users required")
+    if parent_size == 0:
+        raise HTTPException(status_code=400, detail="Parent cohort has no members to split")
 
     connection.execute("BEGIN")
     try:
-        connection.execute(
-            """
-            DELETE FROM cohort_membership
-            WHERE cohort_id IN (
-                SELECT cohort_id
-                FROM cohorts
-                WHERE split_parent_cohort_id = ?
-            )
-            """,
-            [cohort_id],
-        )
-        connection.execute(
-            "DELETE FROM cohorts WHERE split_parent_cohort_id = ?",
-            [cohort_id],
-        )
-
-        groups = ["A", "B", "C", "D"]
-        new_ids: list[int] = []
-        for idx, letter in enumerate(groups):
-            row = connection.execute(
-                """
-                INSERT INTO cohorts (
-                    cohort_id,
-                    name,
-                    logic_operator,
-                    join_type,
-                    is_active,
-                    hidden,
-                    split_parent_cohort_id,
-                    split_group_index,
-                    split_group_total
-                )
-                VALUES (nextval('cohorts_id_sequence'), ?, 'AND', 'condition_met', TRUE, FALSE, ?, ?, 4)
-                RETURNING cohort_id
-                """,
-                [f"{parent_name} {letter}", cohort_id, idx],
-            ).fetchone()
-            new_ids.append(int(row[0]))
-
-        seed = f"{cohort_id}-{datetime.now(timezone.utc).isoformat()}"
-        connection.execute(
-            """
-            WITH base AS (
-                SELECT user_id
-                FROM cohort_membership
-                WHERE cohort_id = ?
-            ),
-            shuffled AS (
-                SELECT
-                    user_id,
-                    ROW_NUMBER() OVER (ORDER BY hash(CAST(user_id AS VARCHAR) || ?)) - 1 AS rn,
-                    COUNT(*) OVER () AS total
-                FROM base
-            ),
-            bucketed AS (
-                SELECT
-                    user_id,
-                    CAST(FLOOR(rn * 4.0 / total) AS INTEGER) AS grp
-                FROM shuffled
-            )
-            INSERT INTO cohort_membership (cohort_id, user_id, join_time)
-            SELECT
-                CASE b.grp
-                    WHEN 0 THEN ?
-                    WHEN 1 THEN ?
-                    WHEN 2 THEN ?
-                    WHEN 3 THEN ?
-                END,
-                cm.user_id,
-                cm.join_time
-            FROM bucketed b
-            JOIN cohort_membership cm
-              ON b.user_id = cm.user_id
-             AND cm.cohort_id = ?
-            """,
-            [cohort_id, seed, new_ids[0], new_ids[1], new_ids[2], new_ids[3], cohort_id],
-        )
+        _clear_existing_splits(connection, cohort_id)
+        if request.type == "random":
+            child_cohorts = _do_random_split(connection, cohort_id, parent_name, parent_size, request)
+        else:
+            child_cohorts = _do_property_split(connection, cohort_id, parent_name, request)
         refresh_cohort_activity(connection)
         connection.execute("COMMIT")
     except Exception:
         connection.execute("ROLLBACK")
         raise
 
-    return {"created": 4}
+    return SplitResponse(parent_cohort_id=cohort_id, child_cohorts=child_cohorts)
+
+
+def _do_random_split(
+    connection: duckdb.DuckDBPyConnection,
+    cohort_id: int,
+    parent_name: str,
+    parent_size: int,
+    request: SplitRequest,
+) -> list[SplitChildCohort]:
+    opts = request.random or __import__('app.models.cohort_models', fromlist=['RandomSplitOptions']).RandomSplitOptions()
+    n = opts.num_groups
+
+    if parent_size < n:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parent cohort only has {parent_size} members; cannot split into {n} groups",
+        )
+
+    new_ids: list[int] = []
+    for i in range(1, n + 1):
+        row = connection.execute(
+            """
+            INSERT INTO cohorts (
+                cohort_id, name, logic_operator, join_type, is_active, hidden,
+                split_parent_cohort_id, split_group_index, split_group_total,
+                split_type, split_property, split_value
+            )
+            VALUES (nextval('cohorts_id_sequence'), ?, 'AND', 'condition_met', TRUE, FALSE, ?, ?, ?, 'random', NULL, ?)
+            RETURNING cohort_id
+            """,
+            [f"{parent_name}_Random_{i}", cohort_id, i - 1, n, str(i)],
+        ).fetchone()
+        new_ids.append(int(row[0]))
+
+    seed = f"{cohort_id}-{datetime.now(timezone.utc).isoformat()}"
+    # Build CASE expression for N groups dynamically
+    case_branches = "\n".join(
+        [f"WHEN {i} THEN {new_ids[i]}" for i in range(n)]
+    )
+    connection.execute(
+        f"""
+        WITH base AS (
+            SELECT user_id
+            FROM cohort_membership
+            WHERE cohort_id = ?
+        ),
+        shuffled AS (
+            SELECT
+                user_id,
+                ROW_NUMBER() OVER (ORDER BY hash(CAST(user_id AS VARCHAR) || ?)) - 1 AS rn,
+                COUNT(*) OVER () AS total
+            FROM base
+        ),
+        bucketed AS (
+            SELECT
+                user_id,
+                CAST(FLOOR(rn * {n}.0 / total) AS INTEGER) AS grp
+            FROM shuffled
+        )
+        INSERT INTO cohort_membership (cohort_id, user_id, join_time)
+        SELECT
+            CASE b.grp
+                {case_branches}
+            END,
+            cm.user_id,
+            cm.join_time
+        FROM bucketed b
+        JOIN cohort_membership cm
+          ON b.user_id = cm.user_id
+         AND cm.cohort_id = ?
+        """,
+        [cohort_id, seed, cohort_id],
+    )
+
+    return [
+        SplitChildCohort(id=new_ids[i], name=f"{parent_name}_Random_{i + 1}")
+        for i in range(n)
+    ]
+
+
+def _do_property_split(
+    connection: duckdb.DuckDBPyConnection,
+    cohort_id: int,
+    parent_name: str,
+    request: SplitRequest,
+) -> list[SplitChildCohort]:
+    if not request.property:
+        raise HTTPException(status_code=400, detail="Property split options required")
+    column = request.property.column
+    values = request.property.values
+    source_table = get_events_source_table(connection)
+
+    from app.utils.sql import quote_identifier
+    col_id = quote_identifier(column)
+
+    child_cohorts: list[SplitChildCohort] = []
+
+    for val in values:
+        safe_name = f"{parent_name}_{val}"
+        row = connection.execute(
+            """
+            INSERT INTO cohorts (
+                cohort_id, name, logic_operator, join_type, is_active, hidden,
+                split_parent_cohort_id, split_group_index, split_group_total,
+                split_type, split_property, split_value
+            )
+            VALUES (nextval('cohorts_id_sequence'), ?, 'AND', 'condition_met', TRUE, FALSE, ?, NULL, NULL, 'property', ?, ?)
+            RETURNING cohort_id
+            """,
+            [safe_name, cohort_id, column, val],
+        ).fetchone()
+        child_id = int(row[0])
+
+        connection.execute(
+            f"""
+            INSERT INTO cohort_membership (cohort_id, user_id, join_time)
+            SELECT ?, cm.user_id, cm.join_time
+            FROM cohort_membership cm
+            WHERE cm.cohort_id = ?
+              AND EXISTS (
+                  SELECT 1 FROM {source_table} e
+                  WHERE e.user_id = cm.user_id
+                    AND {col_id} = ?
+              )
+            ON CONFLICT (cohort_id, user_id) DO NOTHING
+            """,
+            [child_id, cohort_id, val],
+        )
+        child_cohorts.append(SplitChildCohort(id=child_id, name=safe_name))
+
+    # --- _other cohort ---
+    placeholders = ", ".join(["?"] * len(values))
+    other_count = int(
+        connection.execute(
+            f"""
+            SELECT COUNT(*) FROM cohort_membership cm
+            WHERE cm.cohort_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM {source_table} e
+                  WHERE e.user_id = cm.user_id
+                    AND {col_id} IN ({placeholders})
+              )
+            """,
+            [cohort_id, *values],
+        ).fetchone()[0]
+    )
+
+    if other_count > 0:
+        other_name = f"{parent_name}_other"
+        other_row = connection.execute(
+            """
+            INSERT INTO cohorts (
+                cohort_id, name, logic_operator, join_type, is_active, hidden,
+                split_parent_cohort_id, split_group_index, split_group_total,
+                split_type, split_property, split_value
+            )
+            VALUES (nextval('cohorts_id_sequence'), ?, 'AND', 'condition_met', TRUE, FALSE, ?, NULL, NULL, 'property', ?, '__OTHER__')
+            RETURNING cohort_id
+            """,
+            [other_name, cohort_id, column],
+        ).fetchone()
+        other_id = int(other_row[0])
+
+        connection.execute(
+            f"""
+            INSERT INTO cohort_membership (cohort_id, user_id, join_time)
+            SELECT ?, cm.user_id, cm.join_time
+            FROM cohort_membership cm
+            WHERE cm.cohort_id = ?
+              AND NOT EXISTS (
+                  SELECT 1 FROM {source_table} e
+                  WHERE e.user_id = cm.user_id
+                    AND {col_id} IN ({placeholders})
+              )
+            ON CONFLICT (cohort_id, user_id) DO NOTHING
+            """,
+            [other_id, cohort_id, *values],
+        )
+        child_cohorts.append(SplitChildCohort(id=other_id, name=other_name))
+
+    return child_cohorts
+
+
+def preview_split(
+    connection: duckdb.DuckDBPyConnection, cohort_id: int, request: SplitRequest
+) -> SplitPreviewResponse:
+    """Return expected cohort counts without persisting any changes."""
+    ensure_cohort_tables(connection)
+    parent_row = _get_parent_for_split(connection, cohort_id)
+    parent_name = str(parent_row["name"])
+
+    parent_size = int(
+        connection.execute(
+            "SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?", [cohort_id]
+        ).fetchone()[0]
+    )
+    if parent_size == 0:
+        raise HTTPException(status_code=400, detail="Parent cohort has no members to split")
+
+    if request.type == "random":
+        from app.models.cohort_models import RandomSplitOptions
+        opts = request.random or RandomSplitOptions()
+        n = opts.num_groups
+        if parent_size < n:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Parent cohort only has {parent_size} members; cannot split into {n} groups",
+            )
+        base = parent_size // n
+        remainder = parent_size % n
+        preview = [
+            SplitPreviewItem(
+                name=f"{parent_name}_Random_{i + 1}",
+                count=base + (1 if i < remainder else 0),
+            )
+            for i in range(n)
+        ]
+    else:
+        if not request.property:
+            raise HTTPException(status_code=400, detail="Property split options required")
+        column = request.property.column
+        values = request.property.values
+        source_table = get_events_source_table(connection)
+        from app.utils.sql import quote_identifier
+        col_id = quote_identifier(column)
+
+        preview: list[SplitPreviewItem] = []
+        for val in values:
+            cnt = int(
+                connection.execute(
+                    f"""
+                    SELECT COUNT(*) FROM cohort_membership cm
+                    WHERE cm.cohort_id = ?
+                      AND EXISTS (
+                          SELECT 1 FROM {source_table} e
+                          WHERE e.user_id = cm.user_id
+                            AND {col_id} = ?
+                      )
+                    """,
+                    [cohort_id, val],
+                ).fetchone()[0]
+            )
+            preview.append(SplitPreviewItem(name=f"{parent_name}_{val}", count=cnt))
+
+        placeholders = ", ".join(["?"] * len(values))
+        other_count = int(
+            connection.execute(
+                f"""
+                SELECT COUNT(*) FROM cohort_membership cm
+                WHERE cm.cohort_id = ?
+                  AND NOT EXISTS (
+                      SELECT 1 FROM {source_table} e
+                      WHERE e.user_id = cm.user_id
+                        AND {col_id} IN ({placeholders})
+                  )
+                """,
+                [cohort_id, *values],
+            ).fetchone()[0]
+        )
+        if other_count > 0:
+            preview.append(SplitPreviewItem(name=f"{parent_name}_other", count=other_count))
+
+    return SplitPreviewResponse(parent_cohort_id=cohort_id, preview=preview)
 
 
 def delete_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, int | bool]:
@@ -575,6 +809,9 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
             c.split_parent_cohort_id,
             c.split_group_index,
             c.split_group_total,
+            c.split_type,
+            c.split_property,
+            c.split_value,
             c.source_saved_id,
             cc.event_name,
             cc.min_event_count,
@@ -617,6 +854,9 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
         "split_parent_cohort_id": int(first["split_parent_cohort_id"]) if first["split_parent_cohort_id"] is not None else None,
         "split_group_index": int(first["split_group_index"]) if first["split_group_index"] is not None else None,
         "split_group_total": int(first["split_group_total"]) if first["split_group_total"] is not None else None,
+        "split_type": str(first["split_type"]) if first.get("split_type") else None,
+        "split_property": str(first["split_property"]) if first.get("split_property") else None,
+        "split_value": str(first["split_value"]) if first.get("split_value") else None,
         "source_saved_id": str(first["source_saved_id"]) if first["source_saved_id"] is not None else None,
         "size": int(first["size"]),
         "conditions": [],

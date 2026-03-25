@@ -10,12 +10,15 @@ vi.mock('../src/api', () => ({
   deleteCohort: vi.fn(),
   toggleCohortHide: vi.fn(),
   randomSplitCohort: vi.fn(),
+  splitCohort: vi.fn(),
+  previewSplit: vi.fn(),
   createSavedCohort: vi.fn(),
   updateSavedCohort: vi.fn(),
   estimateCohort: vi.fn(),
   listEvents: vi.fn(),
   getColumns: vi.fn(),
-  getColumnValues: vi.fn()
+  getColumnValues: vi.fn(),
+  getCohortDetail: vi.fn()
 }))
 
 // Mock CohortForm and SavedCohortsPanel to simplify integration test
@@ -49,6 +52,19 @@ vi.mock('../src/components/SearchableSelect', () => ({
         </option>
       ))}
     </select>
+  )
+}))
+
+vi.mock('../src/components/CohortSplitModal', () => ({
+  default: ({ cohort, onClose, onSplitDone }) => (
+    <div data-testid="mock-split-modal">
+      <h3>Split {cohort.cohort_name}</h3>
+      <button onClick={onClose}>Cancel</button>
+      <button onClick={async () => {
+        await api.splitCohort(cohort.cohort_id, { type: 'random', random: { num_groups: 2 } });
+        onSplitDone();
+      }}>Confirm Split</button>
+    </div>
   )
 }))
 
@@ -103,5 +119,89 @@ describe('CohortPane Duplicate Flow', () => {
     expect(screen.getByTestId('condition-count').textContent).toBe('1')
     expect(screen.getByTestId('first-condition-event').textContent).toBe('signup')
     expect(screen.getByTestId('first-condition-count').textContent).toBe('5')
+  })
+})
+
+describe('CohortPane Split Flow', () => {
+  const mockParent = {
+    cohort_id: 'p1',
+    cohort_name: 'Parent Cohort',
+    size: 100,
+    is_active: true,
+    has_splits: false,
+    definition: { logic_operator: 'AND', conditions: [] }
+  }
+
+  const mockChild = {
+    cohort_id: 'c1',
+    cohort_name: 'Child 1',
+    size: 50,
+    is_active: true,
+    split_parent_cohort_id: 'p1',
+    definition: { logic_operator: 'AND', conditions: [] }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.listCohorts.mockResolvedValue({ cohorts: [mockParent] })
+    api.getSavedCohorts.mockResolvedValue([])
+    api.getCohortDetail.mockImplementation(id => {
+      if (id === 'p1') return Promise.resolve(mockParent)
+      if (id === 'c1') return Promise.resolve(mockChild)
+      return Promise.reject('Not found')
+    })
+  })
+
+  it('opens split modal when clicking split on unsplit cohort', async () => {
+    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+
+    // Find and click the split button (the one with "Split cohort" title)
+    const splitBtn = screen.getByTitle('Split cohort')
+    fireEvent.click(splitBtn)
+
+    // Verify modal is open
+    expect(screen.getByTestId('mock-split-modal')).toBeInTheDocument()
+    expect(screen.getByText('Split Parent Cohort')).toBeInTheDocument()
+
+    // Ensure NO API call was made yet
+    expect(api.splitCohort).not.toHaveBeenCalled()
+    expect(api.randomSplitCohort).not.toHaveBeenCalled()
+  })
+
+  it('calls splitCohort API only after modal confirmation', async () => {
+    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTitle('Split cohort'))
+    
+    // Confirm in modal
+    fireEvent.click(screen.getByText('Confirm Split'))
+
+    await waitFor(() => expect(api.splitCohort).toHaveBeenCalledWith('p1', expect.anything()))
+    expect(api.randomSplitCohort).not.toHaveBeenCalled()
+  })
+
+  it('removes children if cohort already split', async () => {
+    // Modify mock to show it has splits
+    const splitParent = { ...mockParent, has_splits: true }
+    api.listCohorts.mockResolvedValue({ cohorts: [splitParent, mockChild] })
+    api.getCohortDetail.mockImplementation(id => {
+      if (id === 'p1') return Promise.resolve(splitParent)
+      if (id === 'c1') return Promise.resolve(mockChild)
+      return Promise.reject('Not found')
+    })
+
+    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+
+    const removeSplitBtn = screen.getByTitle('Remove split')
+    fireEvent.click(removeSplitBtn)
+
+    // Should call deleteCohort for the child
+    await waitFor(() => expect(api.deleteCohort).toHaveBeenCalledWith('c1'))
+    
+    // Modal should NOT be open
+    expect(screen.queryByTestId('mock-split-modal')).not.toBeInTheDocument()
   })
 })

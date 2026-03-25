@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends
 import duckdb
 from app.db.connection import get_connection
-from app.models.cohort_models import CreateCohortRequest
+from app.models.cohort_models import CreateCohortRequest, SplitRequest
 from app.domains.cohorts.cohort_service import (
     create_cohort,
     list_cohorts,
     update_cohort,
     delete_cohort,
     random_split_cohort,
+    split_cohort,
+    preview_split,
     toggle_cohort_hide,
     get_cohort_detail,
 )
@@ -51,8 +53,27 @@ async def delete_cohort_endpoint(
 ):
     return delete_cohort(conn, cohort_id)
 
-@router.post("/cohorts/{cohort_id}/random_split")
+# Unified split endpoint
+@router.post("/cohorts/{cohort_id}/split")
 async def split_cohort_endpoint(
+    cohort_id: int,
+    request: SplitRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return split_cohort(conn, cohort_id, request)
+
+# Preview endpoint (no persistence)
+@router.post("/cohorts/{cohort_id}/split/preview")
+async def preview_split_endpoint(
+    cohort_id: int,
+    request: SplitRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+):
+    return preview_split(conn, cohort_id, request)
+
+# Backward-compat legacy endpoint
+@router.post("/cohorts/{cohort_id}/random_split")
+async def legacy_random_split_endpoint(
     cohort_id: int,
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):

@@ -1,8 +1,9 @@
 import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import cloneDeep from 'lodash/cloneDeep'
-import { createCohort, deleteCohort, listCohorts, randomSplitCohort, toggleCohortHide, getSavedCohorts, getCohortDetail } from '../api'
-import { formatCohortLogic } from '../utils/cohortUtils'
+import { createCohort, deleteCohort, listCohorts, toggleCohortHide, getSavedCohorts, getCohortDetail } from '../api'
+import { formatCohortLogic, formatChildCohortTooltip } from '../utils/cohortUtils'
 import CohortForm from './CohortForm'
+import CohortSplitModal from './CohortSplitModal'
 import SavedCohortsPanel from './SavedCohortsPanel'
 import SearchableSelect from './SearchableSelect'
 
@@ -35,6 +36,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [editData, setEditData] = useState(null)
   const [isPanelOpen, setIsPanelOpen] = useState(false)
   const [activeTooltipId, setActiveTooltipId] = useState(null)
+  const [splitModalCohort, setSplitModalCohort] = useState(null) // cohort object for split modal
 
   const loadData = async () => {
     setLoading(true)
@@ -100,28 +102,15 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     }
   }
 
-  const handleRandomSplit = async (cohort) => {
-    setError('')
-    setSplittingId(cohort.cohort_id)
-    try {
-      await randomSplitCohort(cohort.cohort_id)
-      await loadData()
-      onCohortsChanged()
-    } catch (err) {
-      setError(err.message)
-    } finally {
-      setSplittingId(null)
-    }
-  }
 
   const handleSplitToggle = async (cohort) => {
     if (cohort.has_splits) {
+      // Remove existing split children
       const children = cohorts.filter(
         c => c.split_parent_cohort_id === cohort.cohort_id
       )
-      
       try {
-        setSplittingId(cohort.cohort_id) // Show loading on parent while deleting
+        setSplittingId(cohort.cohort_id)
         for (const child of children) {
           await deleteCohort(child.cohort_id)
         }
@@ -133,7 +122,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
         setSplittingId(null)
       }
     } else {
-      await handleRandomSplit(cohort)
+      // Open split modal instead of hard-coded random split
+      setSplitModalCohort(cohort)
     }
   }
 
@@ -184,13 +174,15 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
   const childDefinitionTooltips = useMemo(() => {
     const map = {}
-    Object.values(childCohortsByParent).forEach((children) => {
+    Object.entries(childCohortsByParent).forEach(([parentId, children]) => {
+      const parentCohort = parentCohorts.find(c => String(c.cohort_id) === String(parentId))
+      const parentName = parentCohort?.cohort_name || parentCohort?.name || 'Parent'
       children.forEach((child) => {
-        map[child.cohort_id] = formatCohortLogic(child)
+        map[child.cohort_id] = formatChildCohortTooltip(child, parentName, children)
       })
     })
     return map
-  }, [childCohortsByParent])
+  }, [childCohortsByParent, parentCohorts])
 
   // Saved Cohorts Dropdown options
   const cohortOptions = useMemo(() => {
@@ -514,6 +506,17 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
            }}
            onEdit={handleEditSaved}
            onDuplicate={handleDuplicate}
+        />
+      )}
+
+      {splitModalCohort && (
+        <CohortSplitModal
+          cohort={splitModalCohort}
+          onClose={() => setSplitModalCohort(null)}
+          onSplitDone={() => {
+            loadData()
+            onCohortsChanged()
+          }}
         />
       )}
     </section>
