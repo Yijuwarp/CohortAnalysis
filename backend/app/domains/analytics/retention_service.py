@@ -8,28 +8,32 @@ from app.utils.perf import time_block
 from app.utils.math_utils import Z_SCORES, wilson_ci
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.queries.retention_queries import fetch_retention_active_rows
+from app.utils.db_utils import to_dict, to_dicts
 
 def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[list[tuple[int, str]], dict[int, int]]:
-    cohorts = connection.execute(
+    cursor = connection.execute(
         """
         SELECT cohort_id, name
         FROM cohorts
         WHERE is_active = TRUE AND hidden = FALSE
         ORDER BY cohort_id
         """
-    ).fetchall()
+    )
+    cohorts_rows = cursor.fetchall()
+    cohorts = [(row["cohort_id"], row["name"]) for row in to_dicts(cursor, cohorts_rows)]
+    s_cursor = connection.execute(
+        """
+        SELECT c.cohort_id, COUNT(DISTINCT cm.user_id) AS cohort_size
+        FROM cohorts c
+        LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
+        LEFT JOIN events_scoped es ON cm.user_id = es.user_id
+        WHERE c.is_active = TRUE AND c.hidden = FALSE AND es.user_id IS NOT NULL
+        GROUP BY c.cohort_id
+        """
+    )
     cohort_sizes = {
-        int(row[0]): int(row[1])
-        for row in connection.execute(
-            """
-            SELECT c.cohort_id, COUNT(DISTINCT cm.user_id) AS cohort_size
-            FROM cohorts c
-            LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
-            LEFT JOIN events_scoped es ON cm.user_id = es.user_id
-            WHERE c.is_active = TRUE AND c.hidden = FALSE AND es.user_id IS NOT NULL
-            GROUP BY c.cohort_id
-            """
-        ).fetchall()
+        int(row["cohort_id"]): int(row["cohort_size"])
+        for row in to_dicts(s_cursor, s_cursor.fetchall())
     }
     return cohorts, cohort_sizes
 

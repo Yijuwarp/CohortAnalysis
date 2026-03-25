@@ -9,6 +9,7 @@ from app.models.cohort_models import CreateCohortRequest
 from app.domains.cohorts.validation import validate_cohort_conditions
 from app.domains.cohorts.membership_builder import build_cohort_membership
 from app.domains.cohorts.activity_service import refresh_cohort_activity
+from app.utils.db_utils import to_dict, to_dicts
 
 def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
@@ -44,14 +45,9 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS cohort_membership (
             user_id TEXT,
             cohort_id INTEGER,
-            join_time TIMESTAMP
+            join_time TIMESTAMP,
+            UNIQUE(cohort_id, user_id)
         )
-        """
-    )
-    connection.execute(
-        """
-        CREATE UNIQUE INDEX IF NOT EXISTS idx_cohort_user_unique
-        ON cohort_membership(cohort_id, user_id)
         """
     )
     connection.execute(
@@ -64,16 +60,14 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         )
         """
     )
-    existing_condition_columns = {
-        row[0]
-        for row in connection.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'cohort_conditions'
-            """
-        ).fetchall()
-    }
+    res_conditions = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cohort_conditions'
+        """
+    )
+    existing_condition_columns = {row["column_name"] for row in to_dicts(res_conditions, res_conditions.fetchall())}
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS cohort_conditions (
@@ -96,16 +90,14 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             connection.execute("ALTER TABLE cohort_conditions ADD COLUMN is_negated BOOLEAN DEFAULT FALSE")
 
     # Add source_saved_id to snapshot if missing
-    snapshot_columns = {
-        row[0]
-        for row in connection.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'cohort_activity_snapshot'
-            """
-        ).fetchall()
-    }
+    res_snapshot = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'cohort_activity_snapshot'
+        """
+    )
+    snapshot_columns = {row["column_name"] for row in to_dicts(res_snapshot, res_snapshot.fetchall())}
     if "event_name" not in snapshot_columns:
         connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN event_name TEXT")
         connection.execute(
@@ -234,7 +226,7 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
 
 def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[str, object]]]:
     ensure_cohort_tables(connection)
-    rows = connection.execute(
+    cursor = connection.execute(
         """
         SELECT
             c.cohort_id,
@@ -256,51 +248,53 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
         ) sub ON c.cohort_id = sub.cohort_id
         ORDER BY c.cohort_id ASC
         """
-    ).fetchall()
+    )
+    rows = to_dicts(cursor, cursor.fetchall())
 
     # Fetch all conditions in one query and group by cohort_id
-    condition_rows = connection.execute(
+    c_cursor = connection.execute(
         """
         SELECT cohort_id, event_name, min_event_count, property_column,
                property_operator, property_values, COALESCE(is_negated, FALSE) as is_negated
         FROM cohort_conditions
         ORDER BY cohort_id, condition_id
         """
-    ).fetchall()
+    )
+    condition_rows = to_dicts(c_cursor, c_cursor.fetchall())
 
     conditions_by_cohort: dict[int, list[dict]] = {}
     for crow in condition_rows:
-        cid = int(crow[0])
+        cid = int(crow["cohort_id"])
         property_filter = None
-        if crow[3] and crow[4] and crow[5] is not None:
+        if crow["property_column"] and crow["property_operator"] and crow["property_values"] is not None:
             property_filter = {
-                "column": str(crow[3]),
-                "operator": str(crow[4]),
-                "values": json.loads(str(crow[5])),
+                "column": str(crow["property_column"]),
+                "operator": str(crow["property_operator"]),
+                "values": json.loads(str(crow["property_values"])),
             }
         conditions_by_cohort.setdefault(cid, []).append({
-            "event_name": str(crow[1]),
-            "min_event_count": int(crow[2]),
+            "event_name": str(crow["event_name"]),
+            "min_event_count": int(crow["min_event_count"]),
             "property_filter": property_filter,
-            "is_negated": bool(crow[6]),
+            "is_negated": bool(crow["is_negated"]),
         })
 
     return {
         "cohorts": [
             {
-                "cohort_id": int(row[0]),
-                "cohort_name": str(row[1]),
-                "name": str(row[1]),
-                "is_active": bool(row[2]),
-                "logic_operator": str(row[3]) if row[3] else "AND",
-                "join_type": str(row[4]) if row[4] else "condition_met",
-                "size": int(row[5]),
-                "hidden": bool(row[6]),
-                "split_parent_cohort_id": int(row[7]) if row[7] is not None else None,
-                "split_group_index": int(row[8]) if row[8] is not None else None,
-                "split_group_total": int(row[9]) if row[9] is not None else None,
-                "source_saved_id": str(row[10]) if row[10] else None,
-                "conditions": conditions_by_cohort.get(int(row[0]), []),
+                "cohort_id": int(row["cohort_id"]),
+                "cohort_name": str(row["name"]),
+                "name": str(row["name"]),
+                "is_active": bool(row["is_active"]),
+                "logic_operator": str(row["logic_operator"]) if row["logic_operator"] else "AND",
+                "join_type": str(row["join_type"]) if row["join_type"] else "condition_met",
+                "size": int(row["size"]),
+                "hidden": bool(row["hidden"]),
+                "split_parent_cohort_id": int(row["split_parent_cohort_id"]) if row["split_parent_cohort_id"] is not None else None,
+                "split_group_index": int(row["split_group_index"]) if row["split_group_index"] is not None else None,
+                "split_group_total": int(row["split_group_total"]) if row["split_group_total"] is not None else None,
+                "source_saved_id": str(row["source_saved_id"]) if row["source_saved_id"] else None,
+                "conditions": conditions_by_cohort.get(int(row["cohort_id"]), []),
             }
             for row in rows
         ]
@@ -312,13 +306,14 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
     ensure_cohort_tables(connection)
     source_table = get_events_source_table(connection)
 
-    cohort_row = connection.execute(
+    cursor = connection.execute(
         "SELECT name FROM cohorts WHERE cohort_id = ?",
         [cohort_id],
-    ).fetchone()
-    if cohort_row is None:
+    )
+    cohort_row = to_dict(cursor, cursor.fetchone())
+    if not cohort_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
-    if cohort_row[0] == "All Users":
+    if cohort_row["name"] == "All Users":
         raise HTTPException(status_code=400, detail="All Users cohort cannot be updated")
 
     if not payload.conditions:
@@ -391,21 +386,22 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
 
 def random_split_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, int]:
     ensure_cohort_tables(connection)
-    parent_row = connection.execute(
+    cursor = connection.execute(
         """
         SELECT name, split_parent_cohort_id, hidden
         FROM cohorts
         WHERE cohort_id = ?
         """,
         [cohort_id],
-    ).fetchone()
-    if parent_row is None:
+    )
+    parent_row = to_dict(cursor, cursor.fetchone())
+    if not parent_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
 
-    parent_name = str(parent_row[0])
-    if parent_row[1] is not None:
+    parent_name = str(parent_row["name"])
+    if parent_row["split_parent_cohort_id"] is not None:
         raise HTTPException(status_code=400, detail="Cannot split sub-cohort")
-    if bool(parent_row[2]):
+    if bool(parent_row["hidden"]):
         raise HTTPException(status_code=400, detail="Cannot split hidden cohort")
 
     parent_size = int(
@@ -508,13 +504,14 @@ def random_split_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -
 def delete_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, int | bool]:
     ensure_cohort_tables(connection)
 
-    cohort_row = connection.execute(
+    cursor = connection.execute(
         "SELECT name FROM cohorts WHERE cohort_id = ?",
         [cohort_id],
-    ).fetchone()
-    if cohort_row is None:
+    )
+    cohort_row = to_dict(cursor, cursor.fetchone())
+    if not cohort_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
-    if cohort_row[0] == "All Users":
+    if cohort_row["name"] == "All Users":
         raise HTTPException(status_code=400, detail="All Users cohort cannot be deleted")
 
     connection.execute(
@@ -540,11 +537,12 @@ def delete_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict
 def toggle_cohort_hide(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, object]:
     ensure_cohort_tables(connection)
 
-    cohort_row = connection.execute(
+    cursor = connection.execute(
         "SELECT cohort_id, hidden FROM cohorts WHERE cohort_id = ?",
         [cohort_id],
-    ).fetchone()
-    if cohort_row is None:
+    )
+    cohort_row = to_dict(cursor, cursor.fetchone())
+    if not cohort_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
 
     connection.execute(
@@ -565,7 +563,7 @@ def toggle_cohort_hide(connection: duckdb.DuckDBPyConnection, cohort_id: int) ->
 
 def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict[str, object]:
     ensure_cohort_tables(connection)
-    rows = connection.execute(
+    cursor = connection.execute(
         """
         SELECT
             c.cohort_id,
@@ -597,44 +595,46 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
         ORDER BY cc.condition_id
         """,
         [cohort_id],
-    ).fetchall()
+    )
+    rows = cursor.fetchall()
 
     if not rows:
         raise HTTPException(status_code=404, detail="Cohort not found")
 
     # Build response
-    first = rows[0]
+    dicts = to_dicts(cursor, rows)
+    first = dicts[0]
 
     cohort: dict[str, object] = {
-        "cohort_id": int(first[0]),
-        "cohort_name": str(first[1]),
-        "name": str(first[1]),
-        "is_active": bool(first[2]),
-        "logic_operator": str(first[3] or "AND"),
-        "condition_logic": str(first[3] or "AND"),
-        "join_type": str(first[4] or "condition_met"),
-        "hidden": bool(first[5]),
-        "split_parent_cohort_id": int(first[6]) if first[6] is not None else None,
-        "split_group_index": int(first[7]) if first[7] is not None else None,
-        "split_group_total": int(first[8]) if first[8] is not None else None,
-        "source_saved_id": str(first[9]) if first[9] is not None else None,
-        "size": int(first[15]),
+        "cohort_id": int(first["cohort_id"]),
+        "cohort_name": str(first["name"]),
+        "name": str(first["name"]),
+        "is_active": bool(first["is_active"]),
+        "logic_operator": str(first["logic_operator"] or "AND"),
+        "condition_logic": str(first["logic_operator"] or "AND"),
+        "join_type": str(first["join_type"] or "condition_met"),
+        "hidden": bool(first["hidden"]),
+        "split_parent_cohort_id": int(first["split_parent_cohort_id"]) if first["split_parent_cohort_id"] is not None else None,
+        "split_group_index": int(first["split_group_index"]) if first["split_group_index"] is not None else None,
+        "split_group_total": int(first["split_group_total"]) if first["split_group_total"] is not None else None,
+        "source_saved_id": str(first["source_saved_id"]) if first["source_saved_id"] is not None else None,
+        "size": int(first["size"]),
         "conditions": [],
     }
 
-    for row in rows:
-        event_name = row[10]
-        min_event_count = row[11]
+    for row in dicts:
+        event_name = row["event_name"]
+        min_event_count = row["min_event_count"]
 
         if event_name is None:
             continue
 
         property_filter = None
-        if row[12] and row[13] and row[14] is not None:
+        if row["property_column"] and row["property_operator"] and row["property_values"] is not None:
             property_filter = {
-                "column": str(row[12]),
-                "operator": str(row[13]),
-                "values": json.loads(str(row[14])),
+                "column": str(row["property_column"]),
+                "operator": str(row["property_operator"]),
+                "values": json.loads(str(row["property_values"])),
             }
 
         cohort["conditions"].append(
@@ -642,7 +642,7 @@ def get_cohort_detail(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> 
                 "event_name": str(event_name),
                 "min_event_count": int(min_event_count),
                 "property_filter": property_filter,
-                "is_negated": bool(row[17]),
+                "is_negated": bool(row["is_negated"]),
             }
         )
 

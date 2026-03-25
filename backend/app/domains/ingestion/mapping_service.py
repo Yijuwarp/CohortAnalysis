@@ -9,6 +9,7 @@ from app.utils.sql import quote_identifier
 from app.domains.ingestion.normalization_service import ensure_normalized_events_revenue_columns
 from app.domains.ingestion.type_detection import detect_column_type
 from app.models.ingestion_models import ColumnMappingRequest
+from app.utils.db_utils import to_dict, to_dicts
 
 def suggest_user_id(columns: list[str]) -> str | None:
     for col in columns:
@@ -110,17 +111,15 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         if not table_exists:
             raise HTTPException(status_code=400, detail="No uploaded CSV found. Upload a CSV first.")
 
-        existing_columns = [
-            row[0]
-            for row in connection.execute(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name = 'events'
-                ORDER BY ordinal_position
-                """
-            ).fetchall()
-        ]
+        cursor = connection.execute(
+            """
+            SELECT column_name
+            FROM information_schema.columns
+            WHERE table_name = 'events'
+            ORDER BY ordinal_position
+            """
+        )
+        existing_columns = [row["column_name"] for row in to_dicts(cursor, cursor.fetchall())]
 
         requested_columns = {
             mapping.user_id_column,
@@ -232,9 +231,10 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         value_cols = {mapping.event_count_column, mapping.revenue_column} - {None}
         metadata_cols = [c for c in existing_columns if c not in core_map and c not in value_cols]
 
+        p_cursor = connection.execute("PRAGMA table_info('events')")
         actual_types = {
-            row[1]: str(row[2]).upper()
-            for row in connection.execute("PRAGMA table_info('events')").fetchall()
+            row["name"]: str(row["type"]).upper()
+            for row in to_dicts(p_cursor, p_cursor.fetchall())
         }
 
         def get_cast_expr(col_name: str, target_name: str | None = None) -> str:
@@ -360,17 +360,18 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         # ---------- FINAL STATS ----------
         stats_timer = time_block("final_stats")
 
-        stats = connection.execute(
+        s_cursor = connection.execute(
             """
             SELECT
-                SUM(event_count),
-                COUNT(DISTINCT user_id)
+                SUM(event_count) as total_events,
+                COUNT(DISTINCT user_id) as total_users
             FROM events_normalized
             """
-        ).fetchone()
+        )
+        stats = to_dict(s_cursor, s_cursor.fetchone())
 
-        total_events = stats[0] or 0
-        total_users = stats[1] or 0
+        total_events = stats.get("total_events") or 0
+        total_users = stats.get("total_users") or 0
 
         stats_timer()
 
