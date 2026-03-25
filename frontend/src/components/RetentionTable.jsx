@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
@@ -8,7 +8,17 @@ function formatNumber(n) {
   return new Intl.NumberFormat().format(n);
 }
 
-export default function RetentionTable({ refreshToken, retentionEvent, onRetentionEventChange, maxDay, setMaxDay, showGlobalControls = true, state, setState }) {
+export default function RetentionTable({
+  refreshToken,
+  retentionEvent,
+  onRetentionEventChange,
+  maxDay,
+  setMaxDay,
+  showGlobalControls = true,
+  state,
+  setState,
+  cohorts = [],
+}) {
   const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
   const [events, setEvents] = useState([])
   const [data, setData] = useState([])
@@ -69,6 +79,86 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const labelPrefix = mode === "hour" ? "H" : "D"
   const totalBuckets = mode === "hour" ? (maxDay * 24) : (Number(maxDay) + 1)
   const bucketColumns = Array.from({ length: totalBuckets }, (_, index) => index)
+  const [sortConfig, setSortConfig] = useState({ key: 'size', direction: 'desc' })
+
+  // 1. Build Metadata Lookup
+  const cohortMetaMap = useMemo(() => {
+    const map = {}
+    ;(cohorts || []).forEach(c => {
+      map[c.cohort_id] = c
+    })
+    return map
+  }, [cohorts])
+
+  const getSplitLabel = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (!cohort?.split_type) return "NA"
+
+    if (cohort.split_type === "random") {
+      return `Group ${cohort.split_value}`
+    }
+
+    if (cohort.split_type === "property") {
+      if (cohort.split_value === "__OTHER__") return "Other"
+      return `${cohort.split_property} = ${cohort.split_value}`
+    }
+
+    return "NA"
+  }
+
+  const getDisplayName = (row) => {
+    const cohort = cohortMetaMap[row.cohort_id]
+    if (cohort?.split_parent_cohort_id) {
+      const parent = cohortMetaMap[cohort.split_parent_cohort_id]
+      return parent?.cohort_name || parent?.name || row.cohort_name
+    }
+    return row.cohort_name
+  }
+
+  const getValue = (row, key) => {
+    if (key === 'cohort_name') return row.cohort_name
+    if (key === 'split') return getSplitLabel(row)
+    if (key === 'size') return row.size || 0
+    if (key.startsWith('D') || key.startsWith('H')) {
+      const day = key.slice(1)
+      return row.retention?.[day] ?? 0
+    }
+    return 0
+  }
+
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === 'desc' ? 'asc' : 'desc',
+    }))
+  }
+
+  const showSplit = useMemo(() => {
+    return (cohorts || []).some(c => c.split_type != null)
+  }, [cohorts])
+
+  const sortedData = useMemo(() => {
+    const rows = [...(data || [])]
+    return rows.sort((a, b) => {
+      const valA = getValue(a, sortConfig.key)
+      const valB = getValue(b, sortConfig.key)
+
+      if (sortConfig.key === 'split') {
+        if (valA === "Other") return 1
+        if (valB === "Other") return -1
+        if (valA === "NA" && valB !== "NA") return 1
+        if (valB === "NA" && valA !== "NA") return -1
+      }
+
+      const order = sortConfig.direction === 'asc' ? 1 : -1
+      if (typeof valA === 'string') {
+        return valA.localeCompare(valB) * order
+      }
+      if (valA < valB) return -1 * order
+      if (valA > valB) return 1 * order
+      return 0
+    })
+  }, [data, sortConfig, cohorts])
 
   return (
     <section className="card">
@@ -186,28 +276,54 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
         <div className="loader">Loading {mode === "hour" ? "hourly" : "daily"} retention...</div>
       ) : (
         <>
-          {viewMode === 'table' && data.length > 0 && (
+          {viewMode === 'table' && sortedData.length > 0 && (
             <div className="analytics-table table-responsive">
               <table>
                 <thead>
                   <tr>
-                    <th className={isPinned ? 'sticky-col sticky-col-cohort' : ''}>Cohort</th>
-                    <th className={isPinned ? 'sticky-col sticky-col-size' : ''}>Size</th>
+                    <th
+                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                      onClick={() => handleSort('cohort_name')}
+                    >
+                      Cohort {sortConfig.key === 'cohort_name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
+                    {showSplit && (
+                      <th
+                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                        onClick={() => handleSort('split')}
+                      >
+                        Split {sortConfig.key === 'split' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      </th>
+                    )}
+                    <th
+                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                      onClick={() => handleSort('size')}
+                    >
+                      Size {sortConfig.key === 'size' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                    </th>
                     {bucketColumns.map((b) => (
-                      <th key={b}>{labelPrefix}{b}</th>
+                      <th
+                        key={b}
+                        className="sortable-header"
+                        onClick={() => handleSort(`${labelPrefix}${b}`)}
+                      >
+                        {labelPrefix}{b} {sortConfig.key === `${labelPrefix}${b}` && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      </th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
-                  {data.map((row) => (
+                  {sortedData.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td
-                        className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
-                        title={row.cohort_name}
-                      >
-                        {row.cohort_name}
+                      <td className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} cohort-name-cell`} title={row.cohort_name}>
+                        {getDisplayName(row)}
                       </td>
-                      <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>
+                      {showSplit && (
+                        <td className={`${isPinned ? 'sticky-col sticky-col-split' : ''} tabular-cell`}>
+                          {getSplitLabel(row)}
+                        </td>
+                      )}
+<td className={isPinned ? 'sticky-col sticky-col-size' : ''}>
                         {formatNumber(row.size)}
                       </td>
                       {bucketColumns.map((b) => {
