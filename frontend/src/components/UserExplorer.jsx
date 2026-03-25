@@ -165,13 +165,14 @@ export default function UserExplorer({ state, setState }) {
   const [noMoreNext, setNoMoreNext] = useState(false)
 
   useEffect(() => {
-    setState({
+    const nextState = {
       selectedUser,
       page,
       eventSearchTerm,
       jumpDatetime
-    })
-  }, [selectedUser, page, eventSearchTerm, jumpDatetime, setState])
+    }
+    setState(nextState)
+  }, [selectedUser, page, eventSearchTerm, jumpDatetime])
 
   useEffect(() => {
     setNoMorePrev(false)

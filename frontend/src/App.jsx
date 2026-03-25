@@ -66,10 +66,16 @@ export default function App() {
   const [scopeVersion, setScopeVersion] = useState(0)
 
   const updateAnalyticsState = useCallback((tab, newState) => {
-    setAnalyticsState((prev) => ({
-      ...prev,
-      [tab]: newState,
-    }))
+    setAnalyticsState((prev) => {
+      const prevTabState = prev[tab]
+      if (JSON.stringify(prevTabState) === JSON.stringify(newState)) {
+        return prev
+      }
+      return {
+        ...prev,
+        [tab]: newState,
+      }
+    })
   }, [])
 
   useEffect(() => {

@@ -31,7 +31,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   const [showPredictionSummary, setShowPredictionSummary] = useState(state?.showPredictionSummary ?? true)
 
   useEffect(() => {
-    setState({
+    const nextState = {
       metricType,
       viewMode,
       predictions,
@@ -40,8 +40,9 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
       predictionBaseline,
       isComparePaneOpen,
       showPredictionSummary
-    })
-  }, [metricType, viewMode, predictions, predictionHorizon, isTuningPaneOpen, predictionBaseline, isComparePaneOpen, showPredictionSummary, setState])
+    }
+    setState(nextState)
+  }, [metricType, viewMode, predictions, predictionHorizon, isTuningPaneOpen, predictionBaseline, isComparePaneOpen, showPredictionSummary])
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)

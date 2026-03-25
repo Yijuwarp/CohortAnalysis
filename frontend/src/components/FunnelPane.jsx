@@ -655,11 +655,12 @@ export default function FunnelPane({ refreshToken, events, state, setState }) {
   const [runError, setRunError] = useState('')
 
   useEffect(() => {
-    setState({
+    const nextState = {
       selectedFunnelId,
       result
-    })
-  }, [selectedFunnelId, result, setState])
+    }
+    setState(nextState)
+  }, [selectedFunnelId, result])
   const [showBuilder, setShowBuilder] = useState(false)
   const [deleting, setDeleting] = useState(null)
   // Guard against stale-response races

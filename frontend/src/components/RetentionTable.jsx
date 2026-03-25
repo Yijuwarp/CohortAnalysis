@@ -22,7 +22,7 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
   const [retentionType, setRetentionType] = useState(state?.retentionType || "classic") // "classic" | "ever_after"
 
   useEffect(() => {
-    setState({
+    const nextState = {
       isPinned,
       includeCI,
       confidence,
@@ -30,8 +30,9 @@ export default function RetentionTable({ refreshToken, retentionEvent, onRetenti
       isComparePaneOpen,
       mode,
       retentionType
-    })
-  }, [isPinned, includeCI, confidence, viewMode, isComparePaneOpen, mode, retentionType, setState])
+    }
+    setState(nextState)
+  }, [isPinned, includeCI, confidence, viewMode, isComparePaneOpen, mode, retentionType])
 
   const loadRetention = async () => {
     setLoading(true)

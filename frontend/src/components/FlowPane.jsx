@@ -51,13 +51,14 @@ export default function FlowPane({ refreshToken, state, setState }) {
   const [graphLoading, setGraphLoading] = useState(false)
 
   useEffect(() => {
-    setState({
+    const nextState = {
       controls,
       propertyFilterValue,
       viewMode,
       graphDepth
-    })
-  }, [controls, propertyFilterValue, viewMode, graphDepth, setState])
+    }
+    setState(nextState)
+  }, [controls, propertyFilterValue, viewMode, graphDepth])
 
   const reqIdRef = useRef(0)
   const graphReqIdRef = useRef(0)

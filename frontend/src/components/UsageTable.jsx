@@ -45,7 +45,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [showPropertyFilter, setShowPropertyFilter] = useState(state?.showPropertyFilter ?? false)
 
   useEffect(() => {
-    setState({
+    const nextState = {
       event,
       effectiveMaxDayVolume,
       effectiveMaxDayUsers,
@@ -57,8 +57,9 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       propertyOperator,
       propertyValue,
       showPropertyFilter
-    })
-  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter, setState])
+    }
+    setState(nextState)
+  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
