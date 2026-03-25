@@ -27,3 +27,13 @@ export const formatCohortLogic = (cohort) => {
   })
   return [`Logic: ${logic}`, ...conditionLines, describeJoinType(data.join_type)].join(' • ')
 }
+
+export function getNextName(name) {
+  if (!name || name.trim() === '') return name
+  const match = name.match(/\((\d+)\)$/)
+  if (match) {
+    const num = parseInt(match[1], 10)
+    return name.replace(/\(\d+\)$/, `(${num + 1})`)
+  }
+  return `${name} (1)`
+}

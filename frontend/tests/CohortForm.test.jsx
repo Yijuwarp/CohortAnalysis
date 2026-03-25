@@ -153,3 +153,134 @@ describe('CohortForm auto-add logic', () => {
     expect(screen.getByDisplayValue('5')).toBeInTheDocument()
   })
 })
+
+describe('CohortForm batch creation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.listEvents.mockResolvedValue({ events: ['purchase', 'signup'] })
+    api.getColumns.mockResolvedValue({ columns: [{ name: 'country', category: 'property', data_type: 'TEXT' }] })
+    api.estimateCohort.mockResolvedValue({ estimated_users: 100 })
+    api.createSavedCohort.mockResolvedValue({ id: 'saved-123', is_valid: true })
+    api.createCohort.mockResolvedValue({ cohort_id: 1 })
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('toggles batch mode and updates layout', async () => {
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('Save Cohort')).toBeInTheDocument())
+
+    const saveButton = screen.getByText('Save Cohort')
+    const toggle = screen.getByLabelText('Multi-Create')
+    
+    // Initially OFF
+    expect(screen.queryByText('Reset')).not.toBeInTheDocument()
+    expect(saveButton.style.width).toBe('80%')
+
+    // Toggle ON
+    fireEvent.click(toggle)
+    expect(screen.getByText('Reset')).toBeInTheDocument()
+    expect(saveButton.style.width).toBe('60%')
+  })
+
+  it('keeps modal open and increments name on save when batch mode is ON', async () => {
+    const onSave = vi.fn()
+    const onCancel = vi.fn()
+    render(<CohortForm mode="create_saved" onSave={onSave} onCancel={onCancel} />)
+    
+    await waitFor(() => expect(screen.getByLabelText('Multi-Create')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Multi-Create'))
+    
+    const nameInput = screen.getByPlaceholderText(/Cohort name/)
+    fireEvent.change(nameInput, { target: { value: 'Batch Test' } })
+    
+    fireEvent.click(screen.getByText('Save Cohort'))
+
+    await waitFor(() => expect(api.createSavedCohort).toHaveBeenCalled())
+    expect(onSave).toHaveBeenCalled()
+    expect(onCancel).not.toHaveBeenCalled()
+    
+    // Name should increment
+    expect(nameInput.value).toBe('Batch Test (1)')
+    
+    // Second save
+    fireEvent.click(screen.getByText('Save Cohort'))
+    await waitFor(() => expect(api.createSavedCohort).toHaveBeenCalledTimes(2))
+    expect(nameInput.value).toBe('Batch Test (2)')
+  })
+
+  it('resets form but preserves toggle when Reset is clicked', async () => {
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByLabelText('Multi-Create')).toBeInTheDocument())
+    
+    fireEvent.click(screen.getByLabelText('Multi-Create'))
+    const nameInput = screen.getByPlaceholderText(/Cohort name/)
+    fireEvent.change(nameInput, { target: { value: 'To Be Reset' } })
+    
+    fireEvent.click(screen.getByText('Reset'))
+    
+    expect(nameInput.value).toBe('')
+    expect(screen.getByLabelText('Multi-Create')).toBeChecked()
+  })
+
+  it('does NOT increment name on API failure', async () => {
+    api.createSavedCohort.mockRejectedValue(new Error('API Fail'))
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    
+    await waitFor(() => expect(screen.getByLabelText('Multi-Create')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Multi-Create'))
+    
+    const nameInput = screen.getByPlaceholderText(/Cohort name/)
+    fireEvent.change(nameInput, { target: { value: 'Fail Test' } })
+    
+    fireEvent.click(screen.getByText('Save Cohort'))
+    
+    await waitFor(() => expect(screen.getByText('API Fail')).toBeInTheDocument())
+    expect(nameInput.value).toBe('Fail Test')
+  })
+
+  it('shows and hides toast notification', async () => {
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByText('Save Cohort')).toBeInTheDocument())
+    
+    fireEvent.change(screen.getByPlaceholderText(/Cohort name/), { target: { value: 'Toast Test' } })
+    fireEvent.click(screen.getByText('Save Cohort'))
+    
+    await waitFor(() => expect(screen.getByText(/Cohort "Toast Test" created/)).toBeInTheDocument())
+    
+    // Advance time
+    vi.advanceTimersByTime(2000)
+    expect(screen.queryByText(/Cohort "Toast Test" created/)).not.toBeInTheDocument()
+  })
+
+  it('handles empty name correctly (no increment)', async () => {
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByLabelText('Multi-Create')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Multi-Create'))
+    
+    fireEvent.click(screen.getByText('Save Cohort'))
+    
+    await waitFor(() => expect(api.createSavedCohort).toHaveBeenCalled())
+    expect(screen.getByPlaceholderText(/Cohort name/).value).toBe('')
+  })
+
+  it('increments correctly with rapid clicks using functional updates', async () => {
+    render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
+    await waitFor(() => expect(screen.getByLabelText('Multi-Create')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('Multi-Create'))
+    
+    const nameInput = screen.getByPlaceholderText(/Cohort name/)
+    fireEvent.change(nameInput, { target: { value: 'Rapid' } })
+    
+    // Mock multiple saves resolving
+    fireEvent.click(screen.getByText('Save Cohort'))
+    fireEvent.click(screen.getByText('Save Cohort'))
+    
+    await waitFor(() => expect(api.createSavedCohort).toHaveBeenCalledTimes(2))
+    expect(nameInput.value).toBe('Rapid (2)')
+  })
+})
+

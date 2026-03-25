@@ -1,6 +1,7 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState, useRef } from 'react'
 import { getColumnValues, getColumns, listEvents, createSavedCohort, updateSavedCohort, estimateCohort, createCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
+import { getNextName } from '../utils/cohortUtils'
 
 const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
 
@@ -91,6 +92,37 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   
   const [estimating, setEstimating] = useState(false)
   const [estimatedSize, setEstimatedSize] = useState(null)
+
+  const [stayOpen, setStayOpen] = useState(false)
+  const [toast, setToast] = useState(null)
+  const toastTimeoutRef = useRef(null)
+
+  const showToast = (cohortName) => {
+    setToast(`Cohort "${cohortName}" created`)
+    if (toastTimeoutRef.current) {
+      clearTimeout(toastTimeoutRef.current)
+    }
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null)
+    }, 2000)
+  }
+
+  useEffect(() => {
+    return () => {
+      if (toastTimeoutRef.current) {
+        clearTimeout(toastTimeoutRef.current)
+      }
+    }
+  }, [])
+
+  const handleReset = () => {
+    setName('')
+    setLogicOperator(initialLogic)
+    setJoinType(initialJoin)
+    setConditions([createEmptyCondition(events[0] || '')])
+    setEstimatedSize(null)
+    setError('')
+  }
 
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
 
@@ -251,7 +283,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
 
       if (isEditing) {
         await updateSavedCohort(initialData.id, payload)
-        onSave()
+        onSave(true)
       } else {
         const saved = await createSavedCohort(payload)
         if (saved.is_valid === false) {
@@ -262,7 +294,17 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
           ...payload,
           source_saved_id: saved.id
         })
-        onSave()
+
+        showToast(finalName)
+        
+        if (stayOpen) {
+          if (name) {
+            setName(prev => getNextName(prev))
+          }
+          onSave(false) // Refresh list but stay open
+        } else {
+          onSave(true)
+        }
       }
     } catch (err) {
       setError(err.message)
@@ -607,10 +649,44 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
           )}
         </div>
 
-        <div className="inline-controls" style={{ marginTop: '24px', justifyContent: 'flex-end', display: 'flex', gap: '8px' }}>
-          <button className="button button-primary" onClick={handleSubmit} disabled={loading || events.length === 0}>
+        {toast && (
+          <div className="inline-toast success" style={{ display: 'flex', justifyContent: 'center' }}>
+            {toast}
+          </div>
+        )}
+
+        <div className="inline-controls" style={{ marginTop: '24px', display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button 
+            className="button button-primary" 
+            onClick={handleSubmit} 
+            disabled={loading || events.length === 0}
+            style={{ width: !isEditing ? (stayOpen ? '60%' : '80%') : 'auto' }}
+          >
             {loading ? 'Saving...' : 'Save Cohort'}
           </button>
+
+          {stayOpen && !isEditing && (
+            <button 
+              className="button" 
+              onClick={handleReset} 
+              disabled={loading}
+              style={{ width: '15%' }}
+            >
+              Reset
+            </button>
+          )}
+
+          {!isEditing && (
+            <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', color: '#666', whiteSpace: 'nowrap' }}>
+              <input 
+                type="checkbox" 
+                id="stay-open-toggle"
+                checked={stayOpen} 
+                onChange={(e) => setStayOpen(e.target.checked)} 
+              />
+              <label htmlFor="stay-open-toggle" style={{ cursor: 'pointer', margin: 0, paddingTop: '2px' }}>Multi-Create</label>
+            </div>
+          )}
         </div>
 
         {events.length === 0 && <p className="error" style={{marginTop: '8px'}}>No events available under current filters</p>}
