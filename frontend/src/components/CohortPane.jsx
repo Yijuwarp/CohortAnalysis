@@ -495,8 +495,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
            mode={formMode}
            initialData={editData}
            onCancel={() => setIsFormOpen(false)}
-           onSave={() => {
-             setIsFormOpen(false)
+           onSave={(shouldClose = true) => {
+             if (shouldClose) setIsFormOpen(false)
              loadData()
              onCohortsChanged()
            }}
