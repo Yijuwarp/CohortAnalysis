@@ -732,7 +732,7 @@ def test_property_filter_applies_before_aggregation(client: TestClient, db_conne
         """,
         [cohort_id],
     ).fetchone()
-    assert condition_row == ("version", "=", "\"4.0.0\"")
+    assert condition_row == ("version", "=", '["4.0.0"]')
 
 
 def test_create_cohort_with_in_operator_multiple_values(client: TestClient) -> None:
@@ -990,7 +990,7 @@ def test_create_cohort_normalizes_datetime_local_timestamp_values(client: TestCl
     listed = client.get('/cohorts')
     assert listed.status_code == 200, listed.text
     cohort = next(row for row in listed.json()['cohorts'] if row['cohort_id'] == created.json()['cohort_id'])
-    assert cohort['conditions'][0]['property_filter']['values'] == '2024-01-01 09:00:00'
+    assert cohort['conditions'][0]['property_filter']['values'] == ['2024-01-01 09:00:00']
 
 
 def test_create_cohort_rejects_empty_timestamp_string(client: TestClient) -> None:

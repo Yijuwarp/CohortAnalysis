@@ -8,6 +8,7 @@ from app.utils.perf import time_block
 from app.utils.sql import sql_quote_value, quote_identifier, get_column_kind
 from app.models.filter_models import ApplyFiltersRequest
 from app.domains.scope.scope_metadata import upsert_dataset_scope
+from app.utils.db_utils import to_dicts
 
 def build_where_clause(payload: ApplyFiltersRequest) -> str:
     clauses: list[str] = []
@@ -80,26 +81,25 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
             detail="No normalized events found. Upload and map columns first."
         )
 
-    known_columns = {
-        row[0]
-        for row in connection.execute(
-            """
-            SELECT column_name
-            FROM information_schema.columns
-            WHERE table_name = 'events_normalized'
-            """
-        ).fetchall()
-    }
+    cursor = connection.execute(
+        """
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_name = 'events_normalized'
+        """
+    )
+    known_columns = {row["column_name"] for row in to_dicts(cursor, cursor.fetchall())}
 
+    t_cursor = connection.execute(
+        """
+        SELECT column_name, data_type
+        FROM information_schema.columns
+        WHERE table_name = 'events_normalized'
+        """
+    )
     column_types = {
-        row[0]: str(row[1]).upper()
-        for row in connection.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'events_normalized'
-            """
-        ).fetchall()
+        row["column_name"]: str(row["data_type"]).upper()
+        for row in to_dicts(t_cursor, t_cursor.fetchall())
     }
 
     # ---------------- DATE VALIDATION ----------------
