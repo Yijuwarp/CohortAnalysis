@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getAvailabilityStyle } from '../utils/style_utils'
 import { getEventProperties, getEventPropertyValues, getUsage, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
@@ -585,12 +586,28 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   )}
                   <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
                   {dayColumnsVolume.map((day) => {
-                    const value = row.values?.[String(day)] ?? null
-                    if (value === null) return <td key={day}>—</td>
+                    const rawValue = row.values?.[String(day)] ?? null
+                    const hasValue = rawValue !== null && rawValue !== undefined
+                    const value = hasValue ? (metricType === 'count' ? formatCountValue(rawValue) : rawValue) : null
+
+                    const availability = row.availability?.[String(day)] || {}
+                    const {
+                      eligible_users = row.size,
+                      cohort_size = row.size
+                    } = availability
+
+                    const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                    const cellStyle = getAvailabilityStyle(ratio)
+
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
 
                     return (
-                      <td key={day}>
-                        {metricType === 'count' ? formatCountValue(value) : value}
+                      <td
+                        key={day}
+                        style={cellStyle}
+                        title={tooltip}
+                      >
+                        {hasValue ? value : '—'}
                       </td>
                     )
                   })}
@@ -646,15 +663,30 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   )}
                   <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
                   {dayColumnsUsers.map((day) => {
-                    const value = row.values?.[String(day)] ?? null
+                    const rawValue = row.values?.[String(day)] ?? null
+                    const hasValue = rawValue !== null && rawValue !== undefined
+                    const value = hasValue 
+                      ? (modeUsers === 'percent' || modeUsers === 'adoption_percent' ? `${rawValue}%` : formatCountValue(rawValue))
+                      : null
+
+                    const availability = row.availability?.[String(day)] || {}
+                    const {
+                      eligible_users = row.size,
+                      cohort_size = row.size
+                    } = availability
+
+                    const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                    const cellStyle = getAvailabilityStyle(ratio)
+
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+
                     return (
-                      <td key={day}>
-                        {value === null
-                          ? '—'
-                          : modeUsers === 'percent'
-                            || modeUsers === 'adoption_percent'
-                            ? `${value}%`
-                            : formatCountValue(value)}
+                      <td
+                        key={day}
+                        style={cellStyle}
+                        title={tooltip}
+                      >
+                        {hasValue ? value : '—'}
                       </td>
                     )
                   })}

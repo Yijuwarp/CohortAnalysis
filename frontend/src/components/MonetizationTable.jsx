@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getAvailabilityStyle } from '../utils/style_utils'
 import { getMonetization } from '../api'
 import { buildMonetizationRows } from '../monetization'
 import { formatCurrency } from '../utils/formatters'
@@ -21,6 +22,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   const [revenueRows, setRevenueRows] = useState([])
   const [cohortSizes, setCohortSizes] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
+  const [eligibilityRows, setEligibilityRows] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [predictions, setPredictions] = useState(state?.predictions || null)
@@ -119,6 +121,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
       setRevenueRows(response.revenue_table || [])
       setCohortSizes(response.cohort_sizes || [])
       setRetainedRows(response.retained_users_table || [])
+      setEligibilityRows(response.eligibility_table || [])
     } catch (err) {
       setError(err.message)
       setRevenueRows([])
@@ -139,9 +142,10 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
     cohortSizes,
     retainedRows,
     revenueRows,
+    eligibilityRows,
     dayColumns,
     metricType,
-  }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows])
+  }), [cohortSizes, dayColumns, metricType, retainedRows, revenueRows, eligibilityRows])
 
   const showSplit = useMemo(() => {
     return (cohorts || []).some(c => c.split_type != null)
@@ -370,7 +374,30 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                         <td className="tabular-cell">{getSplitLabel(row)}</td>
                       )}
                       <td className="col-numeric cohort-size-cell">{Number(row.size).toLocaleString()}</td>
-                      {visibleDayColumns.map((day) => <td key={day} className="col-numeric tabular-cell">{row.displayValues[String(day)] ?? '—'}</td>)}
+                      {visibleDayColumns.map((day) => {
+                        const displayValue = row.displayValues[String(day)] ?? '—'
+                        const availability = row.availabilityValues?.[String(day)] || {}
+                        const {
+                          eligible_users = row.size,
+                          cohort_size = row.size
+                        } = availability
+
+                        const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                        const cellStyle = getAvailabilityStyle(ratio)
+
+                        const tooltip = `Day ${day}\n\nValue: ${displayValue}\nAvailable for ${eligible_users} / ${cohort_size} users`
+
+                        return (
+                          <td
+                            key={day}
+                            className="col-numeric tabular-cell"
+                            style={cellStyle}
+                            title={tooltip}
+                          >
+                            {displayValue}
+                          </td>
+                        )
+                      })}
                       <td className="col-prediction col-numeric predicted-cell">{formatCurrency(predictions?.[row.cohort_id]?.projectedCurve?.[predictionHorizon])}</td>
                     </tr>
                   ))}

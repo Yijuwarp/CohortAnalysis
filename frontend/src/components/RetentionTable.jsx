@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { getAvailabilityStyle } from '../utils/style_utils'
 import { getRetention, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
@@ -332,8 +333,25 @@ export default function RetentionTable({
                         const value = hasValue ? Number(rawValue) : null
                         const ci = row.retention_ci?.[String(b)]
 
+                        const availability = row.availability?.[String(b)] || {}
+                        const {
+                          eligible_users = row.size,
+                          cohort_size = row.size
+                        } = availability
+
+                        const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                        const cellStyle = getAvailabilityStyle(ratio)
+
+                        const label = mode === "hour" ? "Hour" : "Day"
+                        const tooltip = `${label} ${b}\n\nValue: ${hasValue ? `${value.toFixed(2)}%` : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+
                         return (
-                          <td key={b}>
+                          <td
+                            key={b}
+                            className="col-numeric tabular-cell"
+                            style={cellStyle}
+                            title={tooltip}
+                          >
                             <div className="retention-main">{hasValue ? `${value.toFixed(2)}%` : '—'}</div>
                             {includeCI && ci && ci.lower !== null && ci.upper !== null && (
                               <div className="retention-ci">
