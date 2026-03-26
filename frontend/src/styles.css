@@ -766,7 +766,7 @@ li {
 
 .analytics-table table {
   width: auto;
-  table-layout: fixed;
+  table-layout: auto;
 }
 
 .analytics-table th:not(.sticky-col),
@@ -814,39 +814,60 @@ tbody tr:hover {
 }
 
 .sticky-col {
-  position: sticky;
+  position: sticky !important;
   background: var(--color-surface);
-  z-index: 2;
+  z-index: 20; /* High base z-index for horizontal sticky */
   background-clip: padding-box;
 }
 
+.sticky-col-top {
+  top: 0 !important;
+  z-index: 10; /* Lower than horizontal sticky */
+}
+
 td.sticky-col {
-  z-index: 3;
+  z-index: 20;
 }
 
 th.sticky-col {
   background: #ecfdf3;
-  /* Matches the th background color */
-  z-index: 4;
+  z-index: 21;
 }
 
-th.sticky-col-cohort,
-td.sticky-col-cohort {
-  left: 0;
-  width: 180px;
-  min-width: 180px;
-  max-width: 180px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+th.sticky-col-top {
+  z-index: 10;
 }
 
-th.sticky-col-size,
-td.sticky-col-size {
-  left: 180px;
-  width: 80px;
-  min-width: 80px;
-  box-shadow: 2px 0 0 var(--color-border);
+/* The top-left corner cells (sticky in both directions) */
+th.sticky-col.sticky-col-top {
+  z-index: 30;
+}
+
+.sticky-col-size {
+  border-right: 1px solid rgba(0,0,0,0.1) !important;
+}
+
+.column-resizer {
+  position: absolute;
+  right: 0;
+  top: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 40; /* Above everything */
+  transition: background 0.1s;
+}
+
+.column-resizer:hover,
+.resizing .column-resizer {
+  background: var(--color-primary);
+  opacity: 0.5;
+}
+
+.sortable-header {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
 }
 
 .cohorts-divider {

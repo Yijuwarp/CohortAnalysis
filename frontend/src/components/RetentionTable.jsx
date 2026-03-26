@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { getAvailabilityStyle } from '../utils/style_utils'
 import { getRetention, listEvents } from '../api'
+import { formatSplitValue } from '../utils/formatters'
 import SearchableSelect from './SearchableSelect'
 import RetentionGraph from './RetentionGraph'
 import ComparePane from './ComparePane'
@@ -31,6 +32,51 @@ export default function RetentionTable({
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(state?.isComparePaneOpen ?? false)
   const [mode, setMode] = useState(state?.mode || "day") // "day" | "hour"
   const [retentionType, setRetentionType] = useState(state?.retentionType || "classic") // "classic" | "ever_after"
+  const [columnWidths, setColumnWidths] = useState(state?.columnWidths || {
+    cohort: 160,
+    split: 160,
+    size: 80
+  })
+  const isResizingRef = useRef(false)
+
+  const getStickyLeft = (colKey) => {
+    if (colKey === "cohort") return 0
+    if (colKey === "split") return columnWidths.cohort
+    if (colKey === "size") {
+      return columnWidths.cohort + (showSplit ? columnWidths.split : 0)
+    }
+    return 0
+  }
+
+  const startResize = (colKey, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    isResizingRef.current = true
+
+    const startX = e.clientX
+    const startWidth = columnWidths[colKey] || (colKey === 'size' ? 80 : 160)
+
+    const onMouseMove = (moveEvent) => {
+      const minWidth = colKey === "size" ? 80 : 120
+      const newWidth = Math.max(minWidth, startWidth + (moveEvent.clientX - startX))
+      setColumnWidths(prev => ({ ...prev, [colKey]: newWidth }))
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+      document.body.classList.remove("resizing")
+
+      setTimeout(() => {
+        isResizingRef.current = false
+      }, 0)
+    }
+
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
+    document.body.classList.add("resizing")
+  }
 
   useEffect(() => {
     const nextState = {
@@ -40,10 +86,11 @@ export default function RetentionTable({
       viewMode,
       isComparePaneOpen,
       mode,
-      retentionType
+      retentionType,
+      columnWidths
     }
     setState(nextState)
-  }, [isPinned, includeCI, confidence, viewMode, isComparePaneOpen, mode, retentionType])
+  }, [isPinned, includeCI, confidence, viewMode, isComparePaneOpen, mode, retentionType, columnWidths])
 
   const loadRetention = async () => {
     setLoading(true)
@@ -101,7 +148,7 @@ export default function RetentionTable({
 
     if (cohort.split_type === "property") {
       if (cohort.split_value === "__OTHER__") return "Other"
-      return `${cohort.split_property} = ${cohort.split_value}`
+      return `${cohort.split_property} = ${formatSplitValue(cohort.split_value)}`
     }
 
     return "NA"
@@ -278,35 +325,68 @@ export default function RetentionTable({
       ) : (
         <>
           {viewMode === 'table' && sortedData.length > 0 && (
-            <div className="analytics-table table-responsive">
+            <div className={`analytics-table table-responsive ${showSplit ? 'has-split' : ''}`}>
               <table>
                 <thead>
                   <tr>
                     <th
                       className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
-                      onClick={() => handleSort('cohort_name')}
+                      style={{ 
+                        width: columnWidths.cohort,
+                        minWidth: columnWidths.cohort,
+                        maxWidth: columnWidths.cohort,
+                        left: isPinned ? getStickyLeft("cohort") : undefined
+                      }}
+                      onClick={() => {
+                        if (isResizingRef.current) return
+                        handleSort('cohort_name')
+                      }}
                     >
                       Cohort {sortConfig.key === 'cohort_name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('cohort', e); }} />
                     </th>
                     {showSplit && (
                       <th
                         className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
-                        onClick={() => handleSort('split')}
+                        style={{ 
+                          width: columnWidths.split, 
+                          minWidth: columnWidths.split,
+                          maxWidth: columnWidths.split,
+                          left: isPinned ? getStickyLeft("split") : undefined 
+                        }}
+                        onClick={() => {
+                          if (isResizingRef.current) return
+                          handleSort('split')
+                        }}
                       >
                         Split {sortConfig.key === 'split' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                        <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('split', e); }} />
                       </th>
                     )}
                     <th
                       className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
-                      onClick={() => handleSort('size')}
+                      style={{ 
+                        width: columnWidths.size, 
+                        minWidth: columnWidths.size,
+                        maxWidth: columnWidths.size,
+                        left: isPinned ? getStickyLeft("size") : undefined 
+                      }}
+                      onClick={() => {
+                        if (isResizingRef.current) return
+                        handleSort('size')
+                      }}
                     >
                       Size {sortConfig.key === 'size' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('size', e); }} />
                     </th>
                     {bucketColumns.map((b) => (
                       <th
                         key={b}
                         className="sortable-header"
-                        onClick={() => handleSort(`${labelPrefix}${b}`)}
+                        onClick={() => {
+                          if (isResizingRef.current) return
+                          handleSort(`${labelPrefix}${b}`)
+                        }}
                       >
                         {labelPrefix}{b} {sortConfig.key === `${labelPrefix}${b}` && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                       </th>
@@ -316,15 +396,40 @@ export default function RetentionTable({
                 <tbody>
                   {sortedData.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} cohort-name-cell`} title={row.cohort_name}>
+                      <td 
+                        className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} cohort-name-cell`} 
+                        style={{ 
+                          width: columnWidths.cohort,
+                          minWidth: columnWidths.cohort,
+                          maxWidth: columnWidths.cohort,
+                          left: isPinned ? getStickyLeft("cohort") : undefined
+                        }}
+                        title={row.cohort_name}
+                      >
                         {getDisplayName(row)}
                       </td>
                       {showSplit && (
-                        <td className={`${isPinned ? 'sticky-col sticky-col-split' : ''} tabular-cell`}>
+                        <td 
+                          className={`${isPinned ? 'sticky-col sticky-col-split' : ''} tabular-cell`}
+                          style={{ 
+                            width: columnWidths.split, 
+                            minWidth: columnWidths.split,
+                            maxWidth: columnWidths.split,
+                            left: isPinned ? getStickyLeft("split") : undefined 
+                          }}
+                        >
                           {getSplitLabel(row)}
                         </td>
                       )}
-<td className={isPinned ? 'sticky-col sticky-col-size' : ''}>
+                      <td 
+                        className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                        style={{ 
+                          width: columnWidths.size, 
+                          minWidth: columnWidths.size,
+                          maxWidth: columnWidths.size,
+                          left: isPinned ? getStickyLeft("size") : undefined 
+                        }}
+                      >
                         {formatNumber(row.size)}
                       </td>
                       {bucketColumns.map((b) => {

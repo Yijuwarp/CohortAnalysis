@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
 import { getAvailabilityStyle } from '../utils/style_utils'
 import { getMonetization } from '../api'
 import { buildMonetizationRows } from '../monetization'
-import { formatCurrency } from '../utils/formatters'
+import { formatCurrency, formatSplitValue } from '../utils/formatters'
 import { fitPowerLaw, generateProjection } from '../utils/ltvPrediction'
 import MonetizationGraph from './MonetizationGraph'
 import TunePredictionPane from './TunePredictionPane'
@@ -32,6 +32,52 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   const [isComparePaneOpen, setIsComparePaneOpen] = useState(state?.isComparePaneOpen ?? false)
   const [showPredictionSummary, setShowPredictionSummary] = useState(state?.showPredictionSummary ?? true)
   const [sortConfig, setSortConfig] = useState({ key: 'size', direction: 'desc' })
+  const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
+  const [columnWidths, setColumnWidths] = useState(state?.columnWidths || {
+    cohort: 160,
+    split: 160,
+    size: 80
+  })
+  const isResizingRef = useRef(false)
+
+  const getStickyLeft = (colKey) => {
+    if (colKey === "cohort") return 0
+    if (colKey === "split") return columnWidths.cohort
+    if (colKey === "size") {
+      return columnWidths.cohort + (showSplit ? columnWidths.split : 0)
+    }
+    return 0
+  }
+
+  const startResize = (colKey, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    isResizingRef.current = true
+
+    const startX = e.clientX
+    const startWidth = columnWidths[colKey] || (colKey === 'size' ? 80 : 160)
+
+    const onMouseMove = (moveEvent) => {
+      const minWidth = colKey === "size" ? 80 : 120
+      const newWidth = Math.max(minWidth, startWidth + (moveEvent.clientX - startX))
+      setColumnWidths(prev => ({ ...prev, [colKey]: newWidth }))
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+      document.body.classList.remove("resizing")
+
+      setTimeout(() => {
+        isResizingRef.current = false
+      }, 0)
+    }
+
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
+    document.body.classList.add("resizing")
+  }
 
   // 1. Build Metadata Lookup
   const cohortMetaMap = useMemo(() => {
@@ -52,7 +98,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
 
     if (cohort.split_type === "property") {
       if (cohort.split_value === "__OTHER__") return "Other"
-      return `${cohort.split_property} = ${cohort.split_value}`
+      return `${cohort.split_property} = ${formatSplitValue(cohort.split_value)}`
     }
 
     return "NA"
@@ -95,10 +141,12 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
       isTuningPaneOpen,
       predictionBaseline,
       isComparePaneOpen,
-      showPredictionSummary
+      showPredictionSummary,
+      isPinned,
+      columnWidths
     }
     setState(nextState)
-  }, [metricType, viewMode, predictions, predictionHorizon, isTuningPaneOpen, predictionBaseline, isComparePaneOpen, showPredictionSummary])
+  }, [metricType, viewMode, predictions, predictionHorizon, isTuningPaneOpen, predictionBaseline, isComparePaneOpen, showPredictionSummary, isPinned, columnWidths])
 
   const safeMaxDay = useMemo(() => {
     const numericMaxDay = Number(maxDay)
@@ -284,6 +332,14 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                 </button>
               </div>
 
+                <button
+                  className={`view-button ${isPinned ? 'active' : ''}`}
+                  onClick={() => setIsPinned((prev) => !prev)}
+                  title="Pin Cohort Columns"
+                >
+                  {isPinned ? "📌" : "📍"}
+                </button>
+ 
               <button className="button button-primary" onClick={loadData} disabled={loading}>
                 {loading ? 'Loading...' : 'Load'}
               </button>
@@ -325,42 +381,78 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
           )}
 
           {!loading && displayRows.length > 0 && viewMode === 'table' && (
-            <div className="analytics-table table-responsive monetization-data-table">
+            <div className={`analytics-table table-responsive monetization-data-table ${showSplit ? 'has-split' : ''}`}>
               <table>
                 <thead>
                   <tr>
                     <th
-                      className="sticky-col sticky-col-top sticky-col-left sortable-header"
-                      onClick={() => handleSort('cohort_name')}
+                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                      style={{ 
+                        width: columnWidths.cohort,
+                        minWidth: columnWidths.cohort,
+                        maxWidth: columnWidths.cohort,
+                        left: isPinned ? getStickyLeft("cohort") : undefined
+                      }}
+                      onClick={() => {
+                        if (isResizingRef.current) return
+                        handleSort('cohort_name')
+                      }}
                     >
                       Cohort {sortConfig.key === 'cohort_name' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('cohort', e); }} />
                     </th>
                     {showSplit && (
                       <th
-                        className="sticky-col sticky-col-top sortable-header"
-                        onClick={() => handleSort('split')}
+                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                        style={{ 
+                          width: columnWidths.split, 
+                          minWidth: columnWidths.split,
+                          maxWidth: columnWidths.split,
+                          left: isPinned ? getStickyLeft("split") : undefined 
+                        }}
+                        onClick={() => {
+                          if (isResizingRef.current) return
+                          handleSort('split')
+                        }}
                       >
                         Split {sortConfig.key === 'split' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                        <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('split', e); }} />
                       </th>
                     )}
                     <th
-                      className="sticky-col sticky-col-top col-numeric sortable-header"
-                      onClick={() => handleSort('size')}
+                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                      style={{ 
+                        width: columnWidths.size, 
+                        minWidth: columnWidths.size,
+                        maxWidth: columnWidths.size,
+                        left: isPinned ? getStickyLeft("size") : undefined 
+                      }}
+                      onClick={() => {
+                        if (isResizingRef.current) return
+                        handleSort('size')
+                      }}
                     >
                       Size {sortConfig.key === 'size' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
+                      <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('size', e); }} />
                     </th>
                     {visibleDayColumns.map((day) => (
                       <th
                         key={day}
                         className="sticky-col sticky-col-top col-numeric sortable-header"
-                        onClick={() => handleSort(`D${day}`)}
+                        onClick={() => {
+                          if (isResizingRef.current) return
+                          handleSort(`D${day}`)
+                        }}
                       >
                         D{day} {sortConfig.key === `D${day}` && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                       </th>
                     ))}
                     <th
                       className="col-prediction sticky-col sticky-col-top col-numeric predicted-col-header sortable-header"
-                      onClick={() => handleSort('predicted')}
+                      onClick={() => {
+                        if (isResizingRef.current) return
+                        handleSort('predicted')
+                      }}
                     >
                       Predicted ({predictionHorizon}D) {sortConfig.key === 'predicted' && (sortConfig.direction === 'asc' ? '↑' : '↓')}
                     </th>
@@ -369,11 +461,42 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                 <tbody>
                   {sortedRows.map((row) => (
                     <tr key={row.cohort_id}>
-                      <td className="sticky-col sticky-col-left cohort-name-cell" title={row.cohort_name}>{getDisplayName(row)}</td>
+                      <td 
+                        className={isPinned ? 'sticky-col sticky-col-cohort' : ''} 
+                        style={{ 
+                          width: columnWidths.cohort,
+                          minWidth: columnWidths.cohort,
+                          maxWidth: columnWidths.cohort,
+                          left: isPinned ? getStickyLeft("cohort") : undefined
+                        }}
+                        title={row.cohort_name}
+                      >
+                        {getDisplayName(row)}
+                      </td>
                       {showSplit && (
-                        <td className="tabular-cell">{getSplitLabel(row)}</td>
+                        <td 
+                          className={isPinned ? 'sticky-col sticky-col-split' : ''}
+                          style={{ 
+                            width: columnWidths.split, 
+                            minWidth: columnWidths.split,
+                            maxWidth: columnWidths.split,
+                            left: isPinned ? getStickyLeft("split") : undefined 
+                          }}
+                        >
+                          {getSplitLabel(row)}
+                        </td>
                       )}
-                      <td className="col-numeric cohort-size-cell">{Number(row.size).toLocaleString()}</td>
+                      <td 
+                        className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                        style={{ 
+                          width: columnWidths.size, 
+                          minWidth: columnWidths.size,
+                          maxWidth: columnWidths.size,
+                          left: isPinned ? getStickyLeft("size") : undefined 
+                        }}
+                      >
+                        {Number(row.size).toLocaleString()}
+                      </td>
                       {visibleDayColumns.map((day) => {
                         const displayValue = row.displayValues[String(day)] ?? '—'
                         const availability = row.availabilityValues?.[String(day)] || {}
