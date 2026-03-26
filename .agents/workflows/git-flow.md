@@ -2,7 +2,7 @@
 description: Branch, Push, and PR Workflow
 ---
 // turbo-all
-For every task that involves code or documentation changes:
+For every task that involves code or documentation changes (using PowerShell-compatible syntax):
 
 1. **Create Branch**: Create a new descriptive branch from `main`.
    ```bash
@@ -11,8 +11,7 @@ For every task that involves code or documentation changes:
 
 2. **Commit Changes**: Add and commit all changes with a descriptive message.
    ```bash
-   git add .
-   git commit -m "docs/feat/fix: <description>"
+   git add .; git commit -m "docs/feat/fix: <description>"
    ```
 
 3. **Push to Origin**: Push the new branch to the remote repository.
@@ -29,7 +28,8 @@ For every task that involves code or documentation changes:
 
 6. **Cleanup**: After the PR is merged:
    ```bash
-   git checkout main
-   git pull origin main
-   git branch -d <branch-name>
+   git checkout main; git pull origin main; git branch -d <branch-name>
    ```
+
+> [!TIP]
+> Use `;` as a command separator on Windows (PowerShell) instead of `&&`.

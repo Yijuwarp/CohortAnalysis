@@ -49,3 +49,13 @@ export function formatDynamic(value) {
     decimals++
   }
 }
+export function formatSplitValue(value) {
+  if (typeof value !== "string") return value
+
+  // Detect timestamp ending in midnight
+  if (value.match(/\d{4}-\d{2}-\d{2} 00:00:00$/)) {
+    return value.replace(" 00:00:00", "")
+  }
+
+  return value
+}

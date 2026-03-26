@@ -1,6 +1,7 @@
 import { formatCurrency } from './utils/formatters'
 
-export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, dayColumns, metricType }) {
+export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, eligibilityRows, dayColumns, metricType }) {
+  const availabilityByKey = new Map(eligibilityRows.map((row) => [`${row.cohort_id}:${row.day_number}`, { eligible_users: row.eligible_users, cohort_size: (cohortSizes.find(c => c.cohort_id === row.cohort_id)?.size || 0) }]))
   const sizeByCohort = new Map(cohortSizes.map((row) => [row.cohort_id, row]))
   const retainedByKey = new Map(retainedRows.map((row) => [`${row.cohort_id}:${row.day_number}`, Number(row.retained_users)]))
   const revenueByKey = new Map(revenueRows.map((row) => [`${row.cohort_id}:${row.day_number}`, Number(row.revenue)]))
@@ -8,6 +9,7 @@ export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, 
   return cohortSizes.map((cohort) => {
     const numericValues = {}
     const displayValues = {}
+    const availabilityValues = {}
     let running = 0
 
     for (const day of dayColumns) {
@@ -16,6 +18,7 @@ export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, 
       running += dailyRevenue
       const acquiredSize = Number(sizeByCohort.get(cohort.cohort_id)?.size ?? 0)
       const retained = retainedByKey.get(key) ?? 0
+      const availability = availabilityByKey.get(key) ?? { eligible_users: 0, cohort_size: (sizeByCohort.get(cohort.cohort_id)?.size || 0) }
 
       let numericValue = null
 
@@ -33,6 +36,7 @@ export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, 
 
       numericValues[String(day)] = numericValue
       displayValues[String(day)] = formatCurrency(numericValue)
+      availabilityValues[String(day)] = availability
     }
 
     return {
@@ -41,6 +45,7 @@ export function buildMonetizationRows({ cohortSizes, retainedRows, revenueRows, 
       size: cohort.size,
       numericValues,
       displayValues,
+      availabilityValues
     }
   })
 }

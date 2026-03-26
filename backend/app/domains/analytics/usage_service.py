@@ -10,7 +10,8 @@ from app.utils.perf import time_block
 from app.utils.sql import quote_identifier, classify_column
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.domains.analytics.retention_service import build_active_cohort_base
-from app.queries.retention_queries import fetch_retention_active_rows
+from app.queries.retention_queries import fetch_retention_active_rows, fetch_eligibility_rows
+from app.utils.time_boundary import get_observation_end_time
 from app.queries.usage_queries import build_usage_property_filter_clause
 
 def list_events(connection: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
@@ -246,6 +247,9 @@ def get_usage(
     retention_rows = fetch_retention_active_rows(connection, max_day, retention_event)
     retained_by_day = {(int(c), int(d)): int(a) for c, d, a in retention_rows}
 
+    eligibility_rows = fetch_eligibility_rows(connection, max_day)
+    eligible_by_bucket = {(int(c), int(b)): int(a) for c, b, a in eligibility_rows}
+
     usage_volume_table = []
     usage_users_table = []
     usage_adoption_table = []
@@ -257,6 +261,7 @@ def get_usage(
         user_values = {}
         adoption_values = {}
         retained_values = {}
+        availability = {}
         cumulative_adoption = 0
         for day_number in range(max_day + 1):
             bucket = usage_by_day.get((cohort_id, day_number), {})
@@ -265,8 +270,14 @@ def get_usage(
             cumulative_adoption += int(adoption_by_first_day.get((cohort_id, day_number), 0))
             adoption_values[str(day_number)] = cumulative_adoption
             retained_values[str(day_number)] = int(retained_by_day.get((cohort_id, day_number), 0))
+            
+            eligible_users = eligible_by_bucket.get((cohort_id, day_number), 0)
+            availability[str(day_number)] = {
+                "eligible_users": int(eligible_users),
+                "cohort_size": int(cohort_size)
+            }
 
-        common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size)}
+        common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size), "availability": availability}
         usage_volume_table.append({**common_metadata, "values": volume_values})
         usage_users_table.append({**common_metadata, "values": user_values})
         usage_adoption_table.append({**common_metadata, "values": adoption_values})
@@ -280,14 +291,14 @@ def get_usage(
     )
 
     return {
-        "max_day": int(max_day),
         "event": event,
-        "retention_event": retention_event or "any",
-        "property_filter": {"property": property, "operator": operator, "value": value} if property else None,
+        "max_day": int(max_day),
+        "retention_event": retention_event,
         "usage_volume_table": usage_volume_table,
         "usage_users_table": usage_users_table,
         "usage_adoption_table": usage_adoption_table,
         "retained_users_table": retained_users_table,
+        "observation_end_time": get_observation_end_time(connection).isoformat() if get_observation_end_time(connection) else None
     }
 
 

@@ -1,5 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useRef } from 'react'
+import { getAvailabilityStyle } from '../utils/style_utils'
 import { getEventProperties, getEventPropertyValues, getUsage, listEvents } from '../api'
+import { formatSplitValue } from '../utils/formatters'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
 import ComparePane from './ComparePane'
@@ -34,6 +36,51 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [modeUsers, setModeUsers] = useState(state?.modeUsers || 'count')
   const [metricType, setMetricType] = useState(state?.metricType || 'count')
   const [cumulativeMode, setCumulativeMode] = useState(state?.cumulativeMode ?? false)
+  const [columnWidths, setColumnWidths] = useState(state?.columnWidths || {
+    cohort: 160,
+    split: 160,
+    size: 80
+  })
+  const isResizingRef = useRef(false)
+
+  const getStickyLeft = (colKey) => {
+    if (colKey === "cohort") return 0
+    if (colKey === "split") return columnWidths.cohort
+    if (colKey === "size") {
+      return columnWidths.cohort + (showSplit ? columnWidths.split : 0)
+    }
+    return 0
+  }
+
+  const startResize = (colKey, e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    isResizingRef.current = true
+
+    const startX = e.clientX
+    const startWidth = columnWidths[colKey] || (colKey === 'size' ? 80 : 160)
+
+    const onMouseMove = (moveEvent) => {
+      const minWidth = colKey === "size" ? 80 : 120
+      const newWidth = Math.max(minWidth, startWidth + (moveEvent.clientX - startX))
+      setColumnWidths(prev => ({ ...prev, [colKey]: newWidth }))
+    }
+
+    const onMouseUp = () => {
+      window.removeEventListener("mousemove", onMouseMove)
+      window.removeEventListener("mouseup", onMouseUp)
+      document.body.classList.remove("resizing")
+
+      setTimeout(() => {
+        isResizingRef.current = false
+      }, 0)
+    }
+
+    window.addEventListener("mousemove", onMouseMove)
+    window.addEventListener("mouseup", onMouseUp)
+    document.body.classList.add("resizing")
+  }
   const [events, setEvents] = useState([])
 
   const [eventProperties, setEventProperties] = useState([])
@@ -56,10 +103,11 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       eventProperty,
       propertyOperator,
       propertyValue,
-      showPropertyFilter
+      showPropertyFilter,
+      columnWidths
     }
     setState(nextState)
-  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter])
+  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter, columnWidths])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
@@ -88,7 +136,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
 
     if (cohort.split_type === "property") {
       if (cohort.split_value === "__OTHER__") return "Other"
-      return `${cohort.split_property} = ${cohort.split_value}`
+      return `${cohort.split_property} = ${formatSplitValue(cohort.split_value)}`
     }
 
     return "NA"
@@ -536,35 +584,68 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
         )}
       </h3>
       {volumeDisplayRows.length > 0 && (
-        <div className="analytics-table table-responsive">
+        <div className={`analytics-table table-responsive ${showSplit ? 'has-split' : ''}`}>
           <table>
             <thead>
               <tr>
                 <th
-                  className={`${isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''} sortable-header`}
-                  onClick={() => handleSortVolume('cohort_name')}
+                  className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                  style={{ 
+                    width: columnWidths.cohort,
+                    minWidth: columnWidths.cohort,
+                    maxWidth: columnWidths.cohort,
+                    left: isPinned ? getStickyLeft("cohort") : undefined
+                  }}
+                  onClick={() => {
+                    if (isResizingRef.current) return
+                    handleSortVolume('cohort_name')
+                  }}
                 >
                   Cohort {sortConfigVolume.key === 'cohort_name' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                  <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('cohort', e); }} />
                 </th>
                 {showSplit && (
                   <th
-                    className="sortable-header"
-                    onClick={() => handleSortVolume('split')}
+                    className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                    style={{ 
+                      width: columnWidths.split, 
+                      minWidth: columnWidths.split,
+                      maxWidth: columnWidths.split,
+                      left: isPinned ? getStickyLeft("split") : undefined 
+                    }}
+                    onClick={() => {
+                      if (isResizingRef.current) return
+                      handleSortVolume('split')
+                    }}
                   >
                     Split {sortConfigVolume.key === 'split' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                    <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('split', e); }} />
                   </th>
                 )}
                 <th
                   className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
-                  onClick={() => handleSortVolume('size')}
+                  style={{ 
+                    width: columnWidths.size, 
+                    minWidth: columnWidths.size,
+                    maxWidth: columnWidths.size,
+                    left: isPinned ? getStickyLeft("size") : undefined 
+                  }}
+                  onClick={() => {
+                    if (isResizingRef.current) return
+                    handleSortVolume('size')
+                  }}
                 >
                   Size {sortConfigVolume.key === 'size' && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
+                  <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('size', e); }} />
                 </th>
                 {dayColumnsVolume.map((day) => (
                   <th
                     key={day}
                     className="sortable-header"
-                    onClick={() => handleSortVolume(`D${day}`)}
+                    onClick={() => {
+                      if (isResizingRef.current) return
+                      handleSortVolume(`D${day}`)
+                    }}
                   >
                     D{day} {sortConfigVolume.key === `D${day}` && (sortConfigVolume.direction === 'asc' ? '↑' : '↓')}
                   </th>
@@ -575,22 +656,64 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
               {sortedVolumeRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''}
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    style={{ 
+                      width: columnWidths.cohort,
+                      minWidth: columnWidths.cohort,
+                      maxWidth: columnWidths.cohort,
+                      left: isPinned ? getStickyLeft("cohort") : undefined
+                    }}
                     title={row.cohort_name}
                   >
                     {getDisplayName(row)}
                   </td>
                   {showSplit && (
-                    <td className="tabular-cell">{getSplitLabel(row)}</td>
+                    <td 
+                      className={isPinned ? 'sticky-col sticky-col-split' : ''}
+                      style={{ 
+                        width: columnWidths.split, 
+                        minWidth: columnWidths.split,
+                        maxWidth: columnWidths.split,
+                        left: isPinned ? getStickyLeft("split") : undefined 
+                      }}
+                    >
+                      {getSplitLabel(row)}
+                    </td>
                   )}
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
+                  <td 
+                    className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                    style={{ 
+                      width: columnWidths.size, 
+                      minWidth: columnWidths.size,
+                      maxWidth: columnWidths.size,
+                      left: isPinned ? getStickyLeft("size") : undefined 
+                    }}
+                  >
+                    {formatCountValue(row.size)}
+                  </td>
                   {dayColumnsVolume.map((day) => {
-                    const value = row.values?.[String(day)] ?? null
-                    if (value === null) return <td key={day}>—</td>
+                    const rawValue = row.values?.[String(day)] ?? null
+                    const hasValue = rawValue !== null && rawValue !== undefined
+                    const value = hasValue ? (metricType === 'count' ? formatCountValue(rawValue) : rawValue) : null
+
+                    const availability = row.availability?.[String(day)] || {}
+                    const {
+                      eligible_users = row.size,
+                      cohort_size = row.size
+                    } = availability
+
+                    const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                    const cellStyle = getAvailabilityStyle(ratio)
+
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
 
                     return (
-                      <td key={day}>
-                        {metricType === 'count' ? formatCountValue(value) : value}
+                      <td
+                        key={day}
+                        style={cellStyle}
+                        title={tooltip}
+                      >
+                        {hasValue ? value : '—'}
                       </td>
                     )
                   })}
@@ -603,29 +726,68 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
 
       <h3>Unique Users ({uniqueUsersLabel})</h3>
       {userDisplayRows.length > 0 && (
-        <div className="analytics-table table-responsive">
+        <div className={`analytics-table table-responsive ${showSplit ? 'has-split' : ''}`}>
           <table>
             <thead>
               <tr>
-                <th className={`${isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''} sortable-header`} onClick={() => handleSortUsers('cohort_name')}>
+                <th 
+                  className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`} 
+                  style={{ 
+                    width: columnWidths.cohort,
+                    minWidth: columnWidths.cohort,
+                    maxWidth: columnWidths.cohort,
+                    left: isPinned ? getStickyLeft("cohort") : undefined
+                  }}
+                  onClick={() => {
+                    if (isResizingRef.current) return
+                    handleSortUsers('cohort_name')
+                  }}
+                >
                   Cohort {sortConfigUsers.key === 'cohort_name' ? (sortConfigUsers.direction === 'asc' ? '↑' : '↓') : ''}
+                  <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('cohort', e); }} />
                 </th>
                 {showSplit && (
-                  <th className="sortable-header" onClick={() => handleSortUsers('split')}>
+                  <th 
+                    className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`} 
+                    style={{ 
+                      width: columnWidths.split, 
+                      minWidth: columnWidths.split,
+                      maxWidth: columnWidths.split,
+                      left: isPinned ? getStickyLeft("split") : undefined 
+                    }}
+                    onClick={() => {
+                      if (isResizingRef.current) return
+                      handleSortUsers('split')
+                    }}
+                  >
                     Split {sortConfigUsers.key === 'split' ? (sortConfigUsers.direction === 'asc' ? '↑' : '↓') : ''}
+                    <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('split', e); }} />
                   </th>
                 )}
                 <th
                   className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
-                  onClick={() => handleSortUsers('size')}
+                  style={{ 
+                    width: columnWidths.size, 
+                    minWidth: columnWidths.size,
+                    maxWidth: columnWidths.size,
+                    left: isPinned ? getStickyLeft("size") : undefined 
+                  }}
+                  onClick={() => {
+                    if (isResizingRef.current) return
+                    handleSortUsers('size')
+                  }}
                 >
                   Size {sortConfigUsers.key === 'size' && (sortConfigUsers.direction === 'asc' ? '↑' : '↓')}
+                  <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('size', e); }} />
                 </th>
                 {dayColumnsUsers.map((day) => (
                   <th
                     key={day}
                     className="sortable-header"
-                    onClick={() => handleSortUsers(`D${day}`)}
+                    onClick={() => {
+                      if (isResizingRef.current) return
+                      handleSortUsers(`D${day}`)
+                    }}
                   >
                     D{day} {sortConfigUsers.key === `D${day}` && (sortConfigUsers.direction === 'asc' ? '↑' : '↓')}
                   </th>
@@ -636,25 +798,66 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
               {sortedUserRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-left cohort-name-cell' : ''}
+                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    style={{ 
+                      width: columnWidths.cohort,
+                      minWidth: columnWidths.cohort,
+                      maxWidth: columnWidths.cohort,
+                      left: isPinned ? getStickyLeft("cohort") : undefined
+                    }}
                     title={row.cohort_name}
                   >
                     {getDisplayName(row)}
                   </td>
                   {showSplit && (
-                    <td className="tabular-cell">{getSplitLabel(row)}</td>
+                    <td 
+                      className={isPinned ? 'sticky-col sticky-col-split' : ''}
+                      style={{ 
+                        width: columnWidths.split, 
+                        minWidth: columnWidths.split,
+                        maxWidth: columnWidths.split,
+                        left: isPinned ? getStickyLeft("split") : undefined 
+                      }}
+                    >
+                      {getSplitLabel(row)}
+                    </td>
                   )}
-                  <td className={isPinned ? 'sticky-col sticky-col-size' : ''}>{formatCountValue(row.size)}</td>
+                  <td 
+                    className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                    style={{ 
+                      width: columnWidths.size, 
+                      minWidth: columnWidths.size,
+                      maxWidth: columnWidths.size,
+                      left: isPinned ? getStickyLeft("size") : undefined 
+                    }}
+                  >
+                    {formatCountValue(row.size)}
+                  </td>
                   {dayColumnsUsers.map((day) => {
-                    const value = row.values?.[String(day)] ?? null
+                    const rawValue = row.values?.[String(day)] ?? null
+                    const hasValue = rawValue !== null && rawValue !== undefined
+                    const value = hasValue 
+                      ? (modeUsers === 'percent' || modeUsers === 'adoption_percent' ? `${rawValue}%` : formatCountValue(rawValue))
+                      : null
+
+                    const availability = row.availability?.[String(day)] || {}
+                    const {
+                      eligible_users = row.size,
+                      cohort_size = row.size
+                    } = availability
+
+                    const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
+                    const cellStyle = getAvailabilityStyle(ratio)
+
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+
                     return (
-                      <td key={day}>
-                        {value === null
-                          ? '—'
-                          : modeUsers === 'percent'
-                            || modeUsers === 'adoption_percent'
-                            ? `${value}%`
-                            : formatCountValue(value)}
+                      <td
+                        key={day}
+                        style={cellStyle}
+                        title={tooltip}
+                      >
+                        {hasValue ? value : '—'}
                       </td>
                     )
                   })}

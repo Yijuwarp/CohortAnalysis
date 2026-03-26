@@ -97,4 +97,52 @@ def fetch_retention_active_rows(
         ORDER BY 1, 2
         """
 
+
     return connection.execute(query, params).fetchall()
+
+def fetch_eligibility_rows(
+    connection: duckdb.DuckDBPyConnection,
+    max_day: int,
+    granularity: str = "day",
+) -> list[tuple[int, int, int]]:
+    unit = "day" if granularity == "day" else "hour"
+    total_buckets = max_day + 1 if granularity == "day" else (max_day * 24)
+    
+    # Get robust observation end time
+    from app.utils.time_boundary import get_observation_end_time
+    max_time = get_observation_end_time(connection)
+    if not max_time:
+        return []
+
+    date_expr_join = "cm.join_time::DATE" if unit == "day" else f"DATE_TRUNC('{unit}', cm.join_time)"
+    
+    # max_time_expr needs to be formatted for DuckDB
+    from datetime import datetime
+    if isinstance(max_time, datetime):
+        max_time_str = max_time.strftime('%Y-%m-%d %H:%M:%S')
+    else:
+        max_time_str = str(max_time)
+        
+    max_time_expr = f"'{max_time_str}'::TIMESTAMP"
+    if unit == "day":
+        if isinstance(max_time, datetime):
+            max_time_expr = f"'{max_time.date().isoformat()}'::DATE"
+        else:
+            max_time_expr = f"CAST('{max_time_str}' AS DATE)"
+
+    query = f"""
+    WITH buckets AS (
+      SELECT range AS bucket_number
+      FROM range(0, ?)
+    )
+    SELECT
+      cm.cohort_id,
+      b.bucket_number,
+      COUNT(DISTINCT cm.user_id) AS eligible_users
+    FROM cohort_membership cm
+    CROSS JOIN buckets b
+    WHERE DATE_DIFF('{unit}', {date_expr_join}, {max_time_expr}) >= b.bucket_number
+    GROUP BY 1, 2
+    ORDER BY 1, 2
+    """
+    return connection.execute(query, [total_buckets]).fetchall()

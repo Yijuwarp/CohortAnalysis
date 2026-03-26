@@ -5,6 +5,8 @@ import duckdb
 from app.utils.perf import time_block
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.domains.analytics.retention_service import build_active_cohort_base, fetch_retention_active_rows
+from app.queries.retention_queries import fetch_eligibility_rows
+from app.utils.time_boundary import get_observation_end_time
 
 def get_monetization(
     connection: duckdb.DuckDBPyConnection,
@@ -60,6 +62,8 @@ def get_monetization(
     ).fetchall()
 
     retained_rows = fetch_retention_active_rows(connection, max_day, None)
+    eligibility_rows = fetch_eligibility_rows(connection, max_day)
+    eligible_by_bucket = {(int(c), int(b)): int(a) for c, b, a in eligibility_rows}
 
     cohort_name_by_id = {int(cohort_id): str(cohort_name) for cohort_id, cohort_name in cohorts}
     revenue_table = [
@@ -87,9 +91,16 @@ def get_monetization(
         cohort_count=len(cohorts)
     )
 
+    eligibility_table = [
+        {"cohort_id": int(cohort_id), "day_number": int(day_number), "eligible_users": int(eligible_users)}
+        for cohort_id, day_number, eligible_users in eligibility_rows
+    ]
+
     return {
         "max_day": int(max_day),
         "revenue_table": revenue_table,
         "cohort_sizes": cohort_size_table,
         "retained_users_table": retained_users_table,
+        "eligibility_table": eligibility_table,
+        "observation_end_time": get_observation_end_time(connection).isoformat() if get_observation_end_time(connection) else None
     }

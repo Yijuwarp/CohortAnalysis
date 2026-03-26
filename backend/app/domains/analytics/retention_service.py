@@ -7,7 +7,8 @@ from fastapi import HTTPException
 from app.utils.perf import time_block
 from app.utils.math_utils import Z_SCORES, wilson_ci
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
-from app.queries.retention_queries import fetch_retention_active_rows
+from app.queries.retention_queries import fetch_retention_active_rows, fetch_eligibility_rows
+from app.utils.time_boundary import get_observation_end_time
 from app.utils.db_utils import to_dict, to_dicts
 
 def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[list[tuple[int, str]], dict[int, int]]:
@@ -79,23 +80,33 @@ def get_retention(
         return res
 
     active_rows = fetch_retention_active_rows(connection, max_day, retention_event, granularity, retention_type)
+    eligibility_rows = fetch_eligibility_rows(connection, max_day, granularity)
 
     active_by_bucket = {(int(c), int(b)): int(a) for c, b, a in active_rows}
+    eligible_by_bucket = {(int(c), int(b)): int(a) for c, b, a in eligibility_rows}
 
     retention_table: list[dict[str, Any]] = []
     for cohort_id, cohort_name in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
         retention: dict[str, float | None] = {}
+        availability: dict[str, dict[str, int]] = {}
         retention_ci: dict[str, dict[str, float | None]] = {}
         for bucket_number in range(total_buckets):
             active_users = active_by_bucket.get((cohort_id, bucket_number), 0)
+            eligible_users = eligible_by_bucket.get((cohort_id, bucket_number), 0)
+            
             percent: float | None = None
             if cohort_size > 0:
                 percent = active_users / cohort_size * 100.0
             
             retention[str(bucket_number)] = float(percent) if percent is not None else None
             
+            availability[str(bucket_number)] = {
+                "eligible_users": int(eligible_users),
+                "cohort_size": int(cohort_size)
+            }
+
             if include_ci:
                 lower, upper = wilson_ci(active_users, cohort_size, confidence)
                 retention_ci[str(bucket_number)] = {
@@ -108,6 +119,7 @@ def get_retention(
             "cohort_name": str(cohort_name),
             "size": int(cohort_size),
             "retention": retention,
+            "availability": availability,
         }
         if include_ci:
             row["retention_ci"] = retention_ci
@@ -140,7 +152,8 @@ def get_retention(
     result_payload: dict[str, Any] = {
         "max_day": int(detected_max_day),
         "retention_event": retention_event or "any",
-        "retention_table": retention_table
+        "retention_table": retention_table,
+        "observation_end_time": get_observation_end_time(connection).isoformat() if get_observation_end_time(connection) else None
     }
     if granularity == "hour":
         result_payload["max_hour"] = total_buckets
