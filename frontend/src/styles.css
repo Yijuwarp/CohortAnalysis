@@ -1202,6 +1202,10 @@ th.sticky-col.sticky-col-top {
   padding: var(--space-2);
 }
 
+.searchable-select {
+  overflow: visible !important;
+}
+
 .searchable-select-list {
   max-height: 300px;
   overflow-y: auto;
