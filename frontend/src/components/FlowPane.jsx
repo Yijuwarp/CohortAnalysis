@@ -4,7 +4,7 @@ import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
 import FlowDiagram from './FlowDiagram'
 
-const TABLE_MAX_DEPTH = 20
+const TABLE_MAX_DEPTH = 5
 
 function makeCacheKey(path, controls, propertyFilter, depth) {
   return JSON.stringify({
@@ -247,7 +247,7 @@ export default function FlowPane({ refreshToken, state, setState }) {
             <label>
               Graph Depth
               <select value={graphDepth} onChange={(e) => setGraphDepth(Number(e.target.value))}>
-                {[2, 3, 4, 5, 6, 7].map(d => <option key={d} value={d}>{d}</option>)}
+                {[2, 3, 4, 5].map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             </label>
             <label>
