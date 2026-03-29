@@ -138,7 +138,7 @@ def test_split_rejects_subcohort():
         "random": {"num_groups": 2}
     })
     assert resp2.status_code == 400
-    assert "Cannot split a sub-cohort" in resp2.json()["detail"]
+    assert "Cannot split sub-cohort" in resp2.json()["detail"]
 
 def test_delete_parent_cascades_to_splits():
     cohort_id = _create_parent_cohort()

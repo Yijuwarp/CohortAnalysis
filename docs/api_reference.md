@@ -144,9 +144,6 @@ Level 1 event flow analysis.
 ### `GET /flow/l2`
 Level 2 expansion for a specific flow path.
 
-### `GET /flow/graph`
-Full graph-based flow visualization.
-
 ## Debug & Explorer
 
 ### `GET /users/search`

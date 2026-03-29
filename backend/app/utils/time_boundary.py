@@ -19,7 +19,10 @@ def get_observation_end_time(connection: duckdb.DuckDBPyConnection) -> datetime 
     if not isinstance(p99_time, datetime):
         # DuckDB might return a string if not cast correctly in some environments, 
         # but usually it's a datetime for TIMESTAMP columns.
-        p99_time = datetime.fromisoformat(str(p99_time))
+        try:
+            p99_time = datetime.fromisoformat(str(p99_time))
+        except Exception:
+            return None
     
     now = datetime.now(timezone.utc).replace(tzinfo=None) # Keep it naive to match DuckDB TIMESTAMP
 

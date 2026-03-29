@@ -15,7 +15,7 @@ The frontend is a modern React SPA built with Vite, designed for interactive and
     - **UsageTable**: Displays event volume and user counts.
     - **MonetizationTable**: Shows revenue and conversion data.
     - **FunnelPane**: Interactive funnel creation and visualization.
-    - **FlowPane**: SANKY-like flow diagrams for event sequences.
+    - **FlowPane**: Incremental behavior-path exploration for event sequences.
     - **UserExplorer**: A deep-dive interface for inspecting individual user activity timelines.
 
 ## State Management
