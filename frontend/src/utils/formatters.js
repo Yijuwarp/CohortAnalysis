@@ -59,3 +59,31 @@ export function formatSplitValue(value) {
 
   return value
 }
+
+export function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined) return '—'
+  if (seconds < 1) return '<1s'
+
+  const s = Math.floor(seconds)
+  const m = Math.floor(s / 60)
+  const h = Math.floor(s / 3600)
+  const d = Math.floor(s / 86400)
+
+  if (s < 60) {
+    return `${s}s`
+  }
+  if (s < 3600) {
+    const min = m
+    const sec = s % 60
+    return sec > 0 ? `${min}m ${sec}s` : `${min}m`
+  }
+  if (s < 86400) {
+    const hour = h
+    const min = m % 60
+    return min > 0 ? `${hour}h ${min}m` : `${hour}h`
+  }
+  
+  const day = d
+  const hour = h % 24
+  return hour > 0 ? `${day}d ${hour}h` : `${day}d`
+}
