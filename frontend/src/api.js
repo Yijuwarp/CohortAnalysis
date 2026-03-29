@@ -370,6 +370,30 @@ export async function getUserExplorer(params) {
 // Paths (Sequence Analysis)
 // ---------------------------------------------------------------------------
 
+export async function createPath(payload) {
+  return request('/paths', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function updatePath(pathId, payload) {
+  return request(`/paths/${pathId}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}
+
+export async function listPaths() {
+  return request('/paths', { method: 'GET' })
+}
+
+export async function deletePath(pathId) {
+  return request(`/paths/${pathId}`, { method: 'DELETE' })
+}
+
 export async function runPaths(steps) {
   return request('/paths/run', {
     method: 'POST',

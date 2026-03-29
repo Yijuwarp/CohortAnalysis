@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { getRevenueConfigEvents, updateRevenueConfig } from '../api'
+import SearchableSelect from './SearchableSelect'
 
 export default function RevenueConfig({ refreshToken, onUpdated }) {
   const [hasRevenueMapping, setHasRevenueMapping] = useState(false)
@@ -150,12 +151,15 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
   return (
     <div className="revenue-config-panel">
         <div className="revenue-config-add-toolbar">
-          <select value={eventToAdd} onChange={(e) => setEventToAdd(e.target.value)}>
-            <option value="">Select Revenue Event</option>
-            {addableRevenueEvents.map((eventName) => (
-              <option key={eventName} value={eventName}>{eventName}</option>
-            ))}
-          </select>
+          <div style={{ flex: 1, maxWidth: '300px' }}>
+            <SearchableSelect
+              options={addableRevenueEvents}
+              value={eventToAdd}
+              onChange={setEventToAdd}
+              placeholder="Select Revenue Event"
+              onClear={() => setEventToAdd('')}
+            />
+          </div>
           <button
             type="button"
             className="button button-secondary"

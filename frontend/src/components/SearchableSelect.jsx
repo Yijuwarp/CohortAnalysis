@@ -1,4 +1,5 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, useLayoutEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 const normalizeOption = (option) => {
   if (typeof option === 'string') {
@@ -12,12 +13,13 @@ const normalizeOption = (option) => {
   }
 }
 
-export default function SearchableSelect({ options, value, onChange, onSearch, placeholder = 'Select...', disabled = false, className = '', style = {} }) {
+export default function SearchableSelect({ options, value, onChange, onSearch, placeholder = 'Select...', disabled = false, className = '', style = {}, autoFocus = false, defaultOpen = false, onClear = null }) {
   const rootRef = useRef(null)
   const listboxId = useId()
-  const [isOpen, setIsOpen] = useState(false)
+  const [isOpen, setIsOpen] = useState(defaultOpen)
   const [searchTerm, setSearchTerm] = useState('')
   const [activeIndex, setActiveIndex] = useState(0)
+  const [coords, setCoords] = useState({ top: 0, left: 0, width: 0 })
 
   const normalizedOptions = useMemo(() => (options || []).map(normalizeOption), [options])
 
@@ -33,6 +35,33 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
       .slice(0, 100)
   }, [normalizedOptions, searchTerm])
 
+  const updateCoords = () => {
+    if (rootRef.current) {
+        const rect = rootRef.current.getBoundingClientRect()
+        setCoords({
+            top: rect.bottom,
+            left: rect.left,
+            width: rect.width
+        })
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (isOpen) {
+      updateCoords()
+      
+      // Pin dropdown to input using rAF for maximum smoothness during scrolls/resizes
+      let animFrame
+      const loop = () => {
+        updateCoords()
+        animFrame = requestAnimationFrame(loop)
+      }
+      animFrame = requestAnimationFrame(loop)
+      
+      return () => cancelAnimationFrame(animFrame)
+    }
+  }, [isOpen])
+
   useEffect(() => {
     if (!isOpen) {
       return
@@ -44,7 +73,10 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
 
   useEffect(() => {
     const handleDocumentMouseDown = (event) => {
-      if (!rootRef.current?.contains(event.target)) {
+      // If clicking inside the portalled dropdown, or inside the root input, don't close.
+      // Since portal isn't inside rootRef, we need to check if target is in the dropdown class.
+      const isExternalDropdown = event.target.closest('.searchable-select-dropdown')
+      if (!rootRef.current?.contains(event.target) && !isExternalDropdown) {
         setIsOpen(false)
         setSearchTerm('')
         if (onSearch) onSearch('')
@@ -100,7 +132,7 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
   const hasNoMatches = !hasNoOptions && filteredOptions.length === 0
 
   return (
-    <div className={`searchable-select ${className} ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef} style={{ position: "relative", ...style }}>
+    <div className={`searchable-select ${className} ${disabled ? 'searchable-select-disabled' : ''}`} ref={rootRef} style={{ ...style }}>
       <input
         className="searchable-select-input"
         title={selectedOption?.label || value || ''}
@@ -111,6 +143,7 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
         disabled={disabled}
         placeholder={placeholder}
         value={displayValue}
+        autoFocus={autoFocus}
         onFocus={() => setIsOpen(true)}
         onClick={() => setIsOpen(true)}
         onChange={(event) => {
@@ -122,25 +155,55 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
         }}
         onKeyDown={handleKeyDown}
       />
+      
+      {value && onClear && !disabled && (
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            onClear()
+            setSearchTerm('')
+            if (onSearch) onSearch('')
+          }}
+          style={{
+            position: 'absolute',
+            right: 28,
+            top: '50%',
+            transform: 'translateY(-50%)',
+            background: 'transparent',
+            border: 'none',
+            fontSize: '16px',
+            cursor: 'pointer',
+            color: '#999',
+            padding: '2px 6px'
+          }}
+          title="Clear selection"
+        >
+          ×
+        </button>
+      )}
 
-      {isOpen && (
+      {isOpen && createPortal(
         <div 
           className="searchable-select-dropdown"
+          onMouseEnter={(e) => e.stopPropagation()}
           style={{
-            position: "absolute",
-            top: "100%",
-            left: 0,
-            minWidth: "100%",
-            width: "max-content",
-            maxWidth: "600px",
-            whiteSpace: "nowrap",
-            zIndex: 9999,
+            position: "fixed",
+            top: `${coords.top}px`,
+            left: `${coords.left}px`,
+            width: `${coords.width}px`,
+            zIndex: 20002, // Higher than modal
             background: "#fff",
             border: "1px solid #ddd",
-            boxShadow: "0 4px 12px rgba(0,0,0,0.1)"
+            boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+            maxHeight: "300px",
+            overflow: "hidden",
+            display: "flex",
+            flexDirection: "column"
           }}
         >
-          <div className="searchable-select-list" role="listbox" id={listboxId}>
+          <div className="searchable-select-list" role="listbox" id={listboxId} style={{ overflowY: "auto", flex: 1 }}>
             {hasNoOptions && <div className="searchable-select-empty">No options available</div>}
             {hasNoMatches && <div className="searchable-select-empty">No matching results</div>}
             {!hasNoOptions &&
@@ -170,9 +233,10 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
                       title={option.label}
                       style={{
                         display: "inline-block",
-                        maxWidth: "500px",
+                        width: "100%",
                         overflow: "hidden",
-                        textOverflow: "ellipsis"
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap"
                       }}
                     >
                       {option.label}
@@ -182,11 +246,12 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
               })}
           </div>
           {!hasNoOptions && (
-            <small className="searchable-select-count">
+            <small className="searchable-select-count" style={{ padding: "6px 8px", borderTop: "1px solid #eee", fontSize: "11px", color: "#666" }}>
               Showing {filteredOptions.length} matching results
             </small>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   )

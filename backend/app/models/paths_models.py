@@ -1,14 +1,40 @@
 """
 Short summary: Pydantic models for Paths (Sequence Analysis) request/response payloads.
 """
-from typing import List, Optional
+from typing import List, Optional, Union
 from pydantic import BaseModel, Field
 
 MIN_PATHS_STEPS = 2
 MAX_PATHS_STEPS = 10
 
+class PathStepFilter(BaseModel):
+    property_key: str
+    property_value: Union[str, int, float]
+
+class PathStep(BaseModel):
+    step_order: int
+    event_name: str
+    filters: List[PathStepFilter] = Field(default_factory=list)
+
+class CreatePathRequest(BaseModel):
+    name: str
+    steps: List[PathStep] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+
+class UpdatePathRequest(BaseModel):
+    name: str
+    steps: List[PathStep] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+
+class PathDetail(BaseModel):
+    id: int
+    name: str
+    steps: List[PathStep]
+    is_valid: bool
+    invalid_reason: Optional[str] = None
+    created_at: str
+
 class RunPathsRequest(BaseModel):
-    steps: List[str] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+    # Support both raw string steps (backward compat) and complex PathStep objects
+    steps: Union[List[str], List[PathStep]] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
 
 class CreateDropOffCohortRequest(BaseModel):
     cohort_id: int

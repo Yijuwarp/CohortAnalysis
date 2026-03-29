@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { createFunnel, updateFunnel, listFunnels, deleteFunnel, runFunnel, getEventProperties, getEventPropertyValues } from '../api'
+import SearchableSelect from './SearchableSelect'
 import { formatInteger } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay } from '@dnd-kit/core'
@@ -145,7 +146,7 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
 
   const addStep = () => {
     if (steps.length >= MAX_FUNNEL_STEPS) return
-    setSteps(prev => [...prev, EMPTY_STEP(nextStepIdRef.current++)])
+    setSteps(prev => [...prev, { ...EMPTY_STEP(nextStepIdRef.current++), isNew: true }])
   }
 
   const removeStep = (idx) => {
@@ -333,22 +334,19 @@ function FunnelBuilderModal({ events, isOpen, onClose, onCreated, editingFunnel 
                       ⋮⋮
                     </button>
 
-                    {/* Issue #1: events is string[], not { value, label }[] */}
-                    {/* Issue #2: unique key on each option */}
-                    <select
-                      value={step.event_name}
-                      onChange={e => updateStep(stepIdx, 'event_name', e.target.value)}
-                      data-testid={`funnel-step-event-${stepIdx}`}
-                      className="funnel-step-event-select"
-                    >
-                      <option value="">— select event —</option>
-                      {safeEvents.length === 0 && (
-                        <option value="" disabled>No events available in dataset</option>
-                      )}
-                      {safeEvents.map(ev => (
-                        <option key={ev} value={ev}>{ev}</option>
-                      ))}
-                    </select>
+                    {/* Issue #1: safeEvents mapped to options format seamlessly inside SearchableSelect if string[] */}
+                    <div style={{ flex: 1, minWidth: '160px', maxWidth: '300px' }} data-testid={`funnel-step-event-${stepIdx}`}>
+                      <SearchableSelect
+                        options={safeEvents}
+                        value={step.event_name}
+                        onChange={val => updateStep(stepIdx, 'event_name', val)}
+                        placeholder="— select event —"
+                        disabled={safeEvents.length === 0}
+                        className="funnel-step-event-select"
+                        autoFocus={step.isNew}
+                        defaultOpen={step.isNew}
+                      />
+                    </div>
 
                     {steps.length > MIN_FUNNEL_STEPS && (
                       <button
