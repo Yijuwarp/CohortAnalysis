@@ -288,6 +288,8 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
       }))
   }, [displayRows, predictionHorizon, predictions])
 
+  const hasSidebarContent = (predictionSummary.length > 0 && showPredictionSummary) || isTuningPaneOpen;
+
   return (
     <section className="card">
       <h2>Monetization</h2>
@@ -541,44 +543,46 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
           )}
         </div>
 
-        <div className="monetization-side-panel">
-          {predictionSummary.length > 0 && showPredictionSummary && (
-            <aside className="prediction-sticky-card summary-card">
-              <div className="summary-header">
-                <h4>Prediction Summary</h4>
-                <button 
-                  type="button" 
-                  className="summary-close-btn"
-                  onClick={() => setShowPredictionSummary(false)}
-                >
-                  ✕
-                </button>
-              </div>
-              <div className="summary-body">
-                {predictionSummary.map((item) => (
-                  <div key={item.id} className="prediction-row">
-                    <span className="summary-name">{item.name}</span>
-                    <strong className="summary-val">{formatCurrency(item.value)}</strong>
-                  </div>
-                ))}
-              </div>
-            </aside>
-          )}
+        {hasSidebarContent && (
+          <div className="monetization-side-panel">
+            {predictionSummary.length > 0 && showPredictionSummary && (
+              <aside className="prediction-sticky-card summary-card">
+                <div className="summary-header">
+                  <h4>Prediction Summary</h4>
+                  <button 
+                    type="button" 
+                    className="summary-close-btn"
+                    onClick={() => setShowPredictionSummary(false)}
+                  >
+                    ✕
+                  </button>
+                </div>
+                <div className="summary-body">
+                  {predictionSummary.map((item) => (
+                    <div key={item.id} className="prediction-row">
+                      <span className="summary-name">{item.name}</span>
+                      <strong className="summary-val">{formatCurrency(item.value)}</strong>
+                    </div>
+                  ))}
+                </div>
+              </aside>
+            )}
 
-          <TunePredictionPane
-            isOpen={isTuningPaneOpen}
-            onClose={() => setIsTuningPaneOpen(false)}
-            predictions={predictions}
-            displayRows={displayRows}
-            onLiveUpdate={setPredictions}
-            onCancel={() => {
-              if (predictionBaseline) {
-                setPredictions(JSON.parse(JSON.stringify(predictionBaseline)))
-              }
-              setIsTuningPaneOpen(false)
-            }}
-          />
-        </div>
+            <TunePredictionPane
+              isOpen={isTuningPaneOpen}
+              onClose={() => setIsTuningPaneOpen(false)}
+              predictions={predictions}
+              displayRows={displayRows}
+              onLiveUpdate={setPredictions}
+              onCancel={() => {
+                if (predictionBaseline) {
+                  setPredictions(JSON.parse(JSON.stringify(predictionBaseline)))
+                }
+                setIsTuningPaneOpen(false)
+              }}
+            />
+          </div>
+        )}
 
         <ComparePane
           isOpen={isComparePaneOpen}

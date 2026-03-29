@@ -23,6 +23,7 @@ const formatCohortSize = (size) => {
 
 export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [cohorts, setCohorts] = useState([])
+  const [pendingCohorts, setPendingCohorts] = useState([])
   const [savedCohorts, setSavedCohorts] = useState([])
   const [selectedCohortId, setSelectedCohortId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
@@ -203,20 +204,50 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     const targetSaved = selectedSavedObj
     if (!targetSaved) return
     
+    const isDuplicate = cohorts.some(c => c.cohort_name === targetSaved.name) ||
+                        pendingCohorts.some(p => p.name === targetSaved.name)
+    
+    if (isDuplicate) {
+        setError(`A cohort named "${targetSaved.name}" already exists or is pending.`)
+        return
+    }
+
+    const payload = {
+      name: targetSaved.name,
+      logic_operator: targetSaved.definition.logic_operator,
+      join_type: targetSaved.definition.join_type,
+      conditions: targetSaved.definition.conditions,
+      source_saved_id: targetSaved.id
+    }
+    
+    const pendingId = `pending_${Date.now()}_${Math.random()}`
+    const pendingItem = { id: pendingId, name: targetSaved.name, payload, status: 'creating', error: null }
+    setPendingCohorts(prev => [...prev, pendingItem])
+
     try {
-      const payload = {
-        name: targetSaved.name,
-        logic_operator: targetSaved.definition.logic_operator,
-        join_type: targetSaved.definition.join_type,
-        conditions: targetSaved.definition.conditions,
-        source_saved_id: targetSaved.id
-      }
       await createCohort(payload)
       await loadData()
+      setPendingCohorts(prev => prev.filter(p => p.id !== pendingId))
       onCohortsChanged()
     } catch (err) {
-      setError(err.message)
+      setPendingCohorts(prev => prev.map(p => p.id === pendingId ? { ...p, status: 'error', error: err.message } : p))
     }
+  }
+
+  const handleRetryPending = async (pendingItem) => {
+    setPendingCohorts(prev => prev.map(p => p.id === pendingItem.id ? { ...p, status: 'creating', error: null } : p))
+    try {
+      await createCohort(pendingItem.payload)
+      await loadData()
+      setPendingCohorts(prev => prev.filter(p => p.id !== pendingItem.id))
+      onCohortsChanged()
+    } catch (err) {
+      setPendingCohorts(prev => prev.map(p => p.id === pendingItem.id ? { ...p, status: 'error', error: err.message } : p))
+    }
+  }
+
+  const handleRemovePending = (id) => {
+    setPendingCohorts(prev => prev.filter(p => p.id !== id))
   }
 
   const handleEditSaved = (id) => {
@@ -301,9 +332,9 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
           {loading && <span className="secondary-text" style={{ fontSize: '12px' }}>Loading...</span>}
         </div>
         
-        {loading && cohorts.length === 0 ? (
+        {loading && cohorts.length === 0 && pendingCohorts.length === 0 ? (
           <p className="secondary-text">Loading cohorts...</p>
-        ) : cohorts.length === 0 ? (
+        ) : cohorts.length === 0 && pendingCohorts.length === 0 ? (
           <p className="secondary-text">No cohorts created yet.</p>
         ) : (
           <div className="existing-cohorts-list">
@@ -312,6 +343,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
               <div className="cohort-size">Size</div>
               <div className="cohort-actions">Actions</div>
             </div>
+            
+
             {enrichedParentCohorts.map((cohort) => {
               const isSystemCohort = cohort.cohort_name === 'All Users'
               const childCohorts = cohort.hidden ? [] : (childCohortsByParent[cohort.cohort_id] || [])
@@ -478,6 +511,29 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                 </Fragment>
               )
             })}
+
+            {pendingCohorts
+              .filter(p => !cohorts.some(c => c.cohort_name === p.name))
+              .map((pending) => (
+              <div key={pending.id} className="existing-cohort-row cohort-row" style={{ opacity: pending.status === 'creating' ? 0.6 : 1, background: pending.status === 'error' ? '#fef2f2' : undefined }}>
+                <div className="cohort-name cohort-left" style={{ color: pending.status === 'error' ? '#dc2626' : undefined, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span>{pending.name}</span>
+                  {pending.status === 'creating' && <span className="badge-inactive">Creating...</span>}
+                  {pending.status === 'error' && <span className="badge-inactive" style={{ background: '#fca5a5', color: '#991b1b', border: '1px solid #f87171' }}>Failed</span>}
+                </div>
+                <div className="cohort-size" style={{ color: pending.status === 'error' ? '#dc2626' : undefined }}>
+                  {pending.status === 'creating' ? '⏳' : '—'}
+                </div>
+                <div className="cohort-actions">
+                  {pending.status === 'error' ? (
+                    <>
+                      <button className="button button-small" onClick={() => handleRetryPending(pending)} style={{ background: '#ef4444', color: 'white', marginRight: '4px', border: 'none' }}>Retry</button>
+                      <button className="button button-small button-secondary" onClick={() => handleRemovePending(pending.id)}>Remove</button>
+                    </>
+                  ) : <span style={{ fontSize: '12px', color: '#9ca3af' }}>Processing...</span>}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>

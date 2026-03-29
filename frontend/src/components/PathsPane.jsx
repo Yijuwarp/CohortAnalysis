@@ -1,58 +1,166 @@
-import { useState, useEffect, useCallback } from 'react'
-import { runPaths, createPathsDropOffCohort, createPathsReachedCohort } from '../api'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { 
+  runPaths, 
+  createPathsDropOffCohort, 
+  createPathsReachedCohort, 
+  listPaths, 
+  deletePath 
+} from '../api'
 import { formatInteger, formatDuration } from '../utils/formatters'
 import { getCohortColor } from '../utils/cohortColors'
-import SearchableSelect from './SearchableSelect'
+import PathsBuilderModal from './PathsBuilderModal'
+
+// ---------------------------------------------------------------------------
+// Paths Selector
+// ---------------------------------------------------------------------------
+
+function PathsSelector({ paths, value, onChange }) {
+  const valid = paths.filter(p => p.is_valid)
+  const invalid = paths.filter(p => !p.is_valid)
+
+  return (
+    <div className="funnel-selector" data-testid="paths-selector">
+      <select
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value ? Number(e.target.value) : null)}
+      >
+        <option value="">— Select Path —</option>
+        {valid.length > 0 && (
+          <optgroup label="Saved Paths">
+            {valid.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </optgroup>
+        )}
+        {invalid.length > 0 && (
+          <optgroup label="Invalid for Current Dataset">
+            {invalid.map(p => (
+              <option key={p.id} value={p.id} title={p.invalid_reason} className="funnel-option-invalid">
+                {p.name} (invalid: {p.invalid_reason})
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </select>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Main PathsPane
+// ---------------------------------------------------------------------------
 
 export default function PathsPane({ refreshToken, events, state, setState, onRefreshCohorts }) {
-  const [steps, setSteps] = useState(state?.steps || ['', ''])
+  const [paths, setPaths] = useState([])
+  const [selectedPathId, setSelectedPathId] = useState(state?.selectedPathId || null)
+  const [editingPath, setEditingPath] = useState(null) // Local "unsaved" state
+  const [isUnsaved, setIsUnsaved] = useState(false)
+  
   const [running, setRunning] = useState(false)
   const [result, setResult] = useState(state?.result || null)
   const [error, setError] = useState('')
-  const [creatingCohort, setCreatingCohort] = useState(null) // { cohortId, stepIdx, type }
-  const [showNamingModal, setShowNamingModal] = useState(null) // { cohortId, stepIdx, type, defaultName }
+  
+  const [showBuilder, setShowBuilder] = useState(false)
+  const [deletingId, setDeletingId] = useState(null)
+  
+  const [creatingCohort, setCreatingCohort] = useState(null)
+  const [showNamingModal, setShowNamingModal] = useState(null)
   const [customName, setCustomName] = useState('')
 
-  const safeEvents = (events || []).map(e => ({ value: e, label: e }))
+  const runIdRef = useRef(0)
+
+  // Sync state to parent
+  useEffect(() => {
+    setState({ selectedPathId, result })
+  }, [selectedPathId, result, setState])
+
+  const loadPaths = useCallback(async () => {
+    try {
+      const data = await listPaths()
+      setPaths(data || [])
+    } catch {
+      setPaths([])
+    }
+  }, [])
 
   useEffect(() => {
-    setState({ steps, result })
-  }, [steps, result, setState])
+    loadPaths()
+  }, [loadPaths, refreshToken])
 
-  const handleAddStep = () => {
-    if (steps.length >= 10) return
-    setSteps(prev => [...prev, ''])
+  // Handle path selection
+  const handleSelectPath = (id, overridePath = null) => {
+    setSelectedPathId(id)
+    const found = overridePath || paths.find(p => p.id === id)
+    if (found) {
+        setEditingPath(JSON.parse(JSON.stringify(found))) // Deep clone for local edits
+        setIsUnsaved(false)
+    } else {
+        setEditingPath(null)
+        setIsUnsaved(false)
+    }
+    setResult(null)
+    setError('')
   }
 
-  const handleRemoveStep = (idx) => {
-    if (steps.length <= 2) return
-    setSteps(prev => prev.filter((_, i) => i !== idx))
-  }
-
-  const handleStepChange = (idx, val) => {
-    setSteps(prev => prev.map((s, i) => i === idx ? val : s))
-  }
+  // Hydrate editingPath on mount or when paths list loads if we have a selection
+  useEffect(() => {
+    // Only auto-hydrate if we have a selection, and we ARE NOT currently showing the builder
+    // This prevents "+ New Path" (which sets editingPath to null) from being immediately 
+    // overwritten by the selected path in the background.
+    if (selectedPathId && paths.length > 0 && !editingPath && !showBuilder) {
+        const found = paths.find(p => p.id === selectedPathId)
+        if (found) {
+            setEditingPath(JSON.parse(JSON.stringify(found)))
+            setIsUnsaved(false)
+        }
+    }
+  }, [paths, selectedPathId, editingPath, showBuilder])
 
   const handleRun = async () => {
-    if (steps.some(s => !s)) {
-        setError('All steps must have an event selected.')
-        return
-    }
+    if (!editingPath || !editingPath.steps) return
+    const thisRunId = ++runIdRef.current
     setRunning(true)
     setError('')
     setResult(null)
     try {
-      const data = await runPaths(steps)
-      setResult(data)
+      const data = await runPaths(editingPath.steps)
+      if (runIdRef.current === thisRunId) {
+        setResult(data)
+      }
     } catch (err) {
-      setError(err.message || 'Failed to run analysis')
+      if (runIdRef.current === thisRunId) {
+        setError(err.message || 'Failed to run analysis')
+      }
     } finally {
-      setRunning(false)
+      if (runIdRef.current === thisRunId) {
+        setRunning(false)
+      }
     }
   }
 
+  const handleDelete = async (id) => {
+    if (!window.confirm('Are you sure you want to delete this path?')) return
+    setDeletingId(id)
+    try {
+      await deletePath(id)
+      if (selectedPathId === id) {
+        setSelectedPathId(null)
+        setEditingPath(null)
+        setIsUnsaved(false)
+        setResult(null)
+      }
+      await loadPaths()
+    } catch (err) {
+      alert(err.message || 'Failed to delete path')
+    } finally {
+      setDeletingId(null)
+    }
+  }
+
+  // Cohort creation helpers
   const handleOpenNamingModal = (cohortId, stepIdx, type, eventName, cohortName) => {
-    const sequence = steps.slice(0, stepIdx).join(' -> ')
+    if (!editingPath) return
+    const sequence = editingPath.steps.slice(0, stepIdx).map(s => s.event_name).join(' -> ')
     let defaultName = ''
     if (type === 'reached') {
         defaultName = `Reached Step ${stepIdx} (${eventName}) (${cohortName}): ${sequence}`
@@ -63,13 +171,12 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
             defaultName = `Drop-off at Step ${stepIdx} (${eventName}) (${cohortName}): ${sequence}`
         }
     }
-    
     setShowNamingModal({ cohortId, stepIdx, type, defaultName })
     setCustomName(defaultName)
   }
 
   const handleConfirmCreate = async () => {
-    if (!showNamingModal) return
+    if (!showNamingModal || !editingPath) return
     const { cohortId, stepIdx, type } = showNamingModal
     const nameToUse = customName.trim()
     
@@ -78,15 +185,11 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
     
     try {
       if (type === 'reached') {
-        await createPathsReachedCohort(cohortId, stepIdx, steps, nameToUse)
+        await createPathsReachedCohort(cohortId, stepIdx, editingPath.steps, nameToUse)
       } else {
-        await createPathsDropOffCohort(cohortId, stepIdx, steps, nameToUse)
+        await createPathsDropOffCohort(cohortId, stepIdx, editingPath.steps, nameToUse)
       }
-      
-      if (onRefreshCohorts) {
-          onRefreshCohorts()
-      }
-      alert('Cohort created successfully.')
+      if (onRefreshCohorts) onRefreshCohorts()
     } catch (err) {
       alert(err.message || 'Failed to create cohort')
     } finally {
@@ -94,84 +197,76 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
     }
   }
 
-
-  const isInvalid = steps.some(s => !s) || steps.length < 2
+  const selectedPathBase = paths.find(p => p.id === selectedPathId)
+  const isSelectedValid = selectedPathBase?.is_valid ?? false
 
   return (
     <div className="paths-pane" data-testid="paths-pane">
-      <section className="card ui-card paths-builder">
-        <h3>Sequence Builder</h3>
-        <p className="pane-section-hint">Define a strict ordered sequence of events (e.g. A → B → C)</p>
-        
-        <div className="paths-steps-list">
-          {steps.map((step, idx) => (
-            <div key={idx} className="paths-step-row">
-              <span className="paths-step-number">{idx + 1}</span>
-              <div className="paths-step-select">
-                <SearchableSelect
-                  options={safeEvents}
-                  value={step}
-                  onChange={(val) => handleStepChange(idx, val)}
-                  placeholder="Select event..."
-                />
-              </div>
-              {steps.length > 2 && (
-                <button className="paths-remove-step" onClick={() => handleRemoveStep(idx)}>✕</button>
-              )}
-            </div>
-          ))}
-        </div>
+      <div className="funnel-topbar">
+        <button
+          className="button button-primary"
+          onClick={() => {
+            setEditingPath(null)
+            setShowBuilder(true)
+          }}
+        >
+          + New Path
+        </button>
 
-        <div className="paths-builder-actions">
-          <button 
-            className="button button-secondary" 
-            onClick={handleAddStep} 
-            disabled={steps.length >= 10 || running}
-          >
-            + Add Step
-          </button>
-          <button 
-            className="button button-primary" 
-            onClick={handleRun} 
-            disabled={isInvalid || running}
-          >
-            {running ? 'Running Analysis...' : 'Run Paths Analysis'}
-          </button>
+        <PathsSelector
+          paths={paths}
+          value={selectedPathId}
+          onChange={handleSelectPath}
+        />
+
+        {selectedPathId && (
+          <>
+            <button
+              className="button button-secondary"
+              onClick={() => {
+                setEditingPath(JSON.parse(JSON.stringify(selectedPathBase)))
+                setShowBuilder(true)
+              }}
+              disabled={deletingId === selectedPathId || running}
+            >
+              Edit
+            </button>
+            <button
+              className="button button-secondary"
+              onClick={() => handleDelete(selectedPathId)}
+              disabled={deletingId === selectedPathId || running}
+            >
+              {deletingId === selectedPathId ? 'Deleting…' : 'Delete'}
+            </button>
+          </>
+        )}
+
+        <button
+          className="button button-primary"
+          onClick={handleRun}
+          disabled={!editingPath || (!isSelectedValid && !isUnsaved) || running}
+          title={!selectedPathId ? 'Select or create a path first' : (selectedPathBase && !selectedPathBase.is_valid && !isUnsaved) ? selectedPathBase.invalid_reason : 'Run Path'}
+        >
+          {running ? 'Running…' : 'Run Path'}
+        </button>
+      </div>
+      
+      {selectedPathBase && !selectedPathBase.is_valid && (
+        <div className="funnel-invalid-notice animate-fade-in">
+          ⚠️ This path is not applicable to the current dataset — {selectedPathBase.invalid_reason}
         </div>
-        
-        {error && <p className="error">{error}</p>}
-      </section>
+      )}
 
       {result && (
         <div className="paths-results animate-fade-in">
-          {result.global_insights?.length > 0 && (
-            <section className="card ui-card paths-global-insights">
-              <h4>Global Insights</h4>
-              <ul className="paths-insights-list">
-                {result.global_insights.map((insight, idx) => (
-                  <li key={idx} className="paths-insight-item global">{insight}</li>
-                ))}
-              </ul>
-            </section>
-          )}
-
           <div className="paths-cohort-results">
             {result.results.map((cohort, cohortIdx) => (
               <section key={cohort.cohort_id} className="card ui-card paths-cohort-card">
                 <div className="paths-cohort-header">
                   <h4 style={{ color: getCohortColor(cohort.cohort_id, cohortIdx) }}>
-                    {cohort.cohort_name}
+                    {cohort.cohort_name} ({formatInteger(cohort.cohort_size)} users)
                   </h4>
-                  <span className="paths-cohort-size">{formatInteger(cohort.cohort_size)} users</span>
                 </div>
-
-                {cohort.insights?.length > 0 && (
-                  <div className="paths-cohort-insights">
-                    {cohort.insights.map((insight, idx) => (
-                      <div key={idx} className="paths-insight-item cohort">{insight}</div>
-                    ))}
-                  </div>
-                )}
 
                 <div className="table-responsive">
                   <table className="paths-table">
@@ -196,7 +291,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
                           <td className="text-right">
                             {formatInteger(s.users)}
                             {s.users < 50 && s.users > 0 && (
-                                <div className="low-sample-warn" title="Low sample size - metrics may be unstable">⚠️</div>
+                                <span className="low-sample-warn" title="Low sample size - metrics may be unstable" style={{ marginLeft: '4px', fontSize: '12px' }}>⚠️</span>
                             )}
                           </td>
                           <td className="text-right">{s.conversion_pct}%</td>
@@ -225,7 +320,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
                                 )}
                                 {sIdx > 0 && s.drop_off_pct > 0 && (
                                   <button onClick={() => handleOpenNamingModal(cohort.cohort_id, sIdx + 1, 'dropoff', s.event, cohort.cohort_name)}>
-                                    Drop-off after {steps[sIdx-1]}
+                                    Drop-off after {cohort.steps[sIdx-1].event}
                                   </button>
                                 )}
                               </div>
@@ -239,94 +334,57 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
               </section>
             ))}
           </div>
+
+          {(result.global_insights?.length > 0 || result.results.some(c => c.insights?.length > 0)) && (
+            <section className="card ui-card paths-all-insights" style={{ marginTop: '24px' }}>
+              <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>Insights</h3>
+              
+              {result.global_insights?.length > 0 && (
+                <div className="paths-insight-group" style={{ marginBottom: '20px' }}>
+                  <h4 style={{ fontSize: '15px', color: '#666', marginBottom: '8px' }}>Overall</h4>
+                  <ul className="paths-insights-list">
+                    {result.global_insights.map((insight, idx) => (
+                      <li key={idx} className="paths-insight-item global">{insight}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {result.results.map((cohort, cohortIdx) => (
+                cohort.insights?.length > 0 && (
+                  <div key={cohort.cohort_id} className="paths-insight-group" style={{ marginBottom: '20px' }}>
+                    <h4 style={{ 
+                      fontSize: '15px', 
+                      color: getCohortColor(cohort.cohort_id, cohortIdx),
+                      marginBottom: '8px' 
+                    }}>
+                      {cohort.cohort_name}
+                    </h4>
+                    <div className="paths-cohort-insights">
+                      {cohort.insights.map((insight, idx) => (
+                        <div key={idx} className="paths-insight-item cohort">{insight}</div>
+                      ))}
+                    </div>
+                  </div>
+                )
+              ))}
+            </section>
+          )}
         </div>
       )}
 
-      <style>{`
-        .paths-pane { display: flex; flex-direction: column; gap: 24px; padding-bottom: 40px; }
-        .paths-steps-list { display: flex; flex-direction: column; gap: 12px; margin: 16px 0; max-width: 500px; }
-        .paths-step-row { display: flex; align-items: center; gap: 12px; }
-        .paths-step-number { 
-            width: 24px; height: 24px; border-radius: 12px; 
-            background: var(--primary-color); color: white; 
-            display: flex; align-items: center; justify-content: center; 
-            font-size: 12px; font-weight: bold; flex-shrink: 0;
-        }
-        .paths-step-select { flex: 1; min-width: 200px; }
-        .paths-remove-step { 
-            background: none; border: none; color: #999; cursor: pointer; font-size: 18px; 
-            padding: 4px; line-height: 1; transition: color 0.2s;
-        }
-        .paths-remove-step:hover { color: var(--error-color); }
-        .paths-builder-actions { display: flex; gap: 12px; margin-top: 16px; align-items: center; }
-        
-        .paths-results { display: flex; flex-direction: column; gap: 24px; }
-        .paths-insights-list { list-style: none; padding: 0; margin: 0; }
-        .paths-insight-item { 
-            padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; 
-            border-left: 4px solid transparent;
-        }
-        .paths-insight-item.global { background: #f0f7ff; border-left-color: #007bff; color: #004085; }
-        .paths-insight-item.cohort { background: #fff3cd; border-left-color: #ffc107; color: #856404; margin-top: 8px; }
-        
-        .paths-cohort-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #eee; padding-bottom: 12px; }
-        .paths-cohort-size { font-size: 14px; color: #666; }
-        
-        .paths-cohort-card { overflow: visible !important; }
-        .table-responsive { overflow: visible !important; }
-        
-        .paths-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-        .paths-table th { text-align: left; padding: 12px 8px; border-bottom: 2px solid #eee; color: #666; font-weight: 600; }
-        .paths-table td { padding: 12px 8px; border-bottom: 1px solid #eee; vertical-align: middle; }
-        .paths-table tr:last-child td { border-bottom: none; }
-        .paths-event-pill { 
-            display: inline-block; padding: 2px 8px; background: #f0f0f0; border-radius: 12px; 
-            font-size: 12px; font-weight: 500; color: #333;
-        }
-        .text-right { text-align: right !important; }
-        .paths-action-dropdown { position: relative; display: inline-block; }
-        .dropdown-menu { 
-            display: none; position: absolute; right: 0; top: 100%; 
-            background: white; border: 1px solid #ddd; border-radius: 4px; 
-            box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 9999; min-width: 160px;
-            padding: 4px 0; margin-top: 6px;
-        }
-        /* Bridge the hover gap */
-        .dropdown-menu::after {
-            content: '';
-            position: absolute;
-            bottom: 100%;
-            left: 0;
-            right: 0;
-            height: 10px;
-        }
-        .paths-action-dropdown:hover .dropdown-menu { display: block; }
-        .dropdown-menu button { 
-            display: block; width: 100%; padding: 8px 12px; border: none; 
-            background: none; text-align: left; font-size: 13px; cursor: pointer;
-            color: #333;
-        }
-        .dropdown-menu button:hover { background: #f5f5f5; color: var(--primary-color); }
+      {error && <p className="error" style={{ marginTop: '20px' }}>{error}</p>}
 
-        .modal-overlay {
-            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center;
-            z-index: 1000;
-        }
-        .modal-content {
-            background: white; padding: 24px; border-radius: 8px; width: 100%; max-width: 450px;
-            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
-        }
-        .modal-content h4 { margin-top: 0; margin-bottom: 12px; }
-        .modal-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
-        .modal-input { 
-            width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; 
-            font-size: 14px; margin-top: 8px;
-        }
-
-        .animate-fade-in { animation: fadeIn 0.4s ease-out; }
-        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-      `}</style>
+      <PathsBuilderModal
+        isOpen={showBuilder}
+        onClose={() => setShowBuilder(false)}
+        onSaved={(saved) => {
+            loadPaths()
+            handleSelectPath(saved.id, saved)
+        }}
+        editingPath={editingPath}
+        events={events}
+      />
 
       {showNamingModal && (
         <div className="modal-overlay" onClick={() => setShowNamingModal(null)}>
@@ -347,6 +405,38 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
           </div>
         </div>
       )}
+
+      <style>{`
+        .paths-pane { display: flex; flex-direction: column; gap: 24px; padding-top: 16px; padding-bottom: 40px; }
+        .paths-results { display: flex; flex-direction: column; gap: 24px; }
+        .paths-insight-item { padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; border-left: 4px solid transparent; }
+        .paths-insight-item.global { background: #f0f7ff; border-left-color: #007bff; color: #004085; }
+        .paths-insight-item.cohort { background: #fff3cd; border-left-color: #ffc107; color: #856404; margin-top: 8px; }
+        .paths-cohort-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; border-bottom: 1px solid #eee; padding-bottom: 12px; }
+        .paths-cohort-card { overflow: visible !important; }
+        .paths-table { width: 100%; border-collapse: collapse; font-size: 14px; }
+        .paths-table th { text-align: left; padding: 12px 8px; border-bottom: 2px solid #eee; color: #666; font-weight: 600; }
+        .paths-table td { padding: 12px 8px; border-bottom: 1px solid #eee; vertical-align: middle; }
+        .paths-event-pill { display: inline-block; padding: 2px 8px; background: #f0f0f0; border-radius: 12px; font-size: 12px; font-weight: 500; color: #333; }
+        .text-right { text-align: right !important; }
+        .funnel-topbar { margin-top: 4px; display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+        .paths-action-dropdown { position: relative; display: inline-block; }
+        .dropdown-menu { 
+            display: none; position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ddd; 
+            border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 9999; min-width: 160px;
+            padding: 4px 0; margin-top: 6px;
+        }
+        .paths-action-dropdown:hover .dropdown-menu { display: block; }
+        .dropdown-menu button { display: block; width: 100%; padding: 8px 12px; border: none; background: none; text-align: left; font-size: 13px; cursor: pointer; color: #333; }
+        .dropdown-menu button:hover { background: #f5f5f5; color: var(--primary-color); }
+        .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
+        .modal-content { background: white; padding: 24px; border-radius: 8px; width: 100%; max-width: 450px; box-shadow: 0 10px 25px rgba(0,0,0,0.2); }
+        .modal-footer { display: flex; justify-content: flex-end; gap: 12px; margin-top: 20px; }
+        .modal-input { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; margin-top: 8px; }
+        .animate-fade-in { animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .funnel-option-invalid { color: #999; font-style: italic; }
+      `}</style>
     </div>
   )
 }

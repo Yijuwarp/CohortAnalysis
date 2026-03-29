@@ -71,6 +71,43 @@ export default function App() {
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
 
+  const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'funnels', 'flow', 'user-explorer'], [])
+  const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
+  const [tabRefreshTokens, setTabRefreshTokens] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: 0 }), {}))
+  const [tabReloading, setTabReloading] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
+
+  const markTabsStale = useCallback((tabsObj) => {
+    if (tabsObj) {
+      setStaleTabs((prev) => ({ ...prev, ...tabsObj }))
+    } else {
+      setStaleTabs((prev) => {
+        const next = { ...prev }
+        TAB_KEYS.forEach(k => next[k] = true)
+        return next
+      })
+    }
+  }, [TAB_KEYS])
+
+  const refreshTab = useCallback(async (tabKey) => {
+    setTabReloading(prev => ({ ...prev, [tabKey]: true }))
+    try {
+      const [eventsPayload, cohortsPayload] = await Promise.all([
+        listEvents(),
+        listCohorts()
+      ])
+      setEvents(eventsPayload.events || [])
+      setCohorts(cohortsPayload.cohorts || [])
+      
+      setStaleTabs(prev => ({ ...prev, [tabKey]: false }))
+      setTabRefreshTokens(prev => ({ ...prev, [tabKey]: prev[tabKey] + 1 }))
+      setScopeVersion(prev => prev + 1)
+    } catch {
+      // ignore
+    } finally {
+      setTabReloading(prev => ({ ...prev, [tabKey]: false }))
+    }
+  }, [])
+
   const updateAnalyticsState = useCallback((tab, newState) => {
     setAnalyticsState((prev) => {
       const prevTabState = prev[tab]
@@ -141,7 +178,7 @@ export default function App() {
 
   useEffect(() => {
     refreshDatasetInfo()
-  }, [refreshDatasetInfo, retentionRefreshToken])
+  }, [refreshDatasetInfo, tabRefreshTokens])
 
   const clearPersistedState = () => {
     localStorage.removeItem(WORKSPACE_STORAGE_KEY)
@@ -219,7 +256,7 @@ export default function App() {
 	  // Best effort
 	}
 	
-    refreshRetention()
+    markTabsStale()
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
     setTimeout(() => {
@@ -248,7 +285,7 @@ export default function App() {
     if (appState === 'workspace') {
       load()
     }
-  }, [appState, retentionRefreshToken])
+  }, [appState]) // global load on workspace entry
 
   const openPaneSection = (key) => {
     setIsLeftPaneCollapsed(false)
@@ -363,7 +400,7 @@ export default function App() {
                   {leftPaneTab === 'filters' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Date range • Property filters</p>
-                      <FilterData refreshToken={retentionRefreshToken} onFiltersApplied={refreshRetention} onActiveFilterCountChange={setActiveFilterCount} />
+                      <FilterData refreshToken={tabRefreshTokens.retention} onFiltersApplied={() => markTabsStale()} onActiveFilterCountChange={setActiveFilterCount} />
                     </section>
                   )}
                   {leftPaneTab === 'settings' && (
@@ -391,7 +428,7 @@ export default function App() {
 
                           <div className="card ui-card">
                             <h4>Revenue Configuration</h4>
-                            <RevenueConfig refreshToken={retentionRefreshToken} onUpdated={refreshRetention} />
+                            <RevenueConfig refreshToken={tabRefreshTokens.retention} onUpdated={() => markTabsStale()} />
                           </div>
                         </div>
                     </section>
@@ -399,7 +436,7 @@ export default function App() {
                   {leftPaneTab === 'cohorts' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Create and manage cohorts</p>
-                      <CohortPane refreshToken={retentionRefreshToken} onCohortsChanged={refreshRetention} />
+                      <CohortPane onCohortsChanged={() => markTabsStale()} />
                     </section>
                   )}
                 </>
@@ -408,78 +445,106 @@ export default function App() {
 
             <section className="analytics-area">
               <div className="analytics-tabs ui-tabs">
-                <button className={activeTab === 'retention' ? 'active' : ''} onClick={() => setActiveTab('retention')}>Retention</button>
-                <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
-                <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
-                <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
-                <button className={activeTab === 'paths' ? 'active' : ''} onClick={() => setActiveTab('paths')}>Paths</button>
-                <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
-                <button className={activeTab === 'user-explorer' ? 'active' : ''} onClick={() => setActiveTab('user-explorer')}>User Explorer</button>
+                {TAB_KEYS.map(key => {
+                  const labels = {
+                    retention: 'Retention', usage: 'Usage', monetization: 'Monetization', funnels: 'Funnels', paths: 'Paths', flow: 'Flows', 'user-explorer': 'User Explorer'
+                  }
+                  return (
+                    <button key={key} className={activeTab === key ? 'active' : ''} onClick={() => {
+                      setActiveTab(key)
+                      setStaleTabs(prev => ({ ...prev, [key]: false }))
+                    }}>
+                      {labels[key]} {staleTabs[key] && <span style={{ marginLeft: 6, color: '#d97706', fontWeight: 'bold' }}>⚠</span>}
+                    </button>
+                  )
+                })}
               </div>
-              {activeTab === 'retention' && (
-                <RetentionTable
-                  refreshToken={retentionRefreshToken}
-                  retentionEvent={selectedRetentionEvent}
-                  onRetentionEventChange={setSelectedRetentionEvent}
-                  maxDay={globalMaxDay}
-                  setMaxDay={setGlobalMaxDay}
-                  showGlobalControls={false}
-                  state={analyticsState.retention}
-                  setState={(s) => updateAnalyticsState('retention', s)}
-                  cohorts={cohorts}
-                />
+
+              {staleTabs[activeTab] && (
+                <div className="stale-banner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#b45309', fontWeight: 'bold' }}>
+                    <span style={{ fontSize: '18px' }}>⚠</span>
+                    <span>Data is stale</span>
+                  </div>
+                  <button 
+                    className="button button-primary" 
+                    onClick={() => refreshTab(activeTab)}
+                    disabled={tabReloading[activeTab]}
+                    style={{ background: '#10b981', borderColor: '#10b981', color: 'white', fontWeight: 'bold' }}
+                    title="Recompute analytics after changes"
+                  >
+                    {tabReloading[activeTab] ? 'Reloading...' : 'Reload'}
+                  </button>
+                </div>
               )}
-              {activeTab === 'usage' && (
-                <UsageTable
-                  refreshToken={retentionRefreshToken}
-                  retentionEvent={selectedRetentionEvent}
-                  maxDay={globalMaxDay}
-                  state={analyticsState.usage}
-                  setState={(s) => updateAnalyticsState('usage', s)}
-                  scopeVersion={scopeVersion}
-                  cohorts={cohorts}
-                />
-              )}
-              {activeTab === 'monetization' && (
-                <MonetizationTable
-                  refreshToken={retentionRefreshToken}
-                  maxDay={globalMaxDay}
-                  retentionEvent={selectedRetentionEvent}
-                  state={analyticsState.monetization}
-                  setState={(s) => updateAnalyticsState('monetization', s)}
-                  cohorts={cohorts}
-                />
-              )}
-              {activeTab === 'funnels' && (
-                <FunnelPane
-                  refreshToken={retentionRefreshToken}
-                  events={events}
-                  state={analyticsState.funnels}
-                  setState={(s) => updateAnalyticsState('funnels', s)}
-                />
-              )}
-              {activeTab === 'paths' && (
-                <PathsPane
-                  refreshToken={retentionRefreshToken}
-                  events={events}
-                  state={analyticsState.paths}
-                  setState={(s) => updateAnalyticsState('paths', s)}
-                  onRefreshCohorts={refreshRetention}
-                />
-              )}
-              {activeTab === 'flow' && (
-                <FlowPane
-                  refreshToken={retentionRefreshToken}
-                  state={analyticsState.flows}
-                  setState={(s) => updateAnalyticsState('flows', s)}
-                />
-              )}
-              {activeTab === 'user-explorer' && (
-                <UserExplorer
-                   state={analyticsState['user-explorer']}
-                   setState={(s) => updateAnalyticsState('user-explorer', s)}
-                />
-              )}
+
+              <div style={{ opacity: staleTabs[activeTab] ? 0.95 : 1, position: 'relative', flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+                
+                {activeTab === 'retention' && (
+                  <RetentionTable
+                    refreshToken={tabRefreshTokens.retention}
+                    retentionEvent={selectedRetentionEvent}
+                    onRetentionEventChange={setSelectedRetentionEvent}
+                    maxDay={globalMaxDay}
+                    setMaxDay={setGlobalMaxDay}
+                    showGlobalControls={false}
+                    state={analyticsState.retention}
+                    setState={(s) => updateAnalyticsState('retention', s)}
+                    cohorts={cohorts}
+                  />
+                )}
+                {activeTab === 'usage' && (
+                  <UsageTable
+                    refreshToken={tabRefreshTokens.usage}
+                    retentionEvent={selectedRetentionEvent}
+                    maxDay={globalMaxDay}
+                    state={analyticsState.usage}
+                    setState={(s) => updateAnalyticsState('usage', s)}
+                    scopeVersion={scopeVersion}
+                    cohorts={cohorts}
+                  />
+                )}
+                {activeTab === 'monetization' && (
+                  <MonetizationTable
+                    refreshToken={tabRefreshTokens.monetization}
+                    maxDay={globalMaxDay}
+                    retentionEvent={selectedRetentionEvent}
+                    state={analyticsState.monetization}
+                    setState={(s) => updateAnalyticsState('monetization', s)}
+                    cohorts={cohorts}
+                  />
+                )}
+                {activeTab === 'funnels' && (
+                  <FunnelPane
+                    refreshToken={tabRefreshTokens.funnels}
+                    events={events}
+                    state={analyticsState.funnels}
+                    setState={(s) => updateAnalyticsState('funnels', s)}
+                  />
+                )}
+                {activeTab === 'paths' && (
+                  <PathsPane
+                    refreshToken={tabRefreshTokens.paths}
+                    events={events}
+                    state={analyticsState.paths}
+                    setState={(s) => updateAnalyticsState('paths', s)}
+                    onRefreshCohorts={() => markTabsStale()}
+                  />
+                )}
+                {activeTab === 'flow' && (
+                  <FlowPane
+                    refreshToken={tabRefreshTokens.flow}
+                    state={analyticsState.flows}
+                    setState={(s) => updateAnalyticsState('flows', s)}
+                  />
+                )}
+                {activeTab === 'user-explorer' && (
+                  <UserExplorer
+                     state={analyticsState['user-explorer']}
+                     setState={(s) => updateAnalyticsState('user-explorer', s)}
+                  />
+                )}
+              </div>
             </section>
           </div>
         </div>
