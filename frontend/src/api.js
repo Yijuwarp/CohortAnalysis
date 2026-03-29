@@ -365,3 +365,41 @@ export async function getUserExplorer(params) {
 
   return request(`/user-explorer?${query.toString()}`, { method: 'GET' })
 }
+
+// ---------------------------------------------------------------------------
+// Paths (Sequence Analysis)
+// ---------------------------------------------------------------------------
+
+export async function runPaths(steps) {
+  return request('/paths/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ steps }),
+  })
+}
+
+export async function createPathsDropOffCohort(cohortId, stepIndex, steps, cohortName) {
+  return request('/paths/create-dropoff-cohort', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 
+      cohort_id: cohortId, 
+      step_index: stepIndex, 
+      steps,
+      cohort_name: cohortName
+    }),
+  })
+}
+
+export async function createPathsReachedCohort(cohortId, stepIndex, steps, cohortName) {
+  return request('/paths/create-reached-cohort', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ 
+      cohort_id: cohortId, 
+      step_index: stepIndex, 
+      steps,
+      cohort_name: cohortName
+    }),
+  })
+}

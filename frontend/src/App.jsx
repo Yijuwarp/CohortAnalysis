@@ -12,6 +12,7 @@ import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
+import PathsPane from './components/PathsPane'
 
 if (!UserExplorer) {
   console.error('UserExplorer component failed to load from ./components/UserExplorer')
@@ -109,6 +110,7 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(ANALYTICS_STORAGE_KEY, JSON.stringify(analyticsState))
   }, [analyticsState])
+
 
   useEffect(() => {
     if (!banner) return
@@ -410,6 +412,7 @@ export default function App() {
                 <button className={activeTab === 'usage' ? 'active' : ''} onClick={() => setActiveTab('usage')}>Usage</button>
                 <button className={activeTab === 'monetization' ? 'active' : ''} onClick={() => setActiveTab('monetization')}>Monetization</button>
                 <button className={activeTab === 'funnels' ? 'active' : ''} onClick={() => setActiveTab('funnels')}>Funnels</button>
+                <button className={activeTab === 'paths' ? 'active' : ''} onClick={() => setActiveTab('paths')}>Paths</button>
                 <button className={activeTab === 'flow' ? 'active' : ''} onClick={() => setActiveTab('flow')}>Flows</button>
                 <button className={activeTab === 'user-explorer' ? 'active' : ''} onClick={() => setActiveTab('user-explorer')}>User Explorer</button>
               </div>
@@ -453,6 +456,15 @@ export default function App() {
                   events={events}
                   state={analyticsState.funnels}
                   setState={(s) => updateAnalyticsState('funnels', s)}
+                />
+              )}
+              {activeTab === 'paths' && (
+                <PathsPane
+                  refreshToken={retentionRefreshToken}
+                  events={events}
+                  state={analyticsState.paths}
+                  setState={(s) => updateAnalyticsState('paths', s)}
+                  onRefreshCohorts={refreshRetention}
                 />
               )}
               {activeTab === 'flow' && (

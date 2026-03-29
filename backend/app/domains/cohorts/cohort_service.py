@@ -24,7 +24,8 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             split_parent_cohort_id INTEGER,
             split_group_index INTEGER,
             split_group_total INTEGER,
-            source_saved_id UUID
+            source_saved_id UUID,
+            cohort_origin TEXT DEFAULT 'manual'
         )
         """
     )
@@ -100,6 +101,10 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute("ALTER TABLE cohorts ADD COLUMN split_property TEXT")
     if "split_value" not in cohort_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN split_value TEXT")
+    if "is_paths_temp" in cohort_columns:
+        connection.execute("ALTER TABLE cohorts DROP COLUMN is_paths_temp")
+    if "cohort_origin" not in cohort_columns:
+        connection.execute("ALTER TABLE cohorts ADD COLUMN cohort_origin TEXT DEFAULT 'manual'")
 
     # Add source_saved_id to snapshot if missing
     res_snapshot = connection.execute(
