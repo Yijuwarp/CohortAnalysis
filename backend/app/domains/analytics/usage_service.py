@@ -133,6 +133,7 @@ def get_usage(
     operator: str = "=",
     value: str | None = None,
 ) -> dict[str, object]:
+    retention_event = retention_event or "any"
     scoped_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]

@@ -38,8 +38,8 @@
   - Interactive conversion funnel builder and visualization
 
 - `FlowPane.jsx`
-  - Uses `/flow/l1`, `/flow/l2`, `/flow/graph`
-  - Sankey-based event transition exploring
+  - Uses `/flow/l1`, `/flow/l2`
+  - Incremental table-based event transition exploring
 
 - `UserExplorer.jsx`
   - Uses `/user-explorer`

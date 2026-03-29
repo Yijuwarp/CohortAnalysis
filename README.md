@@ -12,7 +12,7 @@ High-performance, event-based cohort analysis platform with a FastAPI + DuckDB b
 - **Usage & Frequency**: Analyze event volume, unique users, and activity frequency.
 - **Monetization**: Detailed revenue analysis with inclusion toggles and value overrides.
 - **Funnels**: Multi-step conversion tracking with greedy path matching.
-- **Event Flows**: Sankey-style transition analysis to understand user journeys.
+- **Event Flows**: Incremental table-based transition analysis to explore user behavior paths.
 - **User Explorer**: Deep-dive into individual user activity timelines and properties.
 
 ## 📚 Documentation

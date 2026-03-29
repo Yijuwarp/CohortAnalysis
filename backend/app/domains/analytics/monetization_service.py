@@ -73,6 +73,10 @@ def get_monetization(
             "day_number": int(day_number),
             "revenue": float(revenue or 0.0),
             "event_count": int(event_volume or 0),
+            "availability": {
+                "eligible_users": int(eligible_by_bucket.get((int(cohort_id), int(day_number)), 0)),
+                "cohort_size": int(cohort_sizes.get(int(cohort_id), 0))
+            }
         }
         for cohort_id, day_number, revenue, event_volume in revenue_rows
     ]
@@ -81,7 +85,12 @@ def get_monetization(
         for cohort_id, cohort_name in cohorts
     ]
     retained_users_table = [
-        {"cohort_id": int(cohort_id), "day_number": int(day_number), "retained_users": int(active_users)}
+        {
+            "cohort_id": int(cohort_id),
+            "day_number": int(day_number),
+            "retained_users": int(active_users),
+            "availability": (int(active_users) / cohort_sizes.get(int(cohort_id), 0)) if cohort_sizes.get(int(cohort_id), 0) > 0 else 0
+        }
         for cohort_id, day_number, active_users in retained_rows
     ]
 

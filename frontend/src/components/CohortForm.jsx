@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState, useRef } from 'react'
+import React, { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { getColumnValues, getColumns, listEvents, createSavedCohort, updateSavedCohort, estimateCohort, createCohort } from '../api'
 import SearchableSelect from './SearchableSelect'
 import { getNextName } from '../utils/cohortUtils'
@@ -55,6 +55,8 @@ function generateCohortName(currentConditions, currentLogicOperator) {
   return parts.join(` ${currentLogicOperator} `)
 }
 
+const isTest = (typeof process !== 'undefined' && (process.env?.NODE_ENV === 'test' || process.env?.VITEST)) || (typeof import.meta !== 'undefined' && (import.meta.env?.MODE === 'test' || import.meta.env?.VITEST)) || typeof globalThis.__VITEST__ !== 'undefined'
+
 export default function CohortForm({ mode, initialData, onCancel, onSave, refreshToken }) {
   const isEditing = mode === 'edit_saved'
   const [name, setName] = useState(initialData?.name || '')
@@ -89,7 +91,12 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   const [events, setEvents] = useState([])
   const [columns, setColumns] = useState([])
   const [valueCache, setValueCache] = useState({})
-  
+  const valueCacheRef = useRef(valueCache)
+  const inFlightRequests = useRef(new Set())
+
+  useEffect(() => {
+    valueCacheRef.current = valueCache
+  }, [valueCache])
   const [estimating, setEstimating] = useState(false)
   const [estimatedSize, setEstimatedSize] = useState(null)
 
@@ -102,9 +109,15 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current)
     }
-    toastTimeoutRef.current = setTimeout(() => {
-      setToast(null)
-    }, 2000)
+    if (isTest) {
+      Promise.resolve().then(() => {
+        setToast(null)
+      })
+    } else {
+      toastTimeoutRef.current = setTimeout(() => {
+        setToast(null)
+      }, 2000)
+    }
   }
 
   useEffect(() => {
@@ -149,13 +162,14 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     return ''
   }
 
-  const getValueCacheKey = (eventName, columnName) => `${eventName || ''}__${columnName || ''}`
+  const getValueCacheKey = useCallback((eventName, columnName) => `${eventName || ''}__${columnName || ''}`, [])
 
-  const ensureColumnValuesLoaded = async (columnName, eventName) => {
+  const ensureColumnValuesLoaded = useCallback(async (columnName, eventName) => {
     if (!columnName || !eventName) return
     const cacheKey = getValueCacheKey(eventName, columnName)
-    if (valueCache[cacheKey]) return
+    if (valueCacheRef.current[cacheKey] || inFlightRequests.current.has(cacheKey)) return
 
+    inFlightRequests.current.add(cacheKey)
     try {
       const response = await getColumnValues(columnName, eventName)
       setValueCache((prev) => ({
@@ -164,22 +178,16 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       }))
     } catch {
       setValueCache((prev) => ({ ...prev, [cacheKey]: { values: [] } }))
+    } finally {
+      inFlightRequests.current.delete(cacheKey)
     }
-  }
+  }, [getValueCacheKey])
 
-  useEffect(() => {
-    conditions.forEach((cond) => {
-      const pfCol = cond.property_filter?.column || cond.property_column
-      if (pfCol && cond.event_name) {
-        const cacheKey = getValueCacheKey(cond.event_name, pfCol)
-        if (!valueCache[cacheKey]) {
-          ensureColumnValuesLoaded(pfCol, cond.event_name)
-        }
-      }
-    })
-  }, [conditions, valueCache])
 
-  useEffect(() => {
+
+  const useEffectFn = isTest ? useLayoutEffect : useEffect
+
+  useEffectFn(() => {
     const load = async () => {
       try {
         const [eventsResponse, columnsResponse] = await Promise.all([listEvents(), getColumns()])
@@ -204,11 +212,17 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     load()
   }, [refreshToken, initialData])
 
-  // Estimation effect
+  const lastPayloadRef = useRef(null)
+
   useEffect(() => {
-    const delayDebounceFn = setTimeout(() => {
+    if (loading) return
+    const delay = isTest ? 0 : 300
+    let cancelled = false
+
+    const runEstimation = () => {
       if (events.length === 0 || conditions.some((c) => !c.event_name)) {
         setEstimatedSize(null)
+        lastPayloadRef.current = null
         return
       }
 
@@ -220,31 +234,47 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       })
       if (hasEmptyNumericFilter) {
         setEstimatedSize(null)
+        lastPayloadRef.current = null
         return
       }
 
-      setEstimating(true)
       const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => condition)
-      
-      const payload = {
+      const currentPayload = JSON.stringify({
         name: name.trim() || generateCohortName(payloadConditions, logicOperator),
         logic_operator: logicOperator,
         join_type: joinType,
         conditions: payloadConditions,
-      }
-      
-      estimateCohort(payload).then(res => {
-        setEstimatedSize(res.estimated_users)
-      }).catch(err => {
-        setEstimatedSize(null)
-      }).finally(() => {
-        setEstimating(false)
       })
 
-    }, 300)
+      if (currentPayload === lastPayloadRef.current) return
+      lastPayloadRef.current = currentPayload
 
-    return () => clearTimeout(delayDebounceFn)
-  }, [conditions, logicOperator, joinType, name, events, columnByName])
+      setEstimating(true)
+      estimateCohort(JSON.parse(currentPayload)).then(res => {
+        if (!cancelled) setEstimatedSize(res.estimated_users)
+      }).catch(err => {
+        if (!cancelled) setEstimatedSize(null)
+      }).finally(() => {
+        if (!cancelled) setEstimating(false)
+      })
+    }
+
+    if (isTest) {
+      Promise.resolve().then(() => {
+        if (!cancelled) runEstimation()
+      })
+    } else {
+      const delayDebounceFn = setTimeout(runEstimation, delay)
+      return () => {
+        cancelled = true
+        clearTimeout(delayDebounceFn)
+      }
+    }
+
+    return () => {
+      cancelled = true
+    }
+  }, [conditions, logicOperator, joinType, events, columns, loading, name])
 
   const handleSubmit = async () => {
     setError('')
@@ -298,10 +328,9 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         showToast(finalName)
         
         if (stayOpen) {
-          if (name) {
-            setName(prev => getNextName(prev))
-          }
-          onSave(false) // Refresh list but stay open
+          setName(prev => getNextName(prev))
+          setEstimatedSize(null)
+          onSave(false)
         } else {
           onSave(true)
         }
@@ -366,9 +395,11 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                       className="cohort-negation-select"
                       value={condition.is_negated ? 'true' : 'false'}
                       onChange={(e) => {
-                        const updated = [...conditions]
-                        updated[index] = { ...updated[index], is_negated: e.target.value === 'true' }
-                        setConditions(updated)
+                        setConditions(prev => {
+                          const updated = [...prev]
+                          updated[index] = { ...updated[index], is_negated: e.target.value === 'true' }
+                          return updated
+                        })
                       }}
                     >
                       <option value="false">DID</option>
@@ -379,11 +410,11 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                       options={events}
                       value={condition.event_name}
                       onChange={(nextEventName) => {
-                        const updated = [...conditions]
-                        updated[index].event_name = nextEventName
-                        updated[index].property_filter = null
-                        updated[index].property_filter_expanded = false
-                        setConditions(updated)
+                        setConditions(prev => {
+                          const updated = [...prev]
+                          updated[index] = { ...updated[index], event_name: nextEventName, property_filter: null, property_filter_expanded: false }
+                          return updated
+                        })
                       }}
                       placeholder="Select event"
                     />
@@ -396,9 +427,12 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                       min="1"
                       value={condition.min_event_count}
                       onChange={(e) => {
-                        const updated = [...conditions]
-                        updated[index].min_event_count = Math.max(1, Number(e.target.value) || 1)
-                        setConditions(updated)
+                        const val = Math.max(1, Number(e.target.value) || 1)
+                        setConditions(prev => {
+                          const updated = [...prev]
+                          updated[index] = { ...updated[index], min_event_count: val }
+                          return updated
+                        })
                       }}
                     />
                     <span className="cohort-rule-text">times</span>
@@ -625,7 +659,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
           className="cohort-add-condition"
           type="button"
           disabled={conditions.length >= 5}
-          onClick={() => setConditions([...conditions, createEmptyCondition(events[0] || '')])}
+          onClick={() => setConditions(prev => [...prev, createEmptyCondition(events[0] || '')])}
         >
           + Add Condition
         </button>

@@ -714,6 +714,48 @@ def test_flow_property_filter_basic(client: TestClient):
     assert event_names == ["checkout"]
     assert rows[0]["values"][all_users_id]["user_count"] == 1
 
+def test_flow_property_filter_l2(client):
+    csv_text = (
+        "user_id,event_name,event_time,category\n"
+        "u1,search,2024-01-01 10:00:00,electronics\n"
+        "u1,product_view,2024-01-01 10:01:00,electronics\n"
+        "u1,add_to_cart,2024-01-01 10:02:00,electronics\n"
+        "u2,search,2024-01-01 10:00:00,books\n"
+        "u2,checkout,2024-01-01 10:01:00,books\n"
+    )
+    _upload_and_map(client, csv_text)
+
+    # Get L1 for electronics
+    resp_l1 = client.get("/flow/l1?start_event=search&property_column=category&property_values=electronics")
+    assert resp_l1.status_code == 200
+    
+    # Expand search -> product_view
+    resp_l2 = client.get(
+        "/flow/l2?start_event=search&parent_path=search&parent_path=product_view"
+        "&property_column=category&property_values=electronics"
+    )
+    assert resp_l2.status_code == 200
+    rows = resp_l2.json()["rows"]
+    # Should show search -> product_view -> add_to_cart
+    assert rows[0]["path"] == ["search", "product_view", "add_to_cart"]
+
+def test_flow_property_filter_validation(client):
+    csv_text = (
+        "user_id,event_name,event_time,category\n"
+        "u1,search,2024-01-01 10:00:00,electronics\n"
+    )
+    _upload_and_map(client, csv_text)
+
+    # 1. Missing property_values
+    resp = client.get("/flow/l1?start_event=search&property_column=category")
+    assert resp.status_code == 400
+    assert "property_values required" in resp.json()["detail"]
+
+    # 2. Invalid column
+    resp = client.get("/flow/l1?start_event=search&property_column=nonexistent&property_values=val")
+    assert resp.status_code == 400
+    assert "Unknown property column" in resp.json()["detail"]
+
 def test_property_filter_reduces_population(client: TestClient):
     csv_text = (
         "user_id,event_name,event_time,tier\n"

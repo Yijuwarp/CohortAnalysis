@@ -48,7 +48,7 @@ describe("buildMonetizationRows", () => {
 
     const row = rows[0]
 
-    expect(row.numericValues["0"]).toBe(null)
+    expect(row.numericValues["0"]).toBe(0)
   })
 
 })

@@ -420,9 +420,9 @@ def _get_parent_for_split(connection: duckdb.DuckDBPyConnection, cohort_id: int)
     if not parent_row:
         raise HTTPException(status_code=404, detail="Cohort not found")
     if parent_row["split_parent_cohort_id"] is not None:
-        raise HTTPException(status_code=400, detail="Cannot split a sub-cohort")
+        raise HTTPException(status_code=400, detail="Cannot split sub-cohort")
     if bool(parent_row["hidden"]):
-        raise HTTPException(status_code=400, detail="Cannot split a hidden cohort")
+        raise HTTPException(status_code=400, detail="Cannot split hidden cohort")
     return parent_row
 
 
@@ -482,10 +482,10 @@ def _do_random_split(
     opts = request.random or __import__('app.models.cohort_models', fromlist=['RandomSplitOptions']).RandomSplitOptions()
     n = opts.num_groups
 
-    if parent_size < n:
+    if parent_size < 8:
         raise HTTPException(
             status_code=400,
-            detail=f"Parent cohort only has {parent_size} members; cannot split into {n} groups",
+            detail="Minimum 8 users required",
         )
 
     new_ids: list[int] = []

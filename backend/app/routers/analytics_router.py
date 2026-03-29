@@ -13,7 +13,7 @@ from app.domains.analytics.usage_service import (
     get_usage_frequency,
 )
 from app.domains.analytics.monetization_service import get_monetization
-from app.domains.analytics.flow_service import get_flow_graph, get_l1_flows, get_l2_flows
+from app.domains.analytics.flow_service import get_l1_flows, get_l2_flows
 from app.domains.analytics.user_explorer_service import get_user_explorer, search_users
 from app.utils.parsing import parse_max_day
 
@@ -104,7 +104,7 @@ async def flow_l1_endpoint(
     try:
         return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
     except Exception as e:
-        logger.exception("flow_l1 failed")
+        logger.exception(f"flow_l1 failed for {start_event}")
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.get("/flow/l2")
@@ -146,34 +146,6 @@ async def flow_l2_endpoint(
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@router.get("/flow/graph")
-async def flow_graph_endpoint(
-    start_event: str = Query(...),
-    direction: str = Query("forward"),
-    depth: int = Query(3),
-    property_column: str | None = Query(None),
-    property_operator: str = Query("="),
-    property_values: list[str] | None = Query(None),
-    include_top_k: bool = Query(True),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
-):
-    graph_depth = max(1, min(depth, 10))
-    if not property_column or not property_values:
-        property_values = None
-    try:
-        return get_flow_graph(
-            conn,
-            start_event,
-            direction,
-            graph_depth,
-            property_column,
-            property_operator,
-            property_values,
-            include_top_k,
-        )
-    except Exception as e:
-        logger.exception("flow_graph failed")
-        raise HTTPException(status_code=400, detail=str(e))
 
 
 @router.get("/users/search")
