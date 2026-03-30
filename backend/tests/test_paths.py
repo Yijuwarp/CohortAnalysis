@@ -169,9 +169,9 @@ def test_create_dropoff_cohort_rigorous(client: TestClient, db_connection: duckd
     member_map = {row[0]: row[1] for row in members}
     assert set(member_map.keys()) == {"u3", "u5"}
     
-    # 2. Verify join_time is from Step N (A)
-    assert member_map["u3"].strftime("%H:%M:%S") == "10:05:00"
-    assert member_map["u5"].strftime("%H:%M:%S") == "10:00:00"
+    # 2. Verify join_time is from original cohort (00:00:00)
+    assert member_map["u3"].strftime("%H:%M:%S") == "00:00:00"
+    assert member_map["u5"].strftime("%H:%M:%S") == "00:00:00"
 
 def test_create_reached_cohort_basic(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
     setup_test_data(db_connection, start_id=700)
@@ -190,7 +190,8 @@ def test_create_reached_cohort_basic(client: TestClient, db_connection: duckdb.D
     new_id = data["cohort_id"]
     
     # Verify name
-    assert "Reached Step 2" in data["name"]
+    assert " - Reached Step 2" in data["name"]
+    assert "All Users" in data["name"]
     
     # Verify membership
     members = db_connection.execute("SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?", [new_id]).fetchall()
@@ -198,9 +199,9 @@ def test_create_reached_cohort_basic(client: TestClient, db_connection: duckdb.D
     member_ids = {m[0] for m in members}
     assert member_ids == {"u1", "u2", "u4"}
     
-    # Verify join_time is from Step 2 (B) which is at 10:05 for all
+    # Verify join_time is from original cohort (00:00:00)
     for m in members:
-        assert m[1].strftime("%H:%M:%S") == "10:05:00"
+        assert m[1].strftime("%H:%M:%S") == "00:00:00"
 
 def test_cohort_custom_naming(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
     setup_test_data(db_connection, start_id=800)
@@ -269,7 +270,7 @@ def test_create_dropoff_step1(client: TestClient, db_connection: duckdb.DuckDBPy
     new_id = data["cohort_id"]
     
     # Verify name
-    assert "Did not start" in data["name"]
+    assert " - Didn't perform Step 1" in data["name"]
     
     # Verify membership
     members = db_connection.execute("SELECT user_id, join_time FROM cohort_membership WHERE cohort_id = ?", [new_id]).fetchall()
@@ -280,3 +281,38 @@ def test_create_dropoff_step1(client: TestClient, db_connection: duckdb.DuckDBPy
     # Sanity check sum
     step1_users = db_connection.execute("SELECT COUNT(DISTINCT user_id) FROM cohort_activity_snapshot WHERE cohort_id=1000 AND event_name='A'").fetchone()[0]
     assert step1_users + 1 == 6 # Total source cohort length is 6
+
+def test_paths_cohort_visibility_regression(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    """
+    Regression test for the issue where 'reached' cohorts showed drop-offs 
+    because join_time was pinned to the achievement time.
+    """
+    setup_test_data(db_connection, start_id=2000)
+    
+    # 1. Run Baseline analysis A -> B -> C
+    # u1, u2 reach C.
+    
+    # 2. Create 'Reached Step 3' cohort
+    response = client.post("/paths/create-reached-cohort", json={
+        "steps": ["A", "B", "C"],
+        "step_index": 3,
+        "cohort_id": 2000
+    })
+    assert response.status_code == 200
+    new_cohort_id = response.json()["cohort_id"]
+    
+    # 3. Run the SAME analysis on the NEW cohort
+    # Because join_time is now the original 00:00:00, it should see Step 1 and Step 2.
+    response = client.post("/paths/run", json={"steps": ["A", "B", "C"]})
+    assert response.status_code == 200
+    data = response.json()
+    
+    res = [r for r in data["results"] if r["cohort_id"] == new_cohort_id][0]
+    assert res["cohort_size"] == 2 # u1, u2
+    
+    # EVERYONE who is in this cohort MUST reach Step 3 in this analysis
+    assert res["steps"][0]["users"] == 2 # Step A
+    assert res["steps"][1]["users"] == 2 # Step B
+    assert res["steps"][2]["users"] == 2 # Step C
+    assert res["steps"][2]["conversion_pct"] == 100.0
+

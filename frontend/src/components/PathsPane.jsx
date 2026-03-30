@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { 
   runPaths, 
   createPathsDropOffCohort, 
@@ -47,8 +48,75 @@ function PathsSelector({ paths, value, onChange }) {
 }
 
 // ---------------------------------------------------------------------------
-// Main PathsPane
+// Visual Funnel Chart (Section 1)
 // ---------------------------------------------------------------------------
+
+function PathsFunnelChart({ result }) {
+    if (!result || !result.results || result.results.length === 0) return null
+
+    const stepNames = result.steps || []
+    const cohorts = result.results
+
+    return (
+        <section className="card ui-card paths-funnel-chart-section">
+            <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px' }}>
+                {result.path_name || 'Conversion Funnel'}
+            </h3>
+            <div className="funnel-chart" data-testid="paths-funnel-chart">
+                {stepNames.map((stepName, stepIdx) => (
+                    <div key={stepIdx} className="funnel-step-row">
+                        <div className="funnel-step-name">
+                            {stepIdx > 0 && <span className="funnel-step-arrow">↓</span>}
+                            <span className="funnel-step-pill">{stepIdx + 1}</span>
+                            <span className="funnel-step-event-label">{stepName}</span>
+                        </div>
+
+                        <div className="funnel-bars">
+                            {cohorts.map((cohort, cohortIdx) => {
+                                const stepData = cohort.steps[stepIdx] || { users: 0, conversion_pct: 0, drop_off_pct: 0 }
+                                const barWidth = Number(stepData.conversion_pct) || 0
+                                const minWidthPx = barWidth > 0 ? '2px' : '0px'
+                                return (
+                                    <div
+                                        key={cohort.cohort_id}
+                                        className="funnel-bar-row"
+                                    >
+                                        <div
+                                            className="funnel-cohort-label"
+                                            style={{ color: getCohortColor(cohort.cohort_id, cohortIdx) }}
+                                            title={cohort.cohort_name}
+                                        >
+                                            {cohort.cohort_name}
+                                        </div>
+                                        <div className="funnel-bar-track">
+                                            <div
+                                                className="funnel-bar-fill"
+                                                style={{
+                                                    width: `${Number(Math.min(100, barWidth).toFixed(1))}%`,
+                                                    background: getCohortColor(cohort.cohort_id, cohortIdx),
+                                                    minWidth: minWidthPx,
+                                                }}
+                                            />
+                                            <div className="funnel-bar-meta">
+                                                <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
+                                                <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
+                                                {stepIdx > 0 && (Number(stepData.drop_off_pct) || 0) > 0 && (
+                                                    <span className="funnel-bar-dropoff" title="Drop-off from previous step">
+                                                        ↓{(Number(stepData.drop_off_pct) || 0).toFixed(1)}%
+                                                    </span>
+                                                )}
+                                            </div>
+                                        </div>
+                                    </div>
+                                )
+                            })}
+                        </div>
+                    </div>
+                ))}
+            </div>
+        </section>
+    )
+}
 
 export default function PathsPane({ refreshToken, events, state, setState, onRefreshCohorts }) {
   const [paths, setPaths] = useState([])
@@ -68,6 +136,24 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   const [customName, setCustomName] = useState('')
 
   const runIdRef = useRef(0)
+  const [activeDropdown, setActiveDropdown] = useState(null) // { sIdx, cohort, rect }
+  const closeTimerRef = useRef(null)
+
+  const handleDropdownEnter = (e, sIdx, cohort) => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+    const rect = e.currentTarget.getBoundingClientRect()
+    setActiveDropdown({ sIdx, cohort, rect })
+  }
+
+  const handleDropdownLeave = () => {
+    closeTimerRef.current = setTimeout(() => {
+      setActiveDropdown(null)
+    }, 150)
+  }
+
+  const handleMenuEnter = () => {
+    if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
+  }
 
   // Sync state to parent
   useEffect(() => {
@@ -86,6 +172,12 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   useEffect(() => {
     loadPaths()
   }, [loadPaths, refreshToken])
+
+  useEffect(() => {
+    if (refreshToken > 0 && selectedPathId) {
+        handleRun()
+    }
+  }, [refreshToken])
 
   // Handle path selection
   const handleSelectPath = (id, overridePath = null) => {
@@ -160,15 +252,15 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   // Cohort creation helpers
   const handleOpenNamingModal = (cohortId, stepIdx, type, eventName, cohortName) => {
     if (!editingPath) return
-    const sequence = editingPath.steps.slice(0, stepIdx).map(s => s.event_name).join(' -> ')
     let defaultName = ''
     if (type === 'reached') {
-        defaultName = `Reached Step ${stepIdx} (${eventName}) (${cohortName}): ${sequence}`
+        defaultName = `${cohortName} - Reached Step ${stepIdx} (${eventName})`
     } else {
         if (stepIdx === 1) {
-            defaultName = `Did not start (${eventName}) (${cohortName})`
+            defaultName = `${cohortName} - Didn't perform Step 1 (${eventName})`
         } else {
-            defaultName = `Drop-off at Step ${stepIdx} (${eventName}) (${cohortName}): ${sequence}`
+            const prevEventName = editingPath.steps[stepIdx - 2].event_name
+            defaultName = `${cohortName} - Drop off after Step ${stepIdx - 1} (${prevEventName})`
         }
     }
     setShowNamingModal({ cohortId, stepIdx, type, defaultName })
@@ -259,13 +351,20 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
 
       {result && (
         <div className="paths-results animate-fade-in">
-          <div className="paths-cohort-results">
+          {/* Section 1: Combined Visual Funnel Chart */}
+          <PathsFunnelChart result={result} />
+
+          {/* Section 2: Detailed Cohort Tables (Grouped in one card) */}
+          <section className="card ui-card paths-cohort-tables-card">
+            <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px' }}>
+                Cohort Tables
+            </h3>
             {result.results.map((cohort, cohortIdx) => (
-              <section key={cohort.cohort_id} className="card ui-card paths-cohort-card">
-                <div className="paths-cohort-header">
-                  <h4 style={{ color: getCohortColor(cohort.cohort_id, cohortIdx) }}>
-                    {cohort.cohort_name} ({formatInteger(cohort.cohort_size)} users)
-                  </h4>
+              <div key={cohort.cohort_id} className="paths-cohort-table-wrapper" style={{ marginBottom: cohortIdx < result.results.length - 1 ? '40px' : 0 }}>
+                <div className="paths-cohort-header" style={{ borderBottom: '1px solid #f1f5f9', paddingBottom: '12px', marginBottom: '16px' }}>
+                  <h3 style={{ margin: 0, color: getCohortColor(cohort.cohort_id, cohortIdx) }}>
+                    {cohort.cohort_name} <span style={{ fontWeight: 400, color: '#64748b', marginLeft: '6px', fontSize: '0.9em' }}>({formatInteger(cohort.cohort_size)} users)</span>
+                  </h3>
                 </div>
 
                 <div className="table-responsive">
@@ -306,24 +405,11 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
                               <button 
                                 className="button button-small button-secondary dropdown-trigger"
                                 disabled={!!creatingCohort}
+                                onMouseEnter={(e) => handleDropdownEnter(e, sIdx, cohort)}
+                                onMouseLeave={handleDropdownLeave}
                               >
                                 {creatingCohort?.startsWith(`${cohort.cohort_id}-${s.step}`) ? 'Creating...' : 'Create Cohort ▼'}
                               </button>
-                              <div className="dropdown-menu">
-                                <button onClick={() => handleOpenNamingModal(cohort.cohort_id, sIdx + 1, 'reached', s.event, cohort.cohort_name)}>
-                                  Reached Step {sIdx + 1}
-                                </button>
-                                {sIdx === 0 && s.conversion_pct < 100 && (
-                                  <button onClick={() => handleOpenNamingModal(cohort.cohort_id, sIdx + 1, 'dropoff', s.event, cohort.cohort_name)}>
-                                    Did not start ({s.event})
-                                  </button>
-                                )}
-                                {sIdx > 0 && s.drop_off_pct > 0 && (
-                                  <button onClick={() => handleOpenNamingModal(cohort.cohort_id, sIdx + 1, 'dropoff', s.event, cohort.cohort_name)}>
-                                    Drop-off after {cohort.steps[sIdx-1].event}
-                                  </button>
-                                )}
-                              </div>
                             </div>
                           </td>
                         </tr>
@@ -331,12 +417,12 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
                     </tbody>
                   </table>
                 </div>
-              </section>
+              </div>
             ))}
-          </div>
+          </section>
 
           {(result.global_insights?.length > 0 || result.results.some(c => c.insights?.length > 0)) && (
-            <section className="card ui-card paths-all-insights" style={{ marginTop: '24px' }}>
+            <section className="card ui-card paths-all-insights">
               <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>Insights</h3>
               
               {result.global_insights?.length > 0 && (
@@ -407,8 +493,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
       )}
 
       <style>{`
-        .paths-pane { display: flex; flex-direction: column; gap: 24px; padding-top: 16px; padding-bottom: 40px; }
-        .paths-results { display: flex; flex-direction: column; gap: 24px; }
+        .paths-pane { display: flex; flex-direction: column; gap: 20px; padding-top: 16px; padding-bottom: 40px; }
         .paths-insight-item { padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; border-left: 4px solid transparent; }
         .paths-insight-item.global { background: #f0f7ff; border-left-color: #007bff; color: #004085; }
         .paths-insight-item.cohort { background: #fff3cd; border-left-color: #ffc107; color: #856404; margin-top: 8px; }
@@ -422,11 +507,18 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         .funnel-topbar { margin-top: 4px; display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
         .paths-action-dropdown { position: relative; display: inline-block; }
         .dropdown-menu { 
-            display: none; position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ddd; 
+            position: absolute; right: 0; top: 100%; background: white; border: 1px solid #ddd; 
             border-radius: 4px; box-shadow: 0 4px 16px rgba(0,0,0,0.15); z-index: 9999; min-width: 160px;
             padding: 4px 0; margin-top: 6px;
         }
-        .paths-action-dropdown:hover .dropdown-menu { display: block; }
+        .dropdown-menu::before {
+            content: '';
+            position: absolute;
+            top: -10px;
+            left: 0;
+            right: 0;
+            height: 10px;
+        }
         .dropdown-menu button { display: block; width: 100%; padding: 8px 12px; border: none; background: none; text-align: left; font-size: 13px; cursor: pointer; color: #333; }
         .dropdown-menu button:hover { background: #f5f5f5; color: var(--primary-color); }
         .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.4); display: flex; align-items: center; justify-content: center; z-index: 1000; }
@@ -436,7 +528,56 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         .animate-fade-in { animation: fadeIn 0.4s ease-out; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .funnel-option-invalid { color: #999; font-style: italic; }
+
+        /* Funnel Chart Styles */
+        .funnel-step-row { margin-bottom: 24px; }
+        .funnel-step-row:last-child { margin-bottom: 0; }
+        .funnel-step-name { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+        .funnel-step-pill { display: flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: #ecfdf3; color: #2e7d32; font-size: 11px; font-weight: 700; }
+        .funnel-step-event-label { font-size: 14px; font-weight: 600; color: #111; }
+        .funnel-step-arrow { color: #999; opacity: 0.5; }
+        .funnel-bars { display: flex; flex-direction: column; gap: 8px; padding-left: 30px; }
+        .funnel-bar-row { display: grid; grid-template-columns: 180px 1fr; align-items: center; gap: 12px; min-height: 28px; }
+        .funnel-cohort-label { font-size: 12px; font-weight: 600; text-overflow: ellipsis; overflow: hidden; white-space: nowrap; }
+        .funnel-bar-track { width: 100%; height: 20px; border-radius: 4px; background: #f3f4f6; overflow: hidden; position: relative; }
+        .funnel-bar-fill { height: 100%; border-radius: 4px; transition: width 0.4s cubic-bezier(.4,0,.2,1); }
+        .funnel-bar-meta { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); display: flex; gap: 6px; font-size: 11px; font-variant-numeric: tabular-nums; align-items: center; pointer-events: none; }
+        .funnel-bar-users { font-weight: 700; color: #111; }
+        .funnel-bar-pct { color: #666; }
+        .funnel-bar-dropoff { color: #dc2626; font-weight: 700; }
+        .paths-funnel-chart-section { padding-bottom: 0px !important; }
+        .paths-results { display: flex; flex-direction: column; gap: 12px; }
       `}</style>
+      {activeDropdown && createPortal(
+        <div 
+          className="dropdown-menu animate-fade-in"
+          onMouseEnter={handleMenuEnter}
+          onMouseLeave={handleDropdownLeave}
+          style={{
+            display: 'block',
+            position: 'fixed',
+            top: activeDropdown.rect.bottom + 6,
+            left: activeDropdown.rect.right - 160,
+            zIndex: 10001,
+            margin: 0
+          }}
+        >
+          <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'reached', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+            Reached Step {activeDropdown.sIdx + 1}
+          </button>
+          {activeDropdown.sIdx === 0 && activeDropdown.cohort.steps[activeDropdown.sIdx].conversion_pct < 100 && (
+            <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+              Did not start ({activeDropdown.cohort.steps[activeDropdown.sIdx].event})
+            </button>
+          )}
+          {activeDropdown.sIdx > 0 && activeDropdown.cohort.steps[activeDropdown.sIdx].drop_off_pct > 0 && (
+            <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+              Drop-off after {activeDropdown.cohort.steps[activeDropdown.sIdx-1].event}
+            </button>
+          )}
+        </div>,
+        document.body
+      )}
     </div>
   )
 }
