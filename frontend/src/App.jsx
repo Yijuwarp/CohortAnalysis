@@ -70,6 +70,7 @@ export default function App() {
   const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
+  const [cohortsRefreshToken, setCohortsRefreshToken] = useState(0)
 
   const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'funnels', 'flow', 'user-explorer'], [])
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
@@ -87,6 +88,11 @@ export default function App() {
       })
     }
   }, [TAB_KEYS])
+
+  const triggerCohortRefresh = useCallback(() => {
+    setCohortsRefreshToken(prev => prev + 1)
+    markTabsStale()
+  }, [markTabsStale])
 
   const refreshTab = useCallback(async (tabKey) => {
     setTabReloading(prev => ({ ...prev, [tabKey]: true }))
@@ -285,7 +291,7 @@ export default function App() {
     if (appState === 'workspace') {
       load()
     }
-  }, [appState]) // global load on workspace entry
+  }, [appState, cohortsRefreshToken]) // global load on workspace entry or refresh token change
 
   const openPaneSection = (key) => {
     setIsLeftPaneCollapsed(false)
@@ -436,7 +442,10 @@ export default function App() {
                   {leftPaneTab === 'cohorts' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Create and manage cohorts</p>
-                      <CohortPane onCohortsChanged={() => markTabsStale()} />
+                      <CohortPane 
+                        refreshToken={cohortsRefreshToken}
+                        onCohortsChanged={triggerCohortRefresh} 
+                      />
                     </section>
                   )}
                 </>
@@ -454,7 +463,7 @@ export default function App() {
                       setActiveTab(key)
                       setStaleTabs(prev => ({ ...prev, [key]: false }))
                     }}>
-                      {labels[key]} {staleTabs[key] && <span style={{ marginLeft: 6, color: '#d97706', fontWeight: 'bold' }}>⚠</span>}
+                      {labels[key]}
                     </button>
                   )
                 })}
@@ -463,7 +472,6 @@ export default function App() {
               {staleTabs[activeTab] && (
                 <div className="stale-banner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#b45309', fontWeight: 'bold' }}>
-                    <span style={{ fontSize: '18px' }}>⚠</span>
                     <span>Data is stale</span>
                   </div>
                   <button 
@@ -528,7 +536,7 @@ export default function App() {
                     events={events}
                     state={analyticsState.paths}
                     setState={(s) => updateAnalyticsState('paths', s)}
-                    onRefreshCohorts={() => markTabsStale()}
+                    onRefreshCohorts={triggerCohortRefresh}
                   />
                 )}
                 {activeTab === 'flow' && (

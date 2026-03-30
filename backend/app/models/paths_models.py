@@ -39,13 +39,13 @@ class RunPathsRequest(BaseModel):
 class CreateDropOffCohortRequest(BaseModel):
     cohort_id: int
     step_index: int
-    steps: List[str]
+    steps: Union[List[str], List[PathStep]]
     cohort_name: Optional[str] = None
 
 class CreateReachedCohortRequest(BaseModel):
     cohort_id: int
     step_index: int
-    steps: List[str]
+    steps: Union[List[str], List[PathStep]]
     cohort_name: Optional[str] = None
 
 class PathsStepResult(BaseModel):

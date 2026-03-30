@@ -625,8 +625,9 @@ def create_paths_dropoff_cohort(
         """
     else:
         find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index) + f"""
-            SELECT DISTINCT s_prev.user_id, s_prev.t{step_index-1} as join_time 
+            SELECT DISTINCT s_prev.user_id, m.join_time
             FROM step_{step_index-1} s_prev
+            JOIN cohort_membership m ON s_prev.user_id = m.user_id AND s_prev.cohort_id = m.cohort_id
             ANTI JOIN step_{step_index} s_curr ON s_prev.user_id = s_curr.user_id AND s_prev.cohort_id = s_curr.cohort_id
             WHERE s_prev.cohort_id = {cohort_id}
         """
@@ -643,11 +644,10 @@ def create_paths_dropoff_cohort(
         c_name_row = conn.execute("SELECT name FROM cohorts WHERE cohort_id = ?", [cohort_id]).fetchone()
         parent_name = c_name_row[0] if c_name_row else "Unknown"
         event_names = [s.event_name for s in steps]
-        seq = " -> ".join(event_names[:step_index])
         if step_index == 1:
-            new_name = f"Did not start ({event_names[0]}) ({parent_name})"
+            new_name = f"{parent_name} - Didn't perform Step 1 ({event_names[0]})"
         else:
-            new_name = f"Drop-off at Step {step_index} ({event_names[step_index-1]}) ({parent_name}): {seq}"
+            new_name = f"{parent_name} - Drop off after Step {step_index-1} ({event_names[step_index-2]})"
 
     return _materialize_paths_cohort(conn, new_name, drop_off_users)
 
@@ -671,9 +671,10 @@ def create_paths_reached_cohort(
         raise HTTPException(status_code=400, detail="Invalid step index")
 
     find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index) + f"""
-        SELECT DISTINCT user_id, t{step_index} AS join_time
-        FROM step_{step_index}
-        WHERE cohort_id = {cohort_id}
+        SELECT DISTINCT s.user_id, m.join_time
+        FROM step_{step_index} s
+        JOIN cohort_membership m ON s.user_id = m.user_id AND s.cohort_id = m.cohort_id
+        WHERE s.cohort_id = {cohort_id}
     """
     
     rows = conn.execute(find_users_sql).fetchall()
@@ -688,8 +689,7 @@ def create_paths_reached_cohort(
         c_name_row = conn.execute("SELECT name FROM cohorts WHERE cohort_id = ?", [cohort_id]).fetchone()
         parent_name = c_name_row[0] if c_name_row else "Unknown"
         event_names = [s.event_name for s in steps]
-        seq = " -> ".join(event_names[:step_index])
-        new_name = f"Reached Step {step_index} ({event_names[step_index-1]}) ({parent_name}): {seq}"
+        new_name = f"{parent_name} - Reached Step {step_index} ({event_names[step_index-1]})"
 
     return _materialize_paths_cohort(conn, new_name, reached_users)
 
