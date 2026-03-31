@@ -97,7 +97,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
     }
 
     if (cohort.split_type === "property") {
-      if (cohort.split_value === "__OTHER__") return "Other"
+      if (cohort.split_value === "__OTHER__") return `${cohort.split_property} = Other`
       return `${cohort.split_property} = ${formatSplitValue(cohort.split_value)}`
     }
 
@@ -206,8 +206,10 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
       const valB = getSortValue(b, sortConfig.key)
 
       if (sortConfig.key === 'split') {
-        if (valA === "Other") return 1
-        if (valB === "Other") return -1
+        const isOtherA = valA.endsWith(' = Other') || valA === 'Other'
+        const isOtherB = valB.endsWith(' = Other') || valB === 'Other'
+        if (isOtherA && !isOtherB) return 1
+        if (isOtherB && !isOtherA) return -1
         if (valA === "NA" && valB !== "NA") return 1
         if (valB === "NA" && valA !== "NA") return -1
       }

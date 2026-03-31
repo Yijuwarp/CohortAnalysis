@@ -7,7 +7,6 @@ import CohortPane from './components/CohortPane'
 import RetentionTable from './components/RetentionTable'
 import UsageTable from './components/UsageTable'
 import MonetizationTable from './components/MonetizationTable'
-import FunnelPane from './components/FunnelPane'
 import SearchableSelect from './components/SearchableSelect'
 import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
@@ -72,7 +71,7 @@ export default function App() {
   const [cohorts, setCohorts] = useState([])
   const [cohortsRefreshToken, setCohortsRefreshToken] = useState(0)
 
-  const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'funnels', 'flow', 'user-explorer'], [])
+  const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer'], [])
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
   const [tabRefreshTokens, setTabRefreshTokens] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: 0 }), {}))
   const [tabReloading, setTabReloading] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
@@ -456,7 +455,7 @@ export default function App() {
               <div className="analytics-tabs ui-tabs">
                 {TAB_KEYS.map(key => {
                   const labels = {
-                    retention: 'Retention', usage: 'Usage', monetization: 'Monetization', funnels: 'Funnels', paths: 'Paths', flow: 'Flows', 'user-explorer': 'User Explorer'
+                    retention: 'Retention', usage: 'Usage', monetization: 'Monetization', paths: 'Paths', flow: 'Flows', 'user-explorer': 'User Explorer'
                   }
                   return (
                     <button key={key} className={activeTab === key ? 'active' : ''} onClick={() => {
@@ -522,14 +521,7 @@ export default function App() {
                     cohorts={cohorts}
                   />
                 )}
-                {activeTab === 'funnels' && (
-                  <FunnelPane
-                    refreshToken={tabRefreshTokens.funnels}
-                    events={events}
-                    state={analyticsState.funnels}
-                    setState={(s) => updateAnalyticsState('funnels', s)}
-                  />
-                )}
+
                 {activeTab === 'paths' && (
                   <PathsPane
                     refreshToken={tabRefreshTokens.paths}
