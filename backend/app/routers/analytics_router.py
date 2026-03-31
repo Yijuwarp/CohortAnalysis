@@ -152,9 +152,10 @@ async def flow_l2_endpoint(
 async def users_search_endpoint(
     query: str = Query(""),
     limit: int = Query(20),
+    cohort_id: int | None = Query(None),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return search_users(conn, query=query, limit=limit)
+    return search_users(conn, query=query, limit=limit, cohort_id=cohort_id)
 
 
 @router.get("/user-explorer")

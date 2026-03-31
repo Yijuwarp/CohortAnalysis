@@ -338,10 +338,12 @@ export async function getFlowL2(startEvent, parentPath, direction = 'forward', d
 }
 
 
-export async function searchUsers(query = '', limit = 20) {
-  return request(`/users/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`, {
-    method: 'GET',
-  })
+export async function searchUsers(query = '', limit = 20, cohortId = null) {
+  let path = `/users/search?query=${encodeURIComponent(query)}&limit=${encodeURIComponent(limit)}`
+  if (cohortId !== null && cohortId !== undefined && cohortId !== 'all') {
+    path += `&cohort_id=${encodeURIComponent(cohortId)}`
+  }
+  return request(path, { method: 'GET' })
 }
 
 export async function getUserExplorer(params) {

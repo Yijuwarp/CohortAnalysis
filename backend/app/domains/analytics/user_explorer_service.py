@@ -51,22 +51,36 @@ def _parse_jump_datetime(value: str | None) -> datetime | None:
         raise HTTPException(status_code=400, detail="Invalid jump_datetime format. Use ISO-8601 datetime or YYYY-MM-DD") from exc
 
 
-def search_users(connection: duckdb.DuckDBPyConnection, query: str = "", limit: int = 20) -> list[dict[str, str]]:
+def search_users(connection: duckdb.DuckDBPyConnection, query: str = "", limit: int = 20, cohort_id: int | None = None) -> list[dict[str, str]]:
     if not _scoped_exists(connection):
         return []
 
     safe_limit = max(1, min(int(limit), 100))
-    rows = connection.execute(
+    
+    if cohort_id is not None:
+        sql = """
+            SELECT DISTINCT es.user_id
+            FROM events_scoped es
+            JOIN cohort_membership cm ON es.user_id = cm.user_id
+            WHERE es.user_id IS NOT NULL
+              AND cm.cohort_id = ?
+              AND CAST(es.user_id AS VARCHAR) ILIKE ?
+            ORDER BY es.user_id
+            LIMIT ?
         """
-        SELECT DISTINCT user_id
-        FROM events_scoped
-        WHERE user_id IS NOT NULL
-          AND CAST(user_id AS VARCHAR) ILIKE ?
-        ORDER BY user_id
-        LIMIT ?
-        """,
-        [f"%{query}%", safe_limit],
-    ).fetchall()
+        params = [cohort_id, f"%{query}%", safe_limit]
+    else:
+        sql = """
+            SELECT DISTINCT user_id
+            FROM events_scoped
+            WHERE user_id IS NOT NULL
+              AND CAST(user_id AS VARCHAR) ILIKE ?
+            ORDER BY user_id
+            LIMIT ?
+        """
+        params = [f"%{query}%", safe_limit]
+
+    rows = connection.execute(sql, params).fetchall()
 
     return [{"user_id": str(user_id)} for (user_id,) in rows]
 

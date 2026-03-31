@@ -1,16 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { getUserExplorer, searchUsers } from '../api'
+import { getUserExplorer, searchUsers, listCohorts } from '../api'
 import SearchableSelect from './SearchableSelect'
 
 const PAGE_SIZE = 50
 
-function UserSummaryCard({ summary }) {
+function UserSummaryCard({ summary, userId }) {
   if (!summary) return null
 
   return (
     <div className="card ui-card user-explorer-summary">
       <h4>User Summary</h4>
       <div className="user-explorer-summary-grid">
+        <div className="user-summary-id-row"><strong>User ID</strong><span>{userId || '—'}</span></div>
         <div><strong>First event</strong><span>{summary.first_event_time || '—'}</span></div>
         <div><strong>Last event</strong><span>{summary.last_event_time || '—'}</span></div>
         <div><strong>Total events</strong><span>{summary.total_events ?? 0}</span></div>
@@ -149,7 +150,9 @@ function PaginationBar({ page, totalPages, onChangePage, disabled }) {
 
 export default function UserExplorer({ state, setState }) {
   const [selectedUser, setSelectedUser] = useState(state?.selectedUser || '')
+  const [selectedCohort, setSelectedCohort] = useState(state?.selectedCohort || 'all')
   const [userOptions, setUserOptions] = useState([])
+  const [cohortOptions, setCohortOptions] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [events, setEvents] = useState([])
   const [summary, setSummary] = useState(null)
@@ -165,14 +168,30 @@ export default function UserExplorer({ state, setState }) {
   const [noMoreNext, setNoMoreNext] = useState(false)
 
   useEffect(() => {
+    const loadCohorts = async () => {
+      try {
+        const payload = await listCohorts()
+        const options = (payload.cohorts || [])
+          .filter(c => c.name !== 'All Users')
+          .map(c => ({ label: c.name, value: c.cohort_id }))
+        setCohortOptions([{ label: 'All Users', value: 'all' }, ...options])
+      } catch (err) {
+        console.error('Failed to load cohorts', err)
+      }
+    }
+    loadCohorts()
+  }, [])
+
+  useEffect(() => {
     const nextState = {
       selectedUser,
+      selectedCohort,
       page,
       eventSearchTerm,
       jumpDatetime
     }
     setState(nextState)
-  }, [selectedUser, page, eventSearchTerm, jumpDatetime])
+  }, [selectedUser, selectedCohort, page, eventSearchTerm, jumpDatetime])
 
   useEffect(() => {
     setNoMorePrev(false)
@@ -182,7 +201,7 @@ export default function UserExplorer({ state, setState }) {
   useEffect(() => {
     const id = setTimeout(async () => {
       try {
-        const users = await searchUsers(searchTerm, 20)
+        const users = await searchUsers(searchTerm, 20, selectedCohort)
         setUserOptions((users || []).map((user) => ({ label: user.user_id, value: user.user_id })))
       } catch {
         setUserOptions([])
@@ -190,7 +209,7 @@ export default function UserExplorer({ state, setState }) {
     }, 300)
 
     return () => clearTimeout(id)
-  }, [searchTerm])
+  }, [searchTerm, selectedCohort])
 
   const eventOptions = useMemo(() => {
     const distinct = new Set(events.map((event) => event.event_name).filter(Boolean))
@@ -249,14 +268,30 @@ export default function UserExplorer({ state, setState }) {
       <div className="user-explorer-pane">
         <div className="card ui-card">
           <h4>User Explorer</h4>
-          <SearchableSelect
-            options={userOptions}
-            value={selectedUser}
-            onChange={setSelectedUser}
-            placeholder="Search user_id..."
-            onSearch={setSearchTerm}
-          />
-          <p>Select a user to explore</p>
+          <div className="user-explorer-selector-row">
+            <div className="selector-group">
+              <span className="selector-label">Cohort</span>
+              <SearchableSelect
+                options={cohortOptions}
+                value={selectedCohort}
+                onChange={(val) => {
+                  setSelectedCohort(val)
+                  setSelectedUser('')
+                }}
+              />
+            </div>
+            <div className="selector-group">
+              <span className="selector-label">User</span>
+              <SearchableSelect
+                options={userOptions}
+                value={selectedUser}
+                onChange={setSelectedUser}
+                placeholder="Search user_id..."
+                onSearch={setSearchTerm}
+              />
+            </div>
+          </div>
+          <p className="muted-text" style={{ marginTop: '12px' }}>Select a user to explore</p>
         </div>
       </div>
     )
@@ -266,26 +301,42 @@ export default function UserExplorer({ state, setState }) {
     <div className="user-explorer-pane">
       <div className="card ui-card">
         <h4>User Explorer</h4>
-        <SearchableSelect
-          options={userOptions}
-          value={selectedUser}
-          onChange={(value) => {
-            setSelectedUser(value)
-            setPage(1)
-            setCurrentEventTime(null)
-            setHighlightedEventTime(null)
-            setHighlightedEventName(null)
-            setEventSearchTerm('')
-            setJumpDatetime('')
-            setNoMorePrev(false)
-            setNoMoreNext(false)
-          }}
-          placeholder="Search user_id..."
-          onSearch={setSearchTerm}
-        />
+        <div className="user-explorer-selector-row">
+          <div className="selector-group">
+            <span className="selector-label">Cohort</span>
+            <SearchableSelect
+              options={cohortOptions}
+              value={selectedCohort}
+              onChange={(val) => {
+                setSelectedCohort(val)
+                setSelectedUser('')
+              }}
+            />
+          </div>
+          <div className="selector-group">
+            <span className="selector-label">User</span>
+            <SearchableSelect
+              options={userOptions}
+              value={selectedUser}
+              onChange={(value) => {
+                setSelectedUser(value)
+                setPage(1)
+                setCurrentEventTime(null)
+                setHighlightedEventTime(null)
+                setHighlightedEventName(null)
+                setEventSearchTerm('')
+                setJumpDatetime('')
+                setNoMorePrev(false)
+                setNoMoreNext(false)
+              }}
+              placeholder="Search user_id..."
+              onSearch={setSearchTerm}
+            />
+          </div>
+        </div>
       </div>
 
-      <UserSummaryCard summary={summary} />
+      <UserSummaryCard summary={summary} userId={selectedUser} />
 
       <EventControls
         eventOptions={eventOptions}
