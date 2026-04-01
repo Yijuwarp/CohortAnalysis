@@ -162,11 +162,10 @@ describe('CohortForm batch creation', () => {
     api.estimateCohort.mockResolvedValue({ estimated_users: 100 })
     api.createSavedCohort.mockResolvedValue({ id: 'saved-123', is_valid: true })
     api.createCohort.mockResolvedValue({ cohort_id: 1 })
-    vi.useFakeTimers()
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    vi.clearAllMocks()
   })
 
   it('toggles batch mode and updates layout', async () => {
@@ -243,6 +242,7 @@ describe('CohortForm batch creation', () => {
   })
 
   it('shows and hides toast notification', async () => {
+    vi.useFakeTimers()
     render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
     await waitFor(() => expect(screen.getByText('Save Cohort')).toBeInTheDocument())
     
@@ -254,6 +254,7 @@ describe('CohortForm batch creation', () => {
     // Advance time
     vi.advanceTimersByTime(2000)
     expect(screen.queryByText(/Cohort "Toast Test" created/)).not.toBeInTheDocument()
+    vi.useRealTimers()
   })
 
   it('handles empty name correctly (no increment)', async () => {

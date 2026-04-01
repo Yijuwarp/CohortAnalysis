@@ -543,6 +543,8 @@ export default function RetentionTable({
         retentionType={retentionType}
         defaultMetric="retention_rate"
         retentionEvent={retentionEvent}
+        appliedFilters={appliedFilters}
+        onAddToExport={onAddToExport}
       />
     </section>
   )

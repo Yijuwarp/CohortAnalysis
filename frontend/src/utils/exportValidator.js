@@ -7,7 +7,7 @@ export function validateExportSnapshot(snapshot) {
 
   if (!id) throw new Error('Missing snapshot id')
   if (version !== 2) throw new Error('Invalid schema version, expected 2')
-  if (!['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer'].includes(type)) {
+  if (!['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer', 'compare_results'].includes(type)) {
     throw new Error(`Invalid type: ${type}`)
   }
   if (typeof title !== 'string' || !title) throw new Error('Missing or invalid title')

@@ -84,6 +84,8 @@ export default function ComparePane({
   granularity = 'day',
   retentionType = 'classic',
   propertyFilter = null,
+  appliedFilters = [],
+  onAddToExport = null,
 }) {
   const paneRef = useRef(null)
   const [cohorts, setCohorts] = useState([])
@@ -202,6 +204,78 @@ export default function ComparePane({
     setCohortA(b)
     setCohortB(a)
     setResult(null)
+  }
+
+  const handleAddToExport = () => {
+    if (!result || !onAddToExport) return
+
+    const variantCohort = cohorts.find(c => String(c.cohort_id) === String(cohortA))
+    const baselineCohort = cohorts.find(c => String(c.cohort_id) === String(cohortB))
+
+    const testDetailsText = result.tests.map(t => `- ${t.name.replace(/_/g, ' ')}: p = ${formatPValue(t.p_value)}`).join('\n')
+    const sigText = result.p_value === null || result.p_value === undefined ? 'Not enough variation to compare cohorts' : (result.p_value < 0.05 ? 'Significant' : 'Not significant')
+
+    const impactValue = result.difference
+    const formattedLift = result.relative_lift !== null && result.relative_lift !== undefined 
+      ? `${result.relative_lift >= 0 ? '+' : ''}${(result.relative_lift * 100).toFixed(2)}%` 
+      : '—'
+
+    const resultSummary = `Impact: ${formattedLift}\nSignificance: ${sigText}\n\nValues:\n- Baseline (${baselineCohort?.cohort_name || cohortB}): ${formatValue(result.cohort_b_value, selectedMetric)}\n- Variant (${variantCohort?.cohort_name || cohortA}): ${formatValue(result.cohort_a_value, selectedMetric)}\n\nStatistics:\n- p-value: ${formatPValue(result.p_value)}\n\nTest Details:\n${testDetailsText}`
+
+    const settings = {
+        'Tab': tab.charAt(0).toUpperCase() + tab.slice(1),
+        'Baseline': baselineCohort?.cohort_name || cohortB,
+        'Variant': variantCohort?.cohort_name || cohortA,
+        [labelPrefix]: selectedDay
+    }
+
+    if (tab === 'retention') {
+        settings['Retention Event'] = retentionEvent
+    } else {
+        settings['Metric'] = metricDef?.label || selectedMetric
+        if (tab === 'usage') {
+            settings['Event'] = currentEvent
+            if (propertyFilter) {
+                settings['Property'] = `${propertyFilter.property} ${propertyFilter.operator} ${propertyFilter.value}`
+            }
+        }
+    }
+
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'compare_results',
+      title: `${tab.charAt(0).toUpperCase() + tab.slice(1)} Comparison`,
+      summary: `${tab.charAt(0).toUpperCase() + tab.slice(1)} Comparison — ${baselineCohort?.cohort_name || 'Baseline'} vs ${variantCohort?.cohort_name || 'Variant'} (${labelPrefix} ${selectedDay})`,
+      tables: [{
+        title: 'Comparison Results',
+        columns: [
+          { key: 'metric', label: 'Metric', type: 'string' },
+          { key: 'baseline', label: 'Baseline', type: 'string' },
+          { key: 'variant', label: 'Variant', type: 'string' },
+          { key: 'impact', label: 'Impact', type: 'string' },
+          { key: 'significance', label: 'Significance', type: 'string' },
+          { key: 'test', label: 'Test', type: 'string' },
+          { key: 'p_value', label: 'P-value', type: 'string' }
+        ],
+        data: [{
+          metric: result.metric_label || `${labelPrefix} ${selectedDay}`,
+          baseline: formatValue(result.cohort_b_value, selectedMetric),
+          variant: formatValue(result.cohort_a_value, selectedMetric),
+          impact: formattedLift,
+          significance: sigText,
+          test: tab === 'retention' ? 'Two-Proportion Z-Test' : 'Mann-Whitney / Welch t-test',
+          p_value: formatPValue(result.p_value)
+        }]
+      }],
+      meta: {
+        filters: appliedFilters,
+        cohorts: cohorts.filter(c => [String(cohortA), String(cohortB)].includes(String(c.cohort_id))),
+        settings,
+        result: resultSummary
+      }
+    }
+    onAddToExport(payload)
   }
 
   const visibleCohorts = cohorts.filter(
@@ -375,7 +449,19 @@ export default function ComparePane({
             <div className="compare-results" data-testid="compare-results">
 
               <div className="section">
-                <div className="section-header">RESULT</div>
+                <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>RESULT</span>
+                  {onAddToExport && (
+                    <button
+                      type="button"
+                      className="button button-secondary button-small"
+                      onClick={handleAddToExport}
+                      title="Add this comparison result to the export buffer"
+                    >
+                      📸 Add to Export
+                    </button>
+                  )}
+                </div>
                 <div className="section-content">
                   <div className="metric-label">{result.metric_label || `${labelPrefix} ${selectedDay} Comparison`}</div>
                   <div className="impact">
@@ -414,7 +500,15 @@ export default function ComparePane({
               <div className="section">
                 <div className="section-header">STATISTICS</div>
                 <div className="section-content">
-                  <div>Statistical Test (Mann-Whitney)</div>
+                  <div>
+                    Statistical Test ({
+                      tab === 'retention' 
+                        ? 'Two-Proportion Z-Test' 
+                        : (tab === 'monetization' || tab === 'usage') 
+                            ? 'Mann-Whitney / Welch t-test' 
+                            : 'Statistical Test'
+                    })
+                  </div>
                   <div data-testid="compare-p-value">p = {formatPValue(result.p_value)}</div>
 
                   <div 

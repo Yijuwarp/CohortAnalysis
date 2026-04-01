@@ -18,11 +18,11 @@ class PathStep(BaseModel):
 
 class CreatePathRequest(BaseModel):
     name: str
-    steps: List[PathStep] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+    steps: List[PathStep] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
 
 class UpdatePathRequest(BaseModel):
     name: str
-    steps: List[PathStep] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+    steps: List[PathStep] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
 
 class PathDetail(BaseModel):
     id: int
@@ -34,7 +34,7 @@ class PathDetail(BaseModel):
 
 class RunPathsRequest(BaseModel):
     # Support both raw string steps (backward compat) and complex PathStep objects
-    steps: Union[List[str], List[PathStep]] = Field(..., min_items=MIN_PATHS_STEPS, max_items=MAX_PATHS_STEPS)
+    steps: Union[List[str], List[PathStep]] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
 
 class CreateDropOffCohortRequest(BaseModel):
     cohort_id: int

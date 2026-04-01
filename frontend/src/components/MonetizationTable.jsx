@@ -661,6 +661,8 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
           maxDay={safeMaxDay}
           retentionEvent={retentionEvent}
           defaultMetric={metricType === 'cumulative_revenue' || metricType === 'total_revenue' ? 'revenue_per_acquired_user' : metricType}
+          appliedFilters={appliedFilters}
+          onAddToExport={onAddToExport}
         />
       </div>
     </section>
