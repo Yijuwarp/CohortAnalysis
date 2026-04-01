@@ -16,7 +16,21 @@ vi.mock('../src/api', async () => {
   }
 })
 
+vi.mock('../src/components/SearchableSelect', () => ({
+  default: ({ value, onChange, placeholder, options }) => (
+    <select data-testid="mock-searchable-select" value={value || ''} onChange={e => onChange(e.target.value)}>
+      <option value="">{placeholder}</option>
+      {(options || []).map(o => (
+        <option key={o.value || o} value={o.value || o}>
+          {o.label || o}
+        </option>
+      ))}
+    </select>
+  )
+}))
+
 describe('CohortForm multi-create state preservation', () => {
+  // No fake timers here, they cause waitFor to hang if not advanced
   beforeEach(() => {
     vi.clearAllMocks()
     api.listEvents.mockResolvedValue({ events: ['purchase', 'signup'] })
@@ -24,11 +38,10 @@ describe('CohortForm multi-create state preservation', () => {
     api.estimateCohort.mockResolvedValue({ estimated_users: 100 })
     api.createSavedCohort.mockResolvedValue({ id: 'saved-123', is_valid: true })
     api.createCohort.mockResolvedValue({ cohort_id: 1 })
-    vi.useFakeTimers()
   })
 
   afterEach(() => {
-    vi.useRealTimers()
+    vi.clearAllMocks()
   })
 
   it('preserves form state when creating multiple cohorts', async () => {
