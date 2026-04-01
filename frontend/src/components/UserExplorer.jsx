@@ -148,7 +148,7 @@ function PaginationBar({ page, totalPages, onChangePage, disabled }) {
   )
 }
 
-export default function UserExplorer({ state, setState }) {
+export default function UserExplorer({ state, setState, onAddToExport, appliedFilters = [] }) {
   const [selectedUser, setSelectedUser] = useState(state?.selectedUser || '')
   const [selectedCohort, setSelectedCohort] = useState(state?.selectedCohort || 'all')
   const [userOptions, setUserOptions] = useState([])
@@ -300,7 +300,65 @@ export default function UserExplorer({ state, setState }) {
   return (
     <div className="user-explorer-pane">
       <div className="card ui-card">
-        <h4>User Explorer</h4>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h4>User Explorer</h4>
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={() => {
+              const payload = {
+                id: crypto.randomUUID(),
+                version: 2,
+                type: 'user-explorer',
+                title: `User Profile: ${selectedUser}`,
+                summary: `User explorer snapshot for ${selectedUser}`,
+                tables: [
+                  {
+                    title: 'User Summary',
+                    columns: [
+                      { key: 'user_id', label: 'User ID', type: 'string' },
+                      { key: 'first_event', label: 'First Event', type: 'string' },
+                      { key: 'last_event', label: 'Last Event', type: 'string' },
+                      { key: 'total_events', label: 'Total Events', type: 'number' }
+                    ],
+                    data: [{
+                      user_id: selectedUser,
+                      first_event: summary?.first_event_time,
+                      last_event: summary?.last_event_time,
+                      total_events: summary?.total_events
+                    }]
+                  },
+                  {
+                    title: 'Event Timeline (Current View)',
+                    columns: [
+                      { key: 'time', label: 'Time', type: 'string' },
+                      { key: 'event', label: 'Event', type: 'string' },
+                      { key: 'properties', label: 'Properties', type: 'string' }
+                    ],
+                    data: events.slice(0, 1000).map(e => ({
+                      time: e.event_time,
+                      event: e.event_name,
+                      properties: JSON.stringify(e.properties || {})
+                    }))
+                  }
+                ],
+                meta: {
+                  filters: appliedFilters,
+                  cohorts: [],
+                  settings: {
+                    'User ID': selectedUser,
+                    'Cohort Context': selectedCohort
+                  }
+                }
+              }
+              onAddToExport(payload)
+            }}
+            disabled={!selectedUser || !summary}
+            title="Add user summary and event list to global export buffer"
+          >
+            📸 Add to Export
+          </button>
+        </div>
         <div className="user-explorer-selector-row">
           <div className="selector-group">
             <span className="selector-label">Cohort</span>

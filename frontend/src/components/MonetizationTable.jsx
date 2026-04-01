@@ -16,7 +16,7 @@ const METRIC_OPTIONS = [
   { value: 'revenue_per_retained_user', label: 'Revenue per Retained User' },
 ]
 
-export default function MonetizationTable({ refreshToken, maxDay, retentionEvent, state, setState, cohorts = [] }) {
+export default function MonetizationTable({ refreshToken, maxDay, retentionEvent, state, setState, cohorts = [], appliedFilters = [], onAddToExport }) {
   const [metricType, setMetricType] = useState(state?.metricType || 'cumulative_revenue_per_acquired_user')
   const [viewMode, setViewMode] = useState(state?.viewMode || 'table')
   const [revenueRows, setRevenueRows] = useState([])
@@ -279,6 +279,64 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
     setShowPredictionSummary(true)
   }
 
+  const handleAddToExport = () => {
+    const isCumulative = metricType.includes('cumulative')
+    const metricLabel = METRIC_OPTIONS.find(o => o.value === metricType)?.label || metricType
+
+    const columns = [
+      { key: 'cohort', label: 'Cohort', type: 'string' },
+      { key: 'split', label: 'Split', type: 'string' },
+      { key: 'size', label: 'Size', type: 'number' },
+      ...visibleDayColumns.map(d => ({ 
+        key: `D${d}`, 
+        label: `D${d}`, 
+        type: 'currency' 
+      }))
+    ]
+
+    if (predictions) {
+      columns.push({ key: 'predicted', label: `Predicted (${predictionHorizon}D)`, type: 'currency' })
+    }
+
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'monetization',
+      title: 'Monetization Analysis',
+      summary: `Monetization — ${metricLabel} • Prediction: ${predictions ? 'Enabled' : 'Disabled'}`,
+      tables: [{
+        title: `${metricLabel} (${isCumulative ? 'Cumulative' : 'Non-Cumulative'})`,
+        columns,
+        data: sortedRows.map(row => {
+          const rowObj = {
+            cohort: getDisplayName(row),
+            split: getSplitLabel(row),
+            size: row.size
+          }
+          visibleDayColumns.forEach(d => {
+            rowObj[`D${d}`] = row.numericValues?.[String(d)] ?? null
+          })
+          if (predictions) {
+            rowObj.predicted = predictions[row.cohort_id]?.projectedCurve?.[predictionHorizon] ?? null
+          }
+          return rowObj
+        })
+      }],
+      meta: {
+        filters: appliedFilters,
+        cohorts: cohorts.filter(c => displayRows.some(row => row.cohort_id === c.cohort_id)),
+        settings: {
+          'Metric': metricLabel,
+          'Max Day': maxDay,
+          'Retention Event': retentionEvent,
+          'Prediction Horizon': `${predictionHorizon}D`,
+          'Prediction Baseline': predictionBaseline ? 'Custom' : 'System'
+        }
+      }
+    }
+    onAddToExport(payload)
+  }
+
   const predictionSummary = useMemo(() => {
     if (!predictions) return []
     return displayRows
@@ -375,6 +433,16 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                 onClick={() => setIsComparePaneOpen(true)}
               >
                 🔬 Compare
+              </button>
+
+              <button
+                type="button"
+                className="button button-secondary"
+                onClick={handleAddToExport}
+                title="Add current view to global export buffer"
+                disabled={displayRows.length === 0}
+              >
+                📸 Add to Export
               </button>
           </div>
 

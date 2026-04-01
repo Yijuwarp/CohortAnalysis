@@ -1,4 +1,6 @@
+import { useState } from 'react'
 import { formatInteger, formatShortNumber } from '../utils/formatters'
+import ExportHover from './ExportHover'
 
 const MAX_DAY_OPTIONS = [7, 14, 30, 60, 90, 180, 365]
 
@@ -33,7 +35,12 @@ export default function TopToolbar({
   activeFilterCount,
   globalMaxDay,
   setGlobalMaxDay,
+  exportCount = 0,
+  exportBuffer = [],
+  onRemoveExportItem,
+  onOpenExportModal,
 }) {
+  const [isHoveringExport, setIsHoveringExport] = useState(false)
   const filename = datasetMeta?.filename || 'Unknown'
   const rows = Number(datasetMeta?.rows || 0)
   const events = Number(datasetMeta?.events || 0)
@@ -106,6 +113,28 @@ export default function TopToolbar({
             ))}
           </select>
         </label>
+
+        <div 
+          className="toolbar-export-container"
+          onMouseEnter={() => setIsHoveringExport(true)}
+          onMouseLeave={() => setIsHoveringExport(false)}
+        >
+          <button
+            type="button"
+            className={`button ${exportCount > 0 ? 'button-primary' : 'button-secondary'}`}
+            disabled={exportCount === 0}
+            onClick={onOpenExportModal}
+          >
+            Export ({exportCount})
+          </button>
+          
+          {isHoveringExport && exportCount > 0 && (
+            <ExportHover 
+              exportBuffer={exportBuffer} 
+              onRemoveItem={onRemoveExportItem}
+            />
+          )}
+        </div>
       </div>
     </div>
   )

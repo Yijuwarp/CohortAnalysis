@@ -1059,6 +1059,181 @@ th.sticky-col.sticky-col-top {
   letter-spacing: 0.05em;
 }
 
+/* ============================
+   Export Buffer System
+   ============================ */
+
+.toolbar-export-container {
+  position: relative;
+  display: inline-block;
+}
+
+.export-hover-panel {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  width: 320px;
+  background: white;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  margin-top: 8px;
+  z-index: 1000;
+  padding: 12px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+/* Hover Bridge: prevents panel from closing during short mouse transit from button */
+.export-hover-panel::before {
+  content: '';
+  position: absolute;
+  top: -12px;
+  left: 0;
+  right: 0;
+  height: 12px;
+  background: transparent;
+}
+
+
+.export-hover-panel.empty {
+  text-align: center;
+  color: var(--color-text-secondary);
+  padding: 20px;
+}
+
+.export-hover-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.export-hover-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px;
+  border-radius: 6px;
+  background: #f9fafb;
+  border: 1px solid #f3f4f6;
+}
+
+.export-hover-item-content {
+  min-width: 0;
+  flex: 1;
+}
+
+.export-hover-item-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export-hover-item-summary {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.export-hover-remove {
+  background: none;
+  border: none;
+  color: #9ca3af;
+  cursor: pointer;
+  padding: 4px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.export-hover-remove:hover {
+  color: #ef4444;
+}
+
+.export-hover-more {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  text-align: center;
+  font-weight: 500;
+}
+
+.export-modal {
+  background: white !important;
+  border-radius: 12px !important;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04) !important;
+  display: flex !important;
+  flex-direction: column !important;
+  overflow: hidden !important;
+  width: 480px !important;
+  max-width: 90vw !important;
+}
+
+.export-modal .modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.export-modal .modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.export-modal .modal-body {
+  padding: 20px;
+}
+
+.export-modal .modal-footer {
+  padding: 16px 20px;
+  background: #f9fafb;
+  border-top: 1px solid var(--color-border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+
+
+.export-format-selector {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.export-format-selector p {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.footer-right {
+  display: flex;
+  gap: 8px;
+}
+
+.button-ghost {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--color-text-secondary);
+}
+
+.button-ghost:hover {
+  background: #f3f4f6;
+  color: var(--color-text-primary);
+}
 
 .filter-block {
   border: 1px solid var(--color-border);

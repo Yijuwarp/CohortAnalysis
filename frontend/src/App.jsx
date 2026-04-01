@@ -12,6 +12,8 @@ import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
 import PathsPane from './components/PathsPane'
+import { validateExportSnapshot } from './utils/exportValidator'
+import ExportModal from './components/ExportModal'
 
 if (!UserExplorer) {
   console.error('UserExplorer component failed to load from ./components/UserExplorer')
@@ -70,6 +72,9 @@ export default function App() {
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
   const [cohortsRefreshToken, setCohortsRefreshToken] = useState(0)
+  const [exportBuffer, setExportBuffer] = useState([])
+  const [appliedFilters, setAppliedFilters] = useState([])
+  const [isExportModalOpen, setIsExportModalOpen] = useState(false)
 
   const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer'], [])
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
@@ -124,6 +129,29 @@ export default function App() {
         [tab]: newState,
       }
     })
+  }, [])
+
+  const addToExport = useCallback((snapshot) => {
+    try {
+      validateExportSnapshot(snapshot)
+      if (exportBuffer.length >= 10) {
+        setBanner('Export limit reached (10)')
+        return
+      }
+      setExportBuffer(prev => [...prev, snapshot])
+      setBanner(`Added to export: ${snapshot.title}`)
+    } catch (err) {
+      setBanner(`Failed to add to export: ${err.message}`)
+    }
+  }, [exportBuffer])
+
+  const removeExportItem = useCallback((id) => {
+    setExportBuffer(prev => prev.filter(item => item.id !== id))
+  }, [])
+
+  const clearExportBuffer = useCallback(() => {
+    setExportBuffer([])
+    setIsExportModalOpen(false)
   }, [])
 
   useEffect(() => {
@@ -363,7 +391,19 @@ export default function App() {
             activeFilterCount={activeFilterCount}
             globalMaxDay={globalMaxDay}
             setGlobalMaxDay={setGlobalMaxDay}
+            exportCount={exportBuffer.length}
+            exportBuffer={exportBuffer}
+            onRemoveExportItem={removeExportItem}
+            onOpenExportModal={() => setIsExportModalOpen(true)}
           />
+
+          {isExportModalOpen && (
+            <ExportModal
+              exportBuffer={exportBuffer}
+              onClose={() => setIsExportModalOpen(false)}
+              onClearAll={clearExportBuffer}
+            />
+          )}
 
           {uploadError && <p className="error">{uploadError}</p>}
           {banner && <div className="workspace-banner">{banner}</div>}
@@ -405,7 +445,14 @@ export default function App() {
                   {leftPaneTab === 'filters' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Date range • Property filters</p>
-                      <FilterData refreshToken={tabRefreshTokens.retention} onFiltersApplied={() => markTabsStale()} onActiveFilterCountChange={setActiveFilterCount} />
+                      <FilterData 
+                        refreshToken={tabRefreshTokens.retention} 
+                        onFiltersApplied={(filters) => {
+                          setAppliedFilters(filters)
+                          markTabsStale()
+                        }} 
+                        onActiveFilterCountChange={setActiveFilterCount} 
+                      />
                     </section>
                   )}
                   {leftPaneTab === 'settings' && (
@@ -498,53 +545,65 @@ export default function App() {
                     state={analyticsState.retention}
                     setState={(s) => updateAnalyticsState('retention', s)}
                     cohorts={cohorts}
+                    appliedFilters={appliedFilters}
+                    onAddToExport={addToExport}
                   />
                 )}
-                {activeTab === 'usage' && (
-                  <UsageTable
-                    refreshToken={tabRefreshTokens.usage}
-                    retentionEvent={selectedRetentionEvent}
-                    maxDay={globalMaxDay}
-                    state={analyticsState.usage}
-                    setState={(s) => updateAnalyticsState('usage', s)}
-                    scopeVersion={scopeVersion}
-                    cohorts={cohorts}
-                  />
-                )}
-                {activeTab === 'monetization' && (
-                  <MonetizationTable
-                    refreshToken={tabRefreshTokens.monetization}
-                    maxDay={globalMaxDay}
-                    retentionEvent={selectedRetentionEvent}
-                    state={analyticsState.monetization}
-                    setState={(s) => updateAnalyticsState('monetization', s)}
-                    cohorts={cohorts}
-                  />
-                )}
-
-                {activeTab === 'paths' && (
-                  <PathsPane
-                    refreshToken={tabRefreshTokens.paths}
-                    events={events}
-                    state={analyticsState.paths}
-                    setState={(s) => updateAnalyticsState('paths', s)}
-                    onRefreshCohorts={triggerCohortRefresh}
-                  />
-                )}
-                {activeTab === 'flow' && (
-                  <FlowPane
-                    refreshToken={tabRefreshTokens.flow}
-                    state={analyticsState.flows}
-                    setState={(s) => updateAnalyticsState('flows', s)}
-                  />
-                )}
-                {activeTab === 'user-explorer' && (
-                  <UserExplorer
-                     state={analyticsState['user-explorer']}
-                     setState={(s) => updateAnalyticsState('user-explorer', s)}
-                  />
-                )}
-              </div>
+                 {activeTab === 'usage' && (
+                   <UsageTable
+                     refreshToken={tabRefreshTokens.usage}
+                     retentionEvent={selectedRetentionEvent}
+                     maxDay={globalMaxDay}
+                     state={analyticsState.usage}
+                     setState={(s) => updateAnalyticsState('usage', s)}
+                     scopeVersion={scopeVersion}
+                     cohorts={cohorts}
+                     appliedFilters={appliedFilters}
+                     onAddToExport={addToExport}
+                   />
+                 )}
+                 {activeTab === 'monetization' && (
+                   <MonetizationTable
+                     refreshToken={tabRefreshTokens.monetization}
+                     maxDay={globalMaxDay}
+                     retentionEvent={selectedRetentionEvent}
+                     state={analyticsState.monetization}
+                     setState={(s) => updateAnalyticsState('monetization', s)}
+                     cohorts={cohorts}
+                     appliedFilters={appliedFilters}
+                     onAddToExport={addToExport}
+                   />
+                 )}
+ 
+                 {activeTab === 'paths' && (
+                   <PathsPane
+                     refreshToken={tabRefreshTokens.paths}
+                     events={events}
+                     state={analyticsState.paths}
+                     setState={(s) => updateAnalyticsState('paths', s)}
+                     onRefreshCohorts={triggerCohortRefresh}
+                     appliedFilters={appliedFilters}
+                     onAddToExport={addToExport}
+                   />
+                 )}
+                 {activeTab === 'flow' && (
+                   <FlowPane
+                     refreshToken={tabRefreshTokens.flow}
+                     state={analyticsState.flows}
+                     setState={(s) => updateAnalyticsState('flows', s)}
+                     appliedFilters={appliedFilters}
+                     onAddToExport={addToExport}
+                   />
+                 )}
+                 {activeTab === 'user-explorer' && (
+                   <UserExplorer
+                      state={analyticsState['user-explorer']}
+                      setState={(s) => updateAnalyticsState('user-explorer', s)}
+                      appliedFilters={appliedFilters}
+                      onAddToExport={addToExport}
+                   />
+                 )}
+               </div>
             </section>
           </div>
         </div>
