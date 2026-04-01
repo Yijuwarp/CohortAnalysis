@@ -102,6 +102,8 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
         })
         : [defaultFilter]
 
+      onFiltersApplied?.(payload.filters || [])
+
       setFilters(mappedFilters)
       const columnsToLoad = [...new Set(mappedFilters.map((row) => row.column).filter(Boolean))]
       await Promise.all(columnsToLoad.map((columnName) => ensureColumnValuesLoaded(columnName)))
@@ -170,9 +172,10 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
     setLoading(true)
     setError('')
     try {
-      const response = await applyFilters(toPayload())
+      const payload = toPayload()
+      const response = await applyFilters(payload)
       setSummary(response)
-      onFiltersApplied?.()
+      onFiltersApplied?.(payload.filters || [])
     } catch (err) {
       setError(err.message)
     } finally {
@@ -188,7 +191,7 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
       const [response, range] = await Promise.all([applyFilters({ date_range: null, filters: [] }), getDateRange()])
       setSummary(response)
       setDateRange({ start: range.min_date || '', end: range.max_date || '' })
-      onFiltersApplied?.()
+      onFiltersApplied?.([])
     } catch (err) {
       setError(err.message)
     } finally {

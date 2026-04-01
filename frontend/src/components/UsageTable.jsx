@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useRef } from 'react'
 import { getAvailabilityStyle } from '../utils/style_utils'
-import { getEventProperties, getEventPropertyValues, getUsage, listEvents } from '../api'
+import { getEventProperties, getEventPropertyValues, getUsage, listEvents, getUsageFrequency } from '../api'
 import { formatSplitValue } from '../utils/formatters'
 import SearchableSelect from './SearchableSelect'
 import UsageFrequencyHistogram from './UsageFrequencyHistogram'
@@ -28,7 +28,7 @@ function formatCountValue(value) {
   return Number(value).toLocaleString()
 }
 
-export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState, scopeVersion, cohorts = [] }) {
+export default function UsageTable({ refreshToken, retentionEvent, maxDay, state, setState, scopeVersion, cohorts = [], appliedFilters = [], onAddToExport }) {
   const [event, setEvent] = useState(state?.event || '')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(state?.effectiveMaxDayVolume || maxDay))
   const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(state?.effectiveMaxDayUsers || maxDay))
@@ -42,6 +42,9 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     size: 80
   })
   const isResizingRef = useRef(false)
+  const [frequencyData, setFrequencyData] = useState(null)
+  const [frequencyLoading, setFrequencyLoading] = useState(false)
+  const [localRefreshToken, setLocalRefreshToken] = useState(0)
 
   const getStickyLeft = (colKey) => {
     if (colKey === "cohort") return 0
@@ -117,7 +120,6 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [sortConfigVolume, setSortConfigVolume] = useState({ key: 'size', direction: 'desc' })
   const [sortConfigUsers, setSortConfigUsers] = useState({ key: 'size', direction: 'desc' })
 
-  // 1. Build Metadata Lookup
   const cohortMetaMap = useMemo(() => {
     const map = {}
     ;(cohorts || []).forEach(c => {
@@ -216,7 +218,20 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const handleEventChange = (nextEvent) => {
     clearPropertyFilter()
     setEvent(nextEvent)
+    setLocalRefreshToken((prev) => prev + 1)
   }
+
+  useEffect(() => {
+    if (!event) {
+      setFrequencyData(null)
+      return
+    }
+    setFrequencyLoading(true)
+    getUsageFrequency(event, propertyFilter)
+      .then(res => setFrequencyData(res))
+      .catch(() => setFrequencyData(null))
+      .finally(() => setFrequencyLoading(false))
+  }, [event, propertyFilter?.property, propertyFilter?.operator, propertyFilter?.value, localRefreshToken])
 
   const loadUsage = async (selectedEvent = event) => {
     if (!selectedEvent) {
@@ -466,6 +481,126 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     [effectiveMaxDayUsers]
   )
 
+  const handleAddToExport = () => {
+    // 1. Volume Table
+    const volumeTable = {
+      title: `Event Volume (${volumeLabel}${cumulativeMode ? ' - Cumulative' : ''})`,
+      columns: [
+        { key: 'cohort', label: 'Cohort', type: 'string' },
+        { key: 'split', label: 'Split', type: 'string' },
+        { key: 'size', label: 'Size', type: 'number' },
+        ...dayColumnsVolume.map(d => ({ key: `D${d}`, label: `D${d}`, type: metricType === 'count' ? 'number' : 'string' }))
+      ],
+      data: sortedVolumeRows.map(row => {
+        const rowObj = {
+          cohort: getDisplayName(row),
+          split: getSplitLabel(row),
+          size: row.size
+        }
+        dayColumnsVolume.forEach(d => {
+          const val = row.values?.[String(d)]
+          rowObj[`D${d}`] = val !== null && val !== undefined ? Number(val) : null
+        })
+        return rowObj
+      })
+    }
+
+    // 2. Selected Unique Users Table
+    let usersTable = null
+    const userLabelPrefix = modeUsers.includes('adoption') ? 'Cumulative Adoption' : 'Daily Users'
+    const userLabelSuffix = modeUsers.includes('percent') ? '(%)' : '(Count)'
+    const isPercent = modeUsers.includes('percent')
+
+    usersTable = {
+      title: `Unique Users (${userLabelPrefix} ${userLabelSuffix})`,
+      columns: [
+        { key: 'cohort', label: 'Cohort', type: 'string' },
+        { key: 'split', label: 'Split', type: 'string' },
+        { key: 'size', label: 'Size', type: 'number' },
+        ...dayColumnsUsers.map(d => ({ 
+          key: `D${d}`, 
+          label: `D${d}`, 
+          type: isPercent ? 'percentage' : 'number' 
+        }))
+      ],
+      data: sortRows(userRows, sortConfigUsers).map(row => {
+        const rowObj = {
+          cohort: getDisplayName(row),
+          split: getSplitLabel(row),
+          size: row.size
+        }
+        dayColumnsUsers.forEach(d => {
+          const val = row.values?.[String(d)]
+          const adoptionVal = row.adoption_values?.[String(d)]
+          const raw = modeUsers.includes('adoption') ? adoptionVal : val
+          rowObj[`D${d}`] = raw !== null && raw !== undefined 
+            ? (isPercent ? Number(raw) / row.size : Number(raw)) 
+            : null
+        })
+        return rowObj
+      })
+    }
+
+    // 3. Frequency Distribution Table
+    let frequencyTable = null
+    if (frequencyData && frequencyData.buckets && frequencyData.buckets.length > 0) {
+      const cohortMeta = frequencyData.cohort_sizes.map(c => ({
+        id: c.cohort_id,
+        name: c.name || `Cohort ${c.cohort_id}`,
+        size: Number(c.size) || 0
+      }))
+
+      frequencyTable = {
+        title: 'Event Frequency Distribution',
+        columns: [
+          { key: 'bucket', label: 'Bucket', type: 'string' },
+          ...cohortMeta.map(c => ({ 
+            key: `cohort_${c.id}`, 
+            label: `${c.name} (Users)`, 
+            type: 'number' 
+          })),
+          ...cohortMeta.map(c => ({ 
+            key: `cohort_${c.id}_pct`, 
+            label: `${c.name} (%)`, 
+            type: 'percentage' 
+          }))
+        ],
+        data: frequencyData.buckets.map(bucketObj => {
+          const rowObj = { bucket: bucketObj.bucket }
+          const bucketByCohortId = new Map(bucketObj.cohorts.map(c => [c.cohort_id, Number(c.users) || 0]))
+          
+          cohortMeta.forEach(c => {
+            const users = bucketByCohortId.get(c.id) || 0
+            rowObj[`cohort_${c.id}`] = users
+            rowObj[`cohort_${c.id}_pct`] = c.size > 0 ? users / c.size : 0
+          })
+          return rowObj
+        })
+      }
+    }
+
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'usage',
+      title: `Usage — ${event}`,
+      summary: `Usage — ${event} • ${modeUsers.includes('adoption') ? 'Adoption' : 'Retained'} ${modeUsers.includes('percent') ? 'Percent' : 'Count'}`,
+      tables: [volumeTable, usersTable, frequencyTable].filter(Boolean),
+      meta: {
+        filters: appliedFilters,
+        cohorts: cohorts.filter(c => volumeRows.some(row => row.cohort_id === c.cohort_id)),
+        settings: {
+          'Event': event,
+          'Metric': metricType,
+          'Cumulative': cumulativeMode ? 'Enabled' : 'Disabled',
+          'Max Day': maxDay,
+          'Property Filter': eventProperty ? `${eventProperty} ${propertyOperator} ${propertyValue}` : 'None'
+        }
+      }
+    }
+    onAddToExport(payload)
+  }
+
   return (
     <section className="card">
       <h2>Usage Analytics</h2>
@@ -517,6 +652,16 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           disabled={!event}
         >
           🔬 Compare
+        </button>
+
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={handleAddToExport}
+          title="Add current view to global export buffer"
+          disabled={!event || volumeRows.length === 0}
+        >
+          📸 Add to Export
         </button>
       </div>
 
@@ -875,6 +1020,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           event={event}
           refreshToken={refreshToken}
           propertyFilter={propertyFilter}
+          prefetchedData={frequencyData}
+          loadingState={frequencyLoading}
         />
       )}
 

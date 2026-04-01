@@ -35,25 +35,28 @@ function formatUserCount(count) {
   return (Number(count) || 0).toLocaleString()
 }
 
-export default function UsageFrequencyHistogram({ event, refreshToken, propertyFilter = null }) {
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(false)
+export default function UsageFrequencyHistogram({ event, refreshToken, propertyFilter = null, prefetchedData = null, loadingState = null }) {
+  const [localData, setLocalData] = useState(null)
+  const [localLoading, setLocalLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const data = prefetchedData || localData
+  const loading = loadingState !== null ? loadingState : localLoading
+
   useEffect(() => {
-    if (!event) {
-      setData(null)
+    if (prefetchedData || !event) {
+      if (!event) setLocalData(null)
       return
     }
 
     let isMounted = true
-    setLoading(true)
+    setLocalLoading(true)
     setError('')
 
     getUsageFrequency(event, propertyFilter)
       .then((res) => {
         if (!isMounted) return
-        setData(res)
+        setLocalData(res)
       })
       .catch((err) => {
         if (!isMounted) return
@@ -61,14 +64,14 @@ export default function UsageFrequencyHistogram({ event, refreshToken, propertyF
       })
       .finally(() => {
         if (isMounted) {
-          setLoading(false)
+          setLocalLoading(false)
         }
       })
 
     return () => {
       isMounted = false
     }
-  }, [event, propertyFilter?.operator, propertyFilter?.property, propertyFilter?.value, refreshToken])
+  }, [event, propertyFilter?.operator, propertyFilter?.property, propertyFilter?.value, refreshToken, prefetchedData])
 
   const cohortMeta = useMemo(() => {
     if (!data || !data.cohort_sizes) return []

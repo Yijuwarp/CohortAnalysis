@@ -18,7 +18,7 @@ function makeCacheKey(path, controls, propertyFilter, depth) {
 
 
 
-export default function FlowPane({ refreshToken, state, setState }) {
+export default function FlowPane({ refreshToken, state, setState, appliedFilters = [], onAddToExport }) {
   const [events, setEvents] = useState([])
   const [controls, setControls] = useState(state?.controls || { event: null, property: null, direction: 'forward' })
   const [propertyValues, setPropertyValues] = useState([])
@@ -140,6 +140,105 @@ export default function FlowPane({ refreshToken, state, setState }) {
     }
   }
 
+  const handleAddToExport = () => {
+    if (!flowTree || flowTree.length === 0) return
+
+    const edges = []
+    const cohortsToExport = cohorts // from useMemo
+
+    // Recursive function to build edge list from expanded nodes
+    const walk = (nodes, currentPath = []) => {
+      nodes.forEach(node => {
+        const eventName = node.path[node.path.length - 1]
+        const key = nodeKey(node.path)
+        
+        if (expandedNodes.has(key)) {
+          const children = getChildren(node.path)
+          if (children && children.length > 0) {
+            children.forEach(child => {
+              const childEvent = child.path[child.path.length - 1]
+              cohortsToExport.forEach(cId => {
+                const val = child.values?.[cId]
+                if (!val) return
+
+                const sourceUsers = Number(val.parent_users || 0)
+                const targetUsers = Number(val.user_count || 0)
+                const dropOff = sourceUsers > 0 ? (sourceUsers - targetUsers) / sourceUsers : 0
+
+                edges.push({
+                  cohort: cohortMap[cId]?.name || `Cohort ${cId}`,
+                  source_step: node.path.length - 1,
+                  source_event: eventName,
+                  target_step: node.path.length,
+                  target_event: childEvent,
+                  users: targetUsers,
+                  drop_off: Math.max(0, dropOff)
+                })
+              })
+            })
+            walk(children, node.path)
+          }
+        }
+      })
+    }
+
+    // Add initial edges from the Start Event (Step 0) to Step 1 nodes
+    flowTree.forEach(node => {
+      const eventName = node.path[node.path.length - 1]
+      cohortsToExport.forEach(cId => {
+        const val = node.values?.[cId]
+        if (!val) return
+
+        const sourceUsers = Number(val.parent_users || 0)
+        const targetUsers = Number(val.user_count || 0)
+        const dropOff = sourceUsers > 0 ? (sourceUsers - targetUsers) / sourceUsers : 0
+
+        edges.push({
+          cohort: cohortMap[cId]?.name || `Cohort ${cId}`,
+          source_step: 0,
+          source_event: controls.event,
+          target_step: 1,
+          target_event: eventName,
+          users: targetUsers,
+          drop_off: Math.max(0, dropOff)
+        })
+      })
+    })
+
+    walk(flowTree)
+
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'flow',
+      title: `Flow — ${controls.event}`,
+      summary: `Flow analysis for ${controls.event} (${controls.direction})`,
+      tables: [{
+        title: `Flow Edge List (${controls.direction === 'forward' ? 'Steps After' : 'Steps Before'} ${controls.event})`,
+        columns: [
+          { key: 'cohort', label: 'Cohort', type: 'string' },
+          { key: 'source_step', label: 'Source Step', type: 'number' },
+          { key: 'source_event', label: 'Source Event', type: 'string' },
+          { key: 'target_step', label: 'Target Step', type: 'number' },
+          { key: 'target_event', label: 'Target Event', type: 'string' },
+          { key: 'users', label: 'Users Transitioned', type: 'number' },
+          { key: 'drop_off', label: 'Drop-off %', type: 'percentage' }
+        ],
+        data: edges
+      }],
+      meta: {
+        filters: appliedFilters,
+        cohorts: cohortsToExport.map(id => ({ cohort_id: id, name: cohortMap[id]?.name })),
+        settings: {
+          'Start Event': controls.event,
+          'Direction': controls.direction,
+          'Property Filter': controls.property ? `${controls.property} = ${propertyFilterValue || 'All'}` : 'None'
+        }
+      }
+    }
+    onAddToExport(payload)
+  }
+
 
   return (
     <section className="card">
@@ -181,6 +280,16 @@ export default function FlowPane({ refreshToken, state, setState }) {
             <button type="button" className={`view-button ${controls.direction === 'reverse' ? 'active' : ''}`} onClick={() => setControls(prev => ({ ...prev, direction: 'reverse' }))}>Reverse</button>
           </div>
         </label>
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={handleAddToExport}
+          disabled={loadingRoot || flowTree.length === 0}
+          title="Add edge list of expanded nodes to global export buffer"
+          style={{ height: 36, marginTop: 'auto' }}
+        >
+          📸 Add to Export
+        </button>
       </div>
 
       {loadingRoot ? (

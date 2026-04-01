@@ -118,7 +118,7 @@ function PathsFunnelChart({ result }) {
     )
 }
 
-export default function PathsPane({ refreshToken, events, state, setState, onRefreshCohorts }) {
+export default function PathsPane({ refreshToken, events, state, setState, onRefreshCohorts, appliedFilters = [], onAddToExport }) {
   const [paths, setPaths] = useState([])
   const [selectedPathId, setSelectedPathId] = useState(state?.selectedPathId || null)
   const [editingPath, setEditingPath] = useState(null) // Local "unsaved" state
@@ -228,6 +228,52 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         setRunning(false)
       }
     }
+  }
+
+  const handleAddToExport = () => {
+    if (!result || !result.results) return
+
+    const tables = result.results.map((cohort, idx) => ({
+      title: `Cohort: ${cohort.cohort_name} (${formatInteger(cohort.cohort_size)} users)`,
+      columns: [
+        { key: 'step', label: 'Step', type: 'number' },
+        { key: 'event', label: 'Event', type: 'string' },
+        { key: 'users', label: 'Users', type: 'number' },
+        { key: 'conversion_pct', label: 'Conv %', type: 'percentage' },
+        { key: 'drop_off_pct', label: 'Drop-off %', type: 'percentage' },
+        { key: 'mean_time', label: 'Mean Time (s)', type: 'number' },
+        { key: 'p20', label: 'P20 (s)', type: 'number' },
+        { key: 'p80', label: 'P80 (s)', type: 'number' }
+      ],
+      data: cohort.steps.map(s => ({
+        step: s.step,
+        event: s.event,
+        users: s.users,
+        conversion_pct: s.conversion_pct / 100,
+        drop_off_pct: s.drop_off_pct !== null ? s.drop_off_pct / 100 : null,
+        mean_time: s.mean_time,
+        p20: s.p20,
+        p80: s.p80
+      }))
+    }))
+
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'paths',
+      title: `Paths — ${result.path_name || 'Analysis'}`,
+      summary: `Paths analysis for ${result.results.length} cohorts`,
+      tables,
+      meta: {
+        filters: appliedFilters,
+        cohorts: result.results.map(r => ({ cohort_id: r.cohort_id, name: r.cohort_name })),
+        settings: {
+          'Path Name': result.path_name || 'Unnamed',
+          'Steps': result.steps.join(' → ')
+        }
+      }
+    }
+    onAddToExport(payload)
   }
 
   const handleDelete = async (id) => {
@@ -340,6 +386,16 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
           title={!selectedPathId ? 'Select or create a path first' : (selectedPathBase && !selectedPathBase.is_valid && !isUnsaved) ? selectedPathBase.invalid_reason : 'Run Path'}
         >
           {running ? 'Running…' : 'Run Path'}
+        </button>
+
+        <button
+            type="button"
+            className="button button-secondary"
+            onClick={handleAddToExport}
+            disabled={!result}
+            title="Add cohort tables to global export buffer"
+        >
+            📸 Add to Export
         </button>
       </div>
       

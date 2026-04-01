@@ -20,6 +20,8 @@ export default function RetentionTable({
   state,
   setState,
   cohorts = [],
+  appliedFilters = [],
+  onAddToExport,
 }) {
   const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
   const [events, setEvents] = useState([])
@@ -210,6 +212,48 @@ export default function RetentionTable({
     })
   }, [data, sortConfig, cohorts])
 
+  const handleAddToExport = () => {
+    const payload = {
+      id: crypto.randomUUID(),
+      version: 2,
+      type: 'retention',
+      title: 'Retention Analysis',
+      summary: `Retention — ${sortedData.length} cohorts • Event: ${retentionEvent} • Max Day: ${maxDay}`,
+      tables: [{
+        title: `Retention Table (${retentionType === 'classic' ? 'Classic' : 'Ever-After'})`,
+        columns: [
+          { key: 'cohort', label: 'Cohort', type: 'string' },
+          { key: 'split', label: 'Split', type: 'string' },
+          { key: 'size', label: 'Size', type: 'number' },
+          ...bucketColumns.map(b => ({ key: `${labelPrefix}${b}`, label: `${labelPrefix}${b}`, type: 'percentage' }))
+        ],
+        data: sortedData.map(row => {
+          const rowObj = {
+            cohort: getDisplayName(row),
+            split: getSplitLabel(row),
+            size: row.size
+          }
+          bucketColumns.forEach(b => {
+            const val = row.retention[String(b)]
+            rowObj[`${labelPrefix}${b}`] = val !== null && val !== undefined ? val / 100 : null
+          })
+          return rowObj
+        })
+      }],
+      meta: {
+        filters: appliedFilters,
+        cohorts: cohorts.filter(c => sortedData.some(row => row.cohort_id === c.cohort_id)),
+        settings: {
+          'Max Day': maxDay,
+          'Retention Event': retentionEvent,
+          'Retention Type': retentionType,
+          'Granularity': mode
+        }
+      }
+    }
+    onAddToExport(payload)
+  }
+
   return (
     <section className="card">
       <div className="retention-header">
@@ -223,6 +267,15 @@ export default function RetentionTable({
             title="Compare two cohorts statistically"
           >
             🔬 Compare
+          </button>
+
+          <button
+            type="button"
+            className="button button-secondary"
+            onClick={handleAddToExport}
+            title="Add current view to global export buffer"
+          >
+            📸 Add to Export
           </button>
 
           <div className="ci-control">
