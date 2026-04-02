@@ -118,6 +118,15 @@ function PathsFunnelChart({ result }) {
     )
 }
 
+function formatStepGap(minutes) {
+    if (minutes === null || minutes === undefined) return 'Unlimited'
+    if (minutes === 1440) return '1 day'
+    if (minutes % 1440 === 0) return `${minutes / 1440} days`
+    if (minutes === 60) return '1 hour'
+    if (minutes % 60 === 0) return `${minutes / 60} hours`
+    return `${minutes} minutes`
+}
+
 export default function PathsPane({ refreshToken, events, state, setState, onRefreshCohorts, appliedFilters = [], onAddToExport }) {
   const [paths, setPaths] = useState([])
   const [selectedPathId, setSelectedPathId] = useState(state?.selectedPathId || null)
@@ -215,7 +224,11 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
     setError('')
     setResult(null)
     try {
-      const data = await runPaths(editingPath.steps)
+      const data = await runPaths(
+        editingPath.steps, 
+        editingPath.max_step_gap_minutes, 
+        isUnsaved ? null : selectedPathId
+      )
       if (runIdRef.current === thisRunId) {
         setResult(data)
       }
@@ -321,11 +334,27 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
     setCreatingCohort(`${cohortId}-${stepIdx}-${type}`)
     setShowNamingModal(null)
     
+    const effectivePathId = isUnsaved ? null : selectedPathId
+
     try {
       if (type === 'reached') {
-        await createPathsReachedCohort(cohortId, stepIdx, editingPath.steps, nameToUse)
+        await createPathsReachedCohort(
+          cohortId, 
+          stepIdx, 
+          editingPath.steps, 
+          nameToUse, 
+          editingPath.max_step_gap_minutes,
+          effectivePathId
+        )
       } else {
-        await createPathsDropOffCohort(cohortId, stepIdx, editingPath.steps, nameToUse)
+        await createPathsDropOffCohort(
+          cohortId, 
+          stepIdx, 
+          editingPath.steps, 
+          nameToUse, 
+          editingPath.max_step_gap_minutes,
+          effectivePathId
+        )
       }
       if (onRefreshCohorts) onRefreshCohorts()
     } catch (err) {
@@ -398,10 +427,14 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
             📸 Add to Export
         </button>
       </div>
-      
-      {selectedPathBase && !selectedPathBase.is_valid && (
-        <div className="funnel-invalid-notice animate-fade-in">
-          ⚠️ This path is not applicable to the current dataset — {selectedPathBase.invalid_reason}
+
+      {result && result.max_step_gap_minutes !== null && result.max_step_gap_minutes !== undefined && (
+        <div className="funnel-notice animate-fade-in" style={{ background: '#f8fafc', border: '1px solid #e2e8f0', color: '#475569' }}>
+          ⏱ Max time between steps: <strong>{formatStepGap(result.max_step_gap_minutes)}</strong> (Each step must occur within {formatStepGap(result.max_step_gap_minutes)} of the{' '}
+          <span className="tooltip-trigger" style={{ textDecoration: 'underline', cursor: 'help' }}>
+            previous step
+            <span className="tooltip-content">Time is measured from when the user completes the previous step</span>
+          </span>)
         </div>
       )}
 
@@ -603,6 +636,18 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         .funnel-bar-dropoff { color: #dc2626; font-weight: 700; }
         .paths-funnel-chart-section { padding-bottom: 0px !important; }
         .paths-results { display: flex; flex-direction: column; gap: 12px; }
+
+        .tooltip-trigger { position: relative; display: inline-block; }
+        .tooltip-content {
+          visibility: hidden; width: 220px; background-color: #334155; color: #fff; text-align: center;
+          border-radius: 6px; padding: 8px; position: absolute; z-index: 10002; bottom: 125%; left: 50%;
+          margin-left: -110px; opacity: 0; transition: opacity 0.3s; font-size: 12px; font-weight: normal; line-height: 1.4;
+          box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1); pointer-events: none;
+        }
+        .tooltip-trigger:hover .tooltip-content { visibility: visible; opacity: 1; }
+        .tooltip-content::after {
+          content: ""; position: absolute; top: 100%; left: 50%; margin-left: -5px; border-width: 5px; border-style: solid; border-color: #334155 transparent transparent transparent;
+        }
       `}</style>
       {activeDropdown && createPortal(
         <div 

@@ -396,15 +396,19 @@ export async function deletePath(pathId) {
   return request(`/paths/${pathId}`, { method: 'DELETE' })
 }
 
-export async function runPaths(steps) {
+export async function runPaths(steps, maxStepGapMinutes = null, pathId = null) {
   return request('/paths/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ steps }),
+    body: JSON.stringify({ 
+      steps, 
+      max_step_gap_minutes: maxStepGapMinutes,
+      path_id: pathId
+    }),
   })
 }
 
-export async function createPathsDropOffCohort(cohortId, stepIndex, steps, cohortName) {
+export async function createPathsDropOffCohort(cohortId, stepIndex, steps, cohortName, maxStepGapMinutes = null, pathId = null) {
   return request('/paths/create-dropoff-cohort', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -412,12 +416,14 @@ export async function createPathsDropOffCohort(cohortId, stepIndex, steps, cohor
       cohort_id: cohortId, 
       step_index: stepIndex, 
       steps,
+      max_step_gap_minutes: maxStepGapMinutes,
+      path_id: pathId,
       cohort_name: cohortName
     }),
   })
 }
 
-export async function createPathsReachedCohort(cohortId, stepIndex, steps, cohortName) {
+export async function createPathsReachedCohort(cohortId, stepIndex, steps, cohortName, maxStepGapMinutes = null, pathId = null) {
   return request('/paths/create-reached-cohort', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -425,6 +431,8 @@ export async function createPathsReachedCohort(cohortId, stepIndex, steps, cohor
       cohort_id: cohortId, 
       step_index: stepIndex, 
       steps,
+      max_step_gap_minutes: maxStepGapMinutes,
+      path_id: pathId,
       cohort_name: cohortName
     }),
   })

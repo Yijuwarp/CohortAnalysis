@@ -19,15 +19,18 @@ class PathStep(BaseModel):
 class CreatePathRequest(BaseModel):
     name: str
     steps: List[PathStep] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
+    max_step_gap_minutes: Optional[int] = None
 
 class UpdatePathRequest(BaseModel):
     name: str
     steps: List[PathStep] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
+    max_step_gap_minutes: Optional[int] = None
 
 class PathDetail(BaseModel):
     id: int
     name: str
     steps: List[PathStep]
+    max_step_gap_minutes: Optional[int] = None
     is_valid: bool
     invalid_reason: Optional[str] = None
     created_at: str
@@ -35,17 +38,23 @@ class PathDetail(BaseModel):
 class RunPathsRequest(BaseModel):
     # Support both raw string steps (backward compat) and complex PathStep objects
     steps: Union[List[str], List[PathStep]] = Field(..., min_length=MIN_PATHS_STEPS, max_length=MAX_PATHS_STEPS)
+    path_id: Optional[int] = None
+    max_step_gap_minutes: Optional[int] = None
 
 class CreateDropOffCohortRequest(BaseModel):
     cohort_id: int
     step_index: int
     steps: Union[List[str], List[PathStep]]
+    path_id: Optional[int] = None
+    max_step_gap_minutes: Optional[int] = None
     cohort_name: Optional[str] = None
 
 class CreateReachedCohortRequest(BaseModel):
     cohort_id: int
     step_index: int
     steps: Union[List[str], List[PathStep]]
+    path_id: Optional[int] = None
+    max_step_gap_minutes: Optional[int] = None
     cohort_name: Optional[str] = None
 
 class PathsStepResult(BaseModel):
@@ -67,5 +76,6 @@ class PathsCohortResult(BaseModel):
 
 class PathsResponse(BaseModel):
     steps: List[str]
+    max_step_gap_minutes: Optional[int] = None
     results: List[PathsCohortResult]
     global_insights: List[str] = Field(default_factory=list)
