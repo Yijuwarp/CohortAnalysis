@@ -1,7 +1,7 @@
 """
 Short summary: exports API routers grouped by capability.
 """
-from . import analytics_router, cohorts_router, comparison_router, filters_router, funnels_router, mapping_router, metadata_router, revenue_router, upload_router
+from . import analytics_router, cohorts_router, comparison_router, filters_router, mapping_router, metadata_router, revenue_router, upload_router, saved_cohorts_router, paths_router
 
 __all__ = [
     "upload_router",
@@ -12,5 +12,6 @@ __all__ = [
     "revenue_router",
     "metadata_router",
     "comparison_router",
-    "funnels_router",
+    "saved_cohorts_router",
+    "paths_router",
 ]
