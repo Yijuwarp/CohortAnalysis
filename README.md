@@ -8,11 +8,11 @@ High-performance, event-based cohort analysis platform with a FastAPI + DuckDB b
 - **Data Normalization**: Canonical event transformation with grouped aggregation.
 - **Dynamic Scoping**: Real-time dataset filtering by date ranges and properties.
 - **Cohort Engine**: Powerful frequency-based cohort creation with `AND`/`OR` logic and property filters.
-- **Retention Analytics**: Periodic user retention with optional confidence intervals.
+- **Retention Analytics**: Periodic user retention with optional confidence intervals and multiple algorithms (Classic, Ever-After).
 - **Usage & Frequency**: Analyze event volume, unique users, and activity frequency.
 - **Monetization**: Detailed revenue analysis with inclusion toggles and value overrides.
-- **Funnels**: Multi-step conversion tracking with greedy path matching.
-- **Event Flows**: Incremental table-based transition analysis to explore user behavior paths.
+- **Paths (Sequence Analysis)**: Multi-step conversion tracking with deterministic greedy matching and drop-off analysis.
+- **Event Flows**: Incremental transition analysis (L1/L2) to explore user behavior paths.
 - **User Explorer**: Deep-dive into individual user activity timelines and properties.
 
 ## 📚 Documentation
@@ -27,7 +27,7 @@ For detailed information, please refer to:
 ## Tech Stack
 
 - **Backend**: FastAPI, DuckDB, pandas, Pydantic.
-- **Frontend**: React, Vite, Vanilla CSS.
+- **Frontend**: React (Hooks), Vite, Vanilla CSS.
 - **Testing**: pytest (backend), vitest (frontend).
 
 ## Quick Start
@@ -48,7 +48,7 @@ For detailed information, please refer to:
 
 - **Upload**: Accepts `.csv` only; requires `user_id`, `event_name`, and `event_time`.
 - **Cohorts**: Max 5 conditions per cohort; `min_event_count >= 1`.
-- **Funnels**: 2-10 steps; optional conversion window.
+- **Paths**: 2-10 steps; sequential matching with property filter support.
 - **Analytics**: `max_day` defaults to 7.
 - **DuckDB**: Uses a local file `backend/cohort_analysis.duckdb` for persistence.
 

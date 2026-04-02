@@ -1,47 +1,64 @@
 # Ingestion Pipeline
 
-## Step 1: Upload (`POST /upload`)
-- Validates filename ends with `.csv`.
-- Creates/replaces raw table `events` using DuckDB `read_csv_auto`.
-- Returns:
-  - `rows_imported`
-  - `columns`
-  - `detected_types`
-  - `mapping_suggestions`
+The Ingestion Pipeline is responsible for transforming raw CSV data into a canonical, analytical format, while establishing the initial system state and scope.
 
-## Step 2: Map columns (`POST /map-columns`)
-Request model:
-- `user_id_column` (required)
-- `event_name_column` (required)
-- `event_time_column` (required)
-- `event_count_column` (optional)
-- `revenue_column` (optional)
-- `column_types` (optional type overrides)
+## Phase 1: Upload (`POST /upload`)
 
-Validation highlights:
-- Required mapped fields must exist in `events`.
-- Required semantic types: user_id TEXT, event_name TEXT, event_time TIMESTAMP.
-- Optional `event_count_column` and `revenue_column` must be NUMERIC.
-- `event_time` must not be null/empty.
-- If `event_count_column` exists, value must be integer >= 1.
+- **Validation**: Ensures the uploaded filename ends with `.csv`.
+- **Ingestion**: Uses DuckDB's `read_csv_auto` to create the raw `events` table directly from the file stream.
+- **Metadata Detection**:
+  - `rows_imported`: Total row count.
+  - `columns`: List of all detected column names.
+  - `detected_types`: DuckDB-inferred types categorized into semantically relevant classes for the frontend.
+  - `mapping_suggestions`: Automatically identifies potential candidates for `user_id`, `event_name`, and `event_time` based on naming patterns.
 
-Normalization behavior:
-- Creates `events_normalized` via grouped aggregation.
-- Groups by canonical columns + metadata columns.
-- Aggregates:
-  - `event_count` (sum or count)
-  - `original_revenue` (sum or 0)
-  - `modified_revenue` initialized from original
+---
 
-Post-normalization reset/init:
-- Clears cohort tables (`cohort_membership`, `cohort_activity_snapshot`, `cohort_conditions`, `cohorts`).
-- Initializes scope table/data (`events_scoped`, `dataset_scope`).
-- Initializes revenue config table when revenue mapping is provided.
-- Creates All Users cohort.
+## Phase 2: Mapping (`POST /map-columns`)
 
-## Step 3: Scope (`POST /apply-filters`)
-- Validates filter columns/operators against normalized schema.
-- Rebuilds `events_scoped` with SQL `WHERE` from date range + filter list.
-- Recomputes modified revenue fields for scoped table.
-- Updates `dataset_scope` counts and filter JSON.
-- Rebuilds cohort memberships and activity snapshots.
+The mapping phase initializes the Analytical Workspace by creating a canonical dataset.
+
+### 1. Schema Derivation
+The system creates `events_normalized` from the raw `events` table by performing a **Grouped Aggregation**.
+- **Grouping**: Data is grouped by its canonical columns (`user_id`, `event_name`, `event_time`) and **all metadata columns** to reduce redundancy while preserving filterable context.
+- **Aggregation**:
+  - `original_event_count`: The `SUM` of the source `event_count` column or a `COUNT(*)` if no count column was mapped.
+  - `original_revenue`: The `SUM` of the source `revenue` column or `0.0`.
+  - `modified_revenue`: Initialized as a copy of `original_revenue`, used for downstream value overrides.
+
+### 2. Validation & Quality Rules
+- **Non-Nullable**: `user_id`, `event_name`, and `event_time` must not be null or empty string.
+- **Type Constraints**: `event_time` must be castable to a `TIMESTAMP`; revenue and count columns must be numeric.
+- **Data Integrity**: Rows with `event_count < 1` are filtered or treated as errors depending on strictness settings.
+
+### 3. Workspace Initialization
+Successful mapping triggers a comprehensive system reset:
+- **Clear Previous State**: Purges existing `cohorts`, `cohort_conditions`, `cohort_membership`, and `cohort_activity_snapshot`.
+- **Initial Scope**: Creates the `events_scoped` dataset as a base view over `events_normalized`.
+- **Core Population**: Automatically creates and materializes the "All Users" cohort.
+- **Revenue Configuration**: If a revenue column was mapped, initializes the `revenue_event_selection` table with all unique events.
+
+---
+
+## Phase 3: Scoping (`POST /apply-filters`)
+
+Scoping allows users to define a refined "Active" dataset for all analytics.
+
+### 1. Target Validation
+Validates every active filter (`column`, `operator`, `value`) against the `events_normalized` schema and its detected types.
+
+### 2. Scope Rebuild
+Recreates the `events_scoped` view using a dynamic SQL `WHERE` clause built from the user's active filter set and date range.
+
+### 3. Cascading Materialization
+> [!IMPORTANT]
+> **Materialization Trigger**: Every successful `/apply-filters` call **MUST** trigger a full re-materialization of `cohort_membership` and `cohort_activity_snapshot` for all active cohorts to ensure the entire system operates on a consistent dataset.
+
+---
+
+## Phase 4: Column Type Detection Logic
+
+Column types are semantically categorized to govern UI filter behavior:
+- **NUMERIC**: Supports range and equality operators ($>, <, \ge, \le, =, \ne, IN, NOT IN$).
+- **TEXT**: Supports equality and set operators ($=, \ne, IN, NOT IN$).
+- **TIMESTAMP/DATE**: Supports time-based range filtering and relative offsets.

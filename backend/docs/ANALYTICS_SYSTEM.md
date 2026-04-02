@@ -1,154 +1,110 @@
 # Analytics System
 
+This document describes the analytical models and data source rules implemented in the backend.
+
+## Data Source Rules
+
+To ensure consistency and performance, all analytics must adhere to the following source rules:
+
+| Module | Base Dataset | Filtering / Metadata Layer | Notes |
+| :--- | :--- | :--- | :--- |
+| **Retention** | `cohort_activity_snapshot` | `events_scoped` | Only join for filter verification. |
+| **Flows** | `cohort_activity_snapshot` | `events_scoped` | Snapshot is the transition source. |
+| **Paths** | `cohort_activity_snapshot` | `events_scoped` | **Snapshot** is the mandatory base. Join **Scoped** for per-step filters. |
+| **Monetization** | `cohort_activity_snapshot` | `events_scoped` | Join for `modified_revenue` + `revenue_event_selection`. |
+| **Usage / Freq** | `events_scoped` | `cohort_membership` | **Scoped** as base, aligned with **Membership** using `join_time`. |
+
+### Allowed vs Forbidden Joins
+
+*   **ALLOWED**: `snapshot` ↔ `scoped` (filters), `snapshot` ↔ `membership`.
+*   **FORBIDDEN**: `normalized` ↔ `analytics`, `raw events` ↔ `analytics`.
+
+---
+
 ## Retention (`GET /retention`)
-Query params:
+Computes periodic active user counts per cohort.
+
+**Query Params**:
 - `max_day` (default 7)
 - `retention_event` (optional; `any` behavior when omitted)
 - `include_ci` (default false)
-- `confidence` (0.90, 0.95, or 0.99)
+- `retention_type` (classic | ever-after)
 
-Response:
-- `max_day`
-- `retention_event`
-- `retention_table[]` with:
-  - `cohort_id`, `cohort_name`, `size`
-  - `retention` object keyed by day string
-  - optional `retention_ci` object keyed by day string
+**Logic**:
+- **Classic**: User is active if they perform an event ON the specific day/interval relative to their `join_time`.
+- **Ever-After**: User is active if they perform an event ON or AFTER the specific day/interval.
+- Uses `cohort_activity_snapshot` for high performance.
+- Confidence intervals use the **Wilson score interval**.
 
-Computation notes:
-- Day number = date diff between `join_time` and activity date.
-- Active users are distinct users per cohort/day.
-- Hidden cohorts are excluded.
-- CI uses Wilson score interval.
+---
 
 ## Usage (`GET /usage`)
-Query params:
+Analyzes event volume and unique user activity.
+
+**Query Params**:
 - `event` (required)
 - `max_day` (default 7)
 - `retention_event` (optional)
 
-Response:
-- `usage_volume_table[]` (total event counts by cohort/day)
-- `usage_users_table[]` (distinct users by cohort/day)
-- `retained_users_table[]` (retention denominator context)
+**Logic**:
+- Uses `events_scoped` directly to support property-level filtering.
+- Activity is aligned with `cohort_membership` using `join_time` offsets.
+- Provides `usage_volume_table`, `usage_users_table`, and `retained_users_table`.
 
-Computation notes:
-- Uses `events_scoped` and cohort membership join-time offsets.
-- Returns empty tables if scoped data/cohorts/event are unavailable.
+---
 
 ## Monetization (`GET /monetization`)
-Query params:
-- `max_day` (default 7; invalid/non-positive values are normalized to 7 by router)
+Analyzes revenue generation and user value.
 
-Response:
-- `revenue_table[]`: per cohort/day `revenue` and `event_count`
-- `cohort_sizes[]`
-- `retained_users_table[]`
+**Query Params**:
+- `max_day` (default 7)
 
-Computation notes:
+**Logic**:
+- Uses `cohort_activity_snapshot` joined with `events_scoped` to access `modified_revenue`.
 - Includes only events marked `is_included = TRUE` in `revenue_event_selection`.
-- Uses `modified_revenue` and `modified_event_count` from `events_scoped`.
+- Respects cohort `join_time` offsets and filters.
 
-## Flow Analytics
+---
 
-### Endpoints
+## Sequence Analysis (Paths) (`POST /paths/run`)
+Triggers multi-step conversion and drop-off analysis across active cohorts.
 
-#### `GET /flow/l1`
-Query params:
-- `start_event` (required) – the anchor event to compute flows from/to
-- `direction` – `forward` (default) or `reverse`
+**Logic: Earliest Greedy Matching**
+- **Sequential**: Matching starts from step 1 and proceeds sequentially to step $N$.
+- **Greedy**: For each step, the system finds the **earliest** valid event occurrence after the previous step's match.
+- **Deterministic**: Ties in timestamps are broken using internal row identifiers (`rn`).
+- **Constraints**: Each step $N$ must satisfy $t_N > t_{N-1}$ (or higher row ID if $t_N = t_{N-1}$).
 
-Response:
-```json
-{
-  "rows": [
-    {
-      "path": ["start_event", "next_event"],
-      "values": {
-        "<cohort_id>": { "count": 42, "pct": 0.42 }
-      },
-      "expandable": true
-    }
-  ]
-}
-```
+**Source**:
+- Uses `cohort_activity_snapshot` as the mandatory base event stream.
+- Joins `events_scoped` ONLY when per-step property filters are present.
 
-#### `GET /flow/l2`
-Query params:
-- `start_event` (required) – the original anchor event
-- `parent_event` (required) – the L1 step to expand (i.e., the event clicked at L1)
-- `direction` – `forward` (default) or `reverse`
+**Drop-off Calculation**:
+- Users who matched step $N$ but did not match step $N+1$ (calculated via ANTI JOIN logic).
 
-Response:
-```json
-{
-  "parent_path": ["start_event", "parent_event"],
-  "rows": [
-    {
-      "path": ["start_event", "parent_event", "next_event"],
-      "values": {
-        "<cohort_id>": { "count": 22, "pct": 0.22 }
-      }
-    }
-  ]
-}
-```
+---
 
-### Behavior
+## Flow Analytics (`GET /flow/l1`, `GET /flow/l2`)
+Sankey-style event transition analysis.
 
-- **Event-anchored flow analysis**: All flows are anchored to the first occurrence of `start_event` per user per cohort.
-- **First-occurrence-per-user**: Only the earliest `start_event` per user is used as the anchor — repeated occurrences are ignored.
-- **User-based percentages**: `pct = users_following_path / users_who_performed_start_event` (per cohort).
-- **Top-3 + Other**: Only the top-3 events by user count are returned as named rows. The rest are collapsed into a single "Other" row.
-- **"Other" row**: Computed in Python (not SQL). Never expandable. Only included when count > 0.
-- **Self-loop exclusion**: Transitions from an event to itself are excluded.
-- **Forward direction**: `start_event → next_event → second_event`
-- **Reverse direction**: `second_event → prev_event → start_event` (looks backward in time)
-- **Expandable flag**: `true` for named top-3 rows (potential L2 expansion), always `false` for "Other".
-- **Sorting**: Rows sorted by pct of the first visible cohort (descending), secondary sort by count.
+**Logic**:
+- **Event-anchored**: Flows are anchored to the **first occurrence** of `start_event` per user within the cohort.
+- **User-based percentages**: Counts users following a path, not total events.
+- **Top-K Grouping**: Top-3 events are named; the rest are collapsed into an "Other" row.
+- **Source**: Uses `cohort_activity_snapshot` exclusively.
 
-### Computation Notes
-
-- Uses `cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)`.
-- All non-hidden active cohorts are included; results returned in a single response.
-- L2 denominator = users who performed `start_event` (same as L1).
-- L2 computation is lazy — only triggered by an explicit `GET /flow/l2` request.
-- Window functions (`ROW_NUMBER`) are used instead of `DISTINCT` for correctness on multi-event users.
-- All returned numeric types are Python-native `int` / `float` (no numpy).
-
-## Funnel Analytics (`POST /funnels/run`)
-
-### Behavior
-- **Greedy Matching**: Funnels use a greedy earliest-path matching algorithm. For each step in the funnel, the system searches for the earliest valid event that occurs after the previous step's matched event.
-- **Conversion Window**: Supports optional time-bound conversion windows (e.g., "within 30 minutes"). If no window is specified, it defaults to "lifetime" (within the active scope).
-- **Step Ordering**: The frontend sends a sequential list of events. The backend enforces this order during the join process.
-
-### Response
-- `funnel_results[]`:
-    - `step_name`, `count`, `conversion_rate`, `drop_off_rate`.
+---
 
 ## User Explorer (`GET /user-explorer`)
+Deep-dive into individual user activity.
 
-### Behavior
-- **Timeline View**: Provides a chronologically ordered list of all events performed by a specific user within the active scope.
-- **Search & Filter**: Supports searching for specific event names within the user's timeline.
-- **Pagination**: Results are paginated to handle users with extremely high event volumes.
+**Logic**:
+- **Timeline View**: Chronological list of all events for a specific user within the active scope.
+- **Source**: Queries `events_scoped` directly to provide full metadata for each event.
 
-### Response
-- `events[]`: Detailed list of events with timestamps and all associated property metadata.
-- `user_properties`: A summary of the user's stable properties (extracted from the most recent events).
+---
 
-## Statistical Testing
-
-Primary test: Mann-Whitney U (non-parametric)
-Secondary test: Welch’s t-test (diagnostic only)
-
-Rationale:
-- Monetization data is skewed
-- Mann-Whitney is robust to outliers and non-normal distributions
-
-### Edge Case Behavior
-
-If both cohorts have zero variance:
-→ p_value = null
-→ comparison not shown as significant
+## Statistical Testing (Comparison)
+- **Primary Test**: Mann-Whitney U (non-parametric).
+- **Rationale**: Analytics data (especially revenue) is often skewed; Mann-Whitney is robust to outliers and non-normal distributions.
+- **Edge cases**: If variance is zero for either cohort, $p\_value$ returns `null`.
