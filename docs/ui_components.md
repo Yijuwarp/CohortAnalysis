@@ -30,12 +30,11 @@
 
 - `MonetizationTable.jsx` + `MonetizationGraph.jsx`
   - Uses `/monetization`
-  - Supports multiple monetization metrics and projection features
-  - Integrates `TunePredictionPane.jsx` for interactive model tuning
+  - Uses `events_scoped` joined with `cohort_membership`
 
-- `FunnelPane.jsx`
-  - Uses `/funnels/run`
-  - Interactive conversion funnel builder and visualization
+- `PathsPane.jsx`
+  - Uses `/paths/run`, `/paths/create-dropoff-cohort`, `/paths/create-reached-cohort`
+  - Interactive multi-step sequence builder with per-step filters
 
 - `FlowPane.jsx`
   - Uses `/flow/l1`, `/flow/l2`
@@ -47,4 +46,4 @@
 
 ## Shared helpers
 - `SearchableSelect.jsx`: reusable searchable dropdown.
-- `frontend/src/utils/*`: date, formatting, cohort colors, prediction helpers.
+- `frontend/src/utils/*`: date, formatting, cohort colors, export helpers.
