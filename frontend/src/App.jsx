@@ -59,7 +59,12 @@ export default function App() {
   const [selectedRetentionEvent, setSelectedRetentionEvent] = useState(persisted?.selectedRetentionEvent || 'any')
   const [globalMaxDay, setGlobalMaxDay] = useState(persisted?.globalMaxDay || 7)
   const [detectedMaxDay, setDetectedMaxDay] = useState(persisted?.detectedMaxDay || null)
-  const [activeTab, setActiveTab] = useState(persisted?.activeTab || 'retention')
+  const [activeTab, setActiveTab] = useState(() => {
+    const raw = persisted?.activeTab || 'retention'
+    // Safety: if the persisted tab is 'funnel' (which is now removed) or isn't in our allowed set, default to 'retention'
+    const validTabs = ['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer']
+    return validTabs.includes(raw) ? raw : 'retention'
+  })
   const [banner, setBanner] = useState('')
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState('')

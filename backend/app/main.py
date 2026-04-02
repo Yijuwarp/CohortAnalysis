@@ -10,7 +10,6 @@ from app.routers import (
     cohorts_router,
     comparison_router,
     filters_router,
-    funnels_router,
     mapping_router,
     metadata_router,
     revenue_router,
@@ -48,7 +47,6 @@ for router in (
     revenue_router.router,
     metadata_router.router,
     comparison_router.router,
-    funnels_router.router,
     saved_cohorts_router.router,
     paths_router.router,
 ):
