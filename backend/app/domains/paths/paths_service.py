@@ -22,9 +22,14 @@ def ensure_path_tables(conn: duckdb.DuckDBPyConnection) -> None:
         CREATE TABLE IF NOT EXISTS paths (
             id INTEGER PRIMARY KEY,
             name TEXT NOT NULL,
+            max_step_gap_minutes INTEGER,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Migration: Add column if it doesn't exist
+    cols = conn.execute("PRAGMA table_info('paths')").fetchall()
+    if not any(col[1] == 'max_step_gap_minutes' for col in cols):
+        conn.execute("ALTER TABLE paths ADD COLUMN max_step_gap_minutes INTEGER")
     conn.execute("CREATE SEQUENCE IF NOT EXISTS paths_id_seq START 1")
 
     conn.execute("""
@@ -118,11 +123,11 @@ def validate_path(conn: duckdb.DuckDBPyConnection, steps: List[PathStep]) -> Opt
 # CRUD
 # ---------------------------------------------------------------------------
 
-def create_path(conn: duckdb.DuckDBPyConnection, name: str, steps: List[PathStep]) -> PathDetail:
+def create_path(conn: duckdb.DuckDBPyConnection, name: str, steps: List[PathStep], max_step_gap_minutes: Optional[int] = None) -> PathDetail:
     ensure_path_tables(conn)
     path_id = conn.execute(
-        "INSERT INTO paths (id, name, created_at) VALUES (nextval('paths_id_seq'), ?, ?) RETURNING id",
-        [name, datetime.now(timezone.utc)]
+        "INSERT INTO paths (id, name, max_step_gap_minutes, created_at) VALUES (nextval('paths_id_seq'), ?, ?, ?) RETURNING id",
+        [name, max_step_gap_minutes, datetime.now(timezone.utc)]
     ).fetchone()[0]
 
     for step in steps:
@@ -148,12 +153,13 @@ def create_path(conn: duckdb.DuckDBPyConnection, name: str, steps: List[PathStep
         steps=steps,
         is_valid=(reason is None),
         invalid_reason=reason,
+        max_step_gap_minutes=max_step_gap_minutes,
         created_at=datetime.now(timezone.utc).isoformat()
     )
 
-def update_path(conn: duckdb.DuckDBPyConnection, path_id: int, name: str, steps: List[PathStep]) -> PathDetail:
+def update_path(conn: duckdb.DuckDBPyConnection, path_id: int, name: str, steps: List[PathStep], max_step_gap_minutes: Optional[int] = None) -> PathDetail:
     ensure_path_tables(conn)
-    conn.execute("UPDATE paths SET name = ? WHERE id = ?", [name, path_id])
+    conn.execute("UPDATE paths SET name = ?, max_step_gap_minutes = ? WHERE id = ?", [name, max_step_gap_minutes, path_id])
     
     # Delete sequences
     old_step_ids = [r[0] for r in conn.execute("SELECT id FROM path_steps WHERE path_id = ?", [path_id]).fetchall()]
@@ -185,36 +191,44 @@ def update_path(conn: duckdb.DuckDBPyConnection, path_id: int, name: str, steps:
         steps=steps,
         is_valid=(reason is None),
         invalid_reason=reason,
+        max_step_gap_minutes=max_step_gap_minutes,
         created_at=datetime.now(timezone.utc).isoformat()
+    )
+
+def get_path_by_id(conn: duckdb.DuckDBPyConnection, path_id: int) -> PathDetail:
+    """Helper to fetch a single path by ID with all its steps and filters."""
+    rows = conn.execute("SELECT id, name, max_step_gap_minutes, created_at FROM paths WHERE id = ?", [path_id]).fetchall()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"Path with ID {path_id} not found")
+    
+    pid, name, max_step_gap_minutes, created_at = rows[0]
+    step_rows = conn.execute("SELECT id, step_order, event_name FROM path_steps WHERE path_id = ? ORDER BY step_order", [pid]).fetchall()
+    steps = []
+    for sid, s_order, s_event in step_rows:
+        filter_rows = conn.execute("SELECT property_key, property_value, property_type FROM path_step_filters WHERE step_id = ? ORDER BY id", [sid]).fetchall()
+        filters = []
+        for f_key, f_val, f_type in filter_rows:
+            typed_val = f_val
+            if f_type == 'int': typed_val = int(f_val)
+            elif f_type == 'float': typed_val = float(f_val)
+            filters.append(PathStepFilter(property_key=f_key, property_value=typed_val))
+        steps.append(PathStep(step_order=s_order, event_name=s_event, filters=filters))
+    
+    reason = validate_path(conn, steps)
+    return PathDetail(
+        id=pid,
+        name=name,
+        steps=steps,
+        max_step_gap_minutes=max_step_gap_minutes,
+        is_valid=(reason is None),
+        invalid_reason=reason,
+        created_at=created_at.isoformat() if created_at else ""
     )
 
 def list_paths(conn: duckdb.DuckDBPyConnection) -> List[PathDetail]:
     ensure_path_tables(conn)
-    rows = conn.execute("SELECT id, name, created_at FROM paths ORDER BY id").fetchall()
-    results = []
-    for pid, name, created_at in rows:
-        step_rows = conn.execute("SELECT id, step_order, event_name FROM path_steps WHERE path_id = ? ORDER BY step_order", [pid]).fetchall()
-        steps = []
-        for sid, s_order, s_event in step_rows:
-            filter_rows = conn.execute("SELECT property_key, property_value, property_type FROM path_step_filters WHERE step_id = ? ORDER BY id", [sid]).fetchall()
-            filters = []
-            for f_key, f_val, f_type in filter_rows:
-                typed_val = f_val
-                if f_type == 'int': typed_val = int(f_val)
-                elif f_type == 'float': typed_val = float(f_val)
-                filters.append(PathStepFilter(property_key=f_key, property_value=typed_val))
-            steps.append(PathStep(step_order=s_order, event_name=s_event, filters=filters))
-        
-        reason = validate_path(conn, steps)
-        results.append(PathDetail(
-            id=pid,
-            name=name,
-            steps=steps,
-            is_valid=(reason is None),
-            invalid_reason=reason,
-            created_at=created_at.isoformat() if created_at else ""
-        ))
-    return results
+    rows = conn.execute("SELECT id FROM paths ORDER BY id").fetchall()
+    return [get_path_by_id(conn, r[0]) for r in rows]
 
 def delete_path(conn: duckdb.DuckDBPyConnection, path_id: int) -> bool:
     ensure_path_tables(conn)
@@ -247,7 +261,7 @@ def _build_filter_clause(filters: List[PathStepFilter], col_types: Dict[str, str
     
     return " AND " + " AND ".join(clauses)
 
-def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnection, cohort_id: Optional[int] = None, limit_steps: Optional[int] = None) -> str:
+def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnection, cohort_id: Optional[int] = None, limit_steps: Optional[int] = None, max_step_gap_minutes: Optional[int] = None) -> str:
     """
     Refactored SQL builder for Paths sequence matching.
     Enforces deterministic greedy matching using internal rn as tie-breaker.
@@ -370,7 +384,11 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
         else:
             prev = i
             # Step N: matches the first valid occurrence where (t > prev_t) OR (t = prev_t AND rn > prev_rn)
-            # Greedy earliest match enforced by QUALIFY ROW_NUMBER ... = 1
+            # Optional path-level gap constraint
+            gap_clause = ""
+            if max_step_gap_minutes is not None:
+                gap_clause = f"AND b.event_time <= s.t{prev} + INTERVAL '{max_step_gap_minutes} MINUTES'"
+
             cte = f"""
             step_{s_idx} AS (
               SELECT
@@ -384,6 +402,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
               WHERE b.event_name = '{safe_event}'
                 {filter_clause}
                 AND (b.event_time > s.t{prev} OR (b.event_time = s.t{prev} AND b.rn > s.rn{prev}))
+                {gap_clause}
               QUALIFY ROW_NUMBER() OVER (
                 PARTITION BY s.cohort_id, s.user_id 
                 ORDER BY b.event_time, b.rn
@@ -404,17 +423,24 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
 # Execution
 # ---------------------------------------------------------------------------
 
-def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], List[PathStep]]) -> Dict[str, Any]:
+def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], List[PathStep]], max_step_gap_minutes: Optional[int] = None, path_id: Optional[int] = None) -> Dict[str, Any]:
     """
     Executes Paths analysis with deterministic greedy matching and cross-cohort insights.
+    If path_id is provided, it fetches the path from the DB and uses its configuration, 
+    ignoring input_steps and max_step_gap_minutes from the request.
     """
-    # Normalize input_steps if they are raw strings
-    steps: List[PathStep] = []
-    if all(isinstance(s, str) for s in input_steps):
-        for idx, sname in enumerate(input_steps):
-            steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+    if path_id is not None:
+        path = get_path_by_id(conn, path_id)
+        steps = path.steps
+        max_step_gap_minutes = path.max_step_gap_minutes
     else:
-        steps = input_steps
+        # Normalize input_steps if they are raw strings
+        steps: List[PathStep] = []
+        if all(isinstance(s, str) for s in input_steps):
+            for idx, sname in enumerate(input_steps):
+                steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+        else:
+            steps = input_steps
 
     if len(steps) < 2:
         raise HTTPException(status_code=400, detail="Paths require at least 2 steps")
@@ -434,6 +460,7 @@ def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], Lis
     if not active_cohorts:
         return {
             "steps": [s.event_name for s in steps],
+            "max_step_gap_minutes": max_step_gap_minutes,
             "results": [],
             "global_insights": []
         }
@@ -452,7 +479,7 @@ def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], Lis
 
     # Build Sequence Matching SQL
     # Note: Using steps list which now has filters
-    base_sql = _build_paths_base_query(steps, conn)
+    base_sql = _build_paths_base_query(steps, conn, max_step_gap_minutes=max_step_gap_minutes)
     
     agg_parts = []
     for i in range(len(steps)):
@@ -588,6 +615,7 @@ def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], Lis
 
     return {
         "steps": [s.event_name for s in steps],
+        "max_step_gap_minutes": max_step_gap_minutes,
         "results": results,
         "global_insights": global_insights
     }
@@ -601,22 +629,30 @@ def create_paths_dropoff_cohort(
     cohort_id: int, 
     step_index: int, 
     steps_raw: Union[List[str], List[PathStep]],
+    max_step_gap_minutes: Optional[int] = None,
+    path_id: Optional[int] = None,
     cohort_name: Optional[str] = None
 ) -> Dict[str, Any]:
-    # Normalize steps
-    steps: List[PathStep] = []
-    if all(isinstance(s, str) for s in steps_raw):
-        for idx, sname in enumerate(steps_raw):
-            steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+    # Use path from DB if path_id is provided
+    if path_id is not None:
+        path = get_path_by_id(conn, path_id)
+        steps = path.steps
+        max_step_gap_minutes = path.max_step_gap_minutes
     else:
-        steps = steps_raw
+        # Normalize steps
+        steps: List[PathStep] = []
+        if all(isinstance(s, str) for s in steps_raw):
+            for idx, sname in enumerate(steps_raw):
+                steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+        else:
+            steps = steps_raw
 
     if step_index < 1:
         raise HTTPException(status_code=400, detail="Invalid step index")
     
     # Find users and join_times
     if step_index == 1:
-        find_users_sql = _build_paths_base_query(steps, conn, cohort_id, 1) + f"""
+        find_users_sql = _build_paths_base_query(steps, conn, cohort_id, 1, max_step_gap_minutes=max_step_gap_minutes) + f"""
             SELECT DISTINCT m.user_id, m.join_time
             FROM cohort_membership m
             LEFT JOIN step_1 s ON m.user_id = s.user_id AND m.cohort_id = s.cohort_id
@@ -624,7 +660,7 @@ def create_paths_dropoff_cohort(
               AND s.user_id IS NULL
         """
     else:
-        find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index) + f"""
+        find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index, max_step_gap_minutes=max_step_gap_minutes) + f"""
             SELECT DISTINCT s_prev.user_id, m.join_time
             FROM step_{step_index-1} s_prev
             JOIN cohort_membership m ON s_prev.user_id = m.user_id AND s_prev.cohort_id = m.cohort_id
@@ -657,20 +693,28 @@ def create_paths_reached_cohort(
     cohort_id: int, 
     step_index: int, 
     steps_raw: Union[List[str], List[PathStep]],
+    max_step_gap_minutes: Optional[int] = None,
+    path_id: Optional[int] = None,
     cohort_name: Optional[str] = None
 ) -> Dict[str, Any]:
-    # Normalize steps
-    steps: List[PathStep] = []
-    if all(isinstance(s, str) for s in steps_raw):
-        for idx, sname in enumerate(steps_raw):
-            steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+    # Use path from DB if path_id is provided
+    if path_id is not None:
+        path = get_path_by_id(conn, path_id)
+        steps = path.steps
+        max_step_gap_minutes = path.max_step_gap_minutes
     else:
-        steps = steps_raw
+        # Normalize steps
+        steps: List[PathStep] = []
+        if all(isinstance(s, str) for s in steps_raw):
+            for idx, sname in enumerate(steps_raw):
+                steps.append(PathStep(step_order=idx, event_name=sname, filters=[]))
+        else:
+            steps = steps_raw
 
     if step_index < 1:
         raise HTTPException(status_code=400, detail="Invalid step index")
 
-    find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index) + f"""
+    find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index, max_step_gap_minutes=max_step_gap_minutes) + f"""
         SELECT DISTINCT s.user_id, m.join_time
         FROM step_{step_index} s
         JOIN cohort_membership m ON s.user_id = m.user_id AND s.cohort_id = m.cohort_id

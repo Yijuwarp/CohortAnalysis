@@ -44,6 +44,11 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   
+  const [maxStepGapMinutes, setMaxStepGapMinutes] = useState(null)
+  const [useCustomGap, setUseCustomGap] = useState(false)
+  const [customGapValue, setCustomGapValue] = useState('')
+  const [customGapUnit, setCustomGapUnit] = useState('minutes')
+  
   const [propsByEvent, setPropsByEvent] = useState({})
   const [valuesByProp, setValuesByProp] = useState({})
   const sensors = useSensors(
@@ -84,6 +89,26 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
 
     if (editingPath && editingPath.steps) {
       setName(editingPath.name)
+      const gap = editingPath.max_step_gap_minutes
+      setMaxStepGapMinutes(gap)
+      if (gap !== null && gap !== 10 && gap !== 60 && gap !== 1440) {
+        setUseCustomGap(true)
+        if (gap % 1440 === 0) {
+          setCustomGapValue(gap / 1440)
+          setCustomGapUnit('days')
+        } else if (gap % 60 === 0) {
+          setCustomGapValue(gap / 60)
+          setCustomGapUnit('hours')
+        } else {
+          setCustomGapValue(gap)
+          setCustomGapUnit('minutes')
+        }
+      } else {
+        setUseCustomGap(false)
+        setCustomGapValue('')
+        setCustomGapUnit('minutes')
+      }
+
       // Hydrate
       const hydrate = async () => {
         const hSteps = editingPath.steps.map(s => ({
@@ -113,6 +138,10 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
       hydrate()
     } else {
       setName('')
+      setMaxStepGapMinutes(null)
+      setUseCustomGap(false)
+      setCustomGapValue('')
+      setCustomGapUnit('minutes')
       nextStepIdRef.current = 1
       setSteps([EMPTY_STEP(nextStepIdRef.current++), EMPTY_STEP(nextStepIdRef.current++)])
       setPropsByEvent({})
@@ -188,8 +217,20 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
 
     setSaving(true)
     try {
+      let finalGap = useCustomGap ? parseInt(customGapValue, 10) : maxStepGapMinutes
+      if (useCustomGap) {
+        if (customGapUnit === 'hours') finalGap *= 60
+        if (customGapUnit === 'days') finalGap *= 1440
+      }
+      if (useCustomGap && (isNaN(finalGap) || finalGap <= 0)) {
+        setError('Please enter a valid custom time gap')
+        setSaving(false)
+        return
+      }
+
       const payload = {
         name: trimmedName,
+        max_step_gap_minutes: finalGap,
         steps: steps.map((s, idx) => ({
           event_name: s.event_name,
           step_order: idx,
@@ -236,6 +277,56 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
               placeholder="e.g. Purchase Sequence"
               maxLength={120}
             />
+          </div>
+
+          <div className="funnel-name-field">
+            <label>Max time between steps</label>
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <select
+                value={useCustomGap ? 'custom' : (maxStepGapMinutes === null ? 'null' : String(maxStepGapMinutes))}
+                onChange={e => {
+                  const val = e.target.value
+                  if (val === 'custom') {
+                    setUseCustomGap(true)
+                  } else {
+                    setUseCustomGap(false)
+                    setMaxStepGapMinutes(val === 'null' ? null : parseInt(val, 10))
+                  }
+                }}
+                className="funnel-select"
+                style={{ width: useCustomGap ? '120px' : '100%' }}
+              >
+                <option value="null">Unlimited</option>
+                <option value="10">10 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="1440">1 day</option>
+                <option value="custom">Custom...</option>
+              </select>
+
+              {useCustomGap && (
+                <>
+                  <input
+                    type="number"
+                    value={customGapValue}
+                    onChange={e => setCustomGapValue(e.target.value)}
+                    placeholder="Value"
+                    style={{ width: '80px', padding: '6px' }}
+                    min="1"
+                  />
+                  <select
+                    value={customGapUnit}
+                    onChange={e => setCustomGapUnit(e.target.value)}
+                    className="funnel-select"
+                    style={{ width: '100px' }}
+                  >
+                    <option value="minutes">minutes</option>
+                    <option value="hours">hours</option>
+                    <option value="days">days</option>
+                  </select>
+                </>
+              )}
+            </div>
+            <p className="pane-section-hint">Each step must occur within this window of the previous step.</p>
           </div>
 
           <div className="funnel-steps-section">
@@ -359,6 +450,7 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
         .funnel-step-block:focus-within { z-index: 100 !important; }
         .searchable-select-dropdown { z-index: 10002 !important; transform: translateZ(0); }
         .funnel-modal-footer { z-index: 5; position: relative; background: #f9fafb; }
+        .funnel-select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white; font-size: 14px; }
       `}</style>
     </div>
   )

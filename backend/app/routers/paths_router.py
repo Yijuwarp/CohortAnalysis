@@ -28,7 +28,7 @@ async def create_path_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     try:
-        return create_path(conn, request.name, request.steps)
+        return create_path(conn, request.name, request.steps, request.max_step_gap_minutes)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -39,7 +39,7 @@ async def update_path_endpoint(
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     try:
-        return update_path(conn, path_id, request.name, request.steps)
+        return update_path(conn, path_id, request.name, request.steps, request.max_step_gap_minutes)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -59,7 +59,7 @@ async def run_paths_endpoint(
     request: RunPathsRequest,
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
-    return run_paths(conn, request.steps)
+    return run_paths(conn, request.steps, request.max_step_gap_minutes, request.path_id)
 
 @router.post("/paths/create-dropoff-cohort")
 async def create_dropoff_cohort_endpoint(
@@ -71,6 +71,8 @@ async def create_dropoff_cohort_endpoint(
         request.cohort_id, 
         request.step_index, 
         request.steps,
+        request.max_step_gap_minutes,
+        request.path_id,
         request.cohort_name
     )
 
@@ -84,5 +86,7 @@ async def create_reached_cohort_endpoint(
         request.cohort_id, 
         request.step_index, 
         request.steps,
+        request.max_step_gap_minutes,
+        request.path_id,
         request.cohort_name
     )

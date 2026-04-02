@@ -316,3 +316,146 @@ def test_paths_cohort_visibility_regression(client: TestClient, db_connection: d
     assert res["steps"][2]["users"] == 2 # Step C
     assert res["steps"][2]["conversion_pct"] == 100.0
 
+
+def test_run_paths_with_time_window(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    setup_test_data(db_connection, start_id=3000)
+    # u1: A(10:00), B(10:05), C(10:10) -> All gaps 5 min
+    # u2: A(10:00), B(10:05), C(10:10) -> All gaps 5 min
+    # u4: A(10:00), B(10:05) -> Gap 5 min
+    
+    # Run with 3-minute window
+    response = client.post("/paths/run", json={
+        "steps": ["A", "B", "C"],
+        "max_step_gap_minutes": 3
+    })
+    assert response.status_code == 200
+    res = [r for r in response.json()["results"] if r["cohort_id"] == 3000][0]
+    
+    # Step 1 (A) should have everyone (unconstrained)
+    assert res["steps"][0]["users"] == 5
+    # Step 2 (B) should have 0 users because all gaps are 5 min (> 3 min)
+    assert res["steps"][1]["users"] == 0
+    # Step 3 (C) should also be 0
+    assert res["steps"][2]["users"] == 0
+
+def test_run_paths_unlimited_window(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    setup_test_data(db_connection, start_id=4000)
+    
+    # Run with NULL (unlimited) window
+    response = client.post("/paths/run", json={
+        "steps": ["A", "B", "C"],
+        "max_step_gap_minutes": None
+    })
+    assert response.status_code == 200
+    res = [r for r in response.json()["results"] if r["cohort_id"] == 4000][0]
+    
+    # Normal conversion should happen
+    assert res["steps"][0]["users"] == 5
+    assert res["steps"][1]["users"] == 3
+    assert res["steps"][2]["users"] == 2
+
+def test_dropoff_with_time_window(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    setup_test_data(db_connection, start_id=5000)
+    # u1, u2, u4 have A -> B with 5 min gap
+    
+    # Create drop-off cohort for Step 2 (B) with 3-min window
+    response = client.post("/paths/create-dropoff-cohort", json={
+        "steps": ["A", "B", "C"],
+        "step_index": 2,
+        "cohort_id": 5000,
+        "max_step_gap_minutes": 3
+    })
+    assert response.status_code == 200
+    data = response.json()
+    # Everyone who reached A should drop off because gap to B is 5 min > 3 min
+    assert data["user_count"] == 5 
+
+def test_greedy_no_backtrack_with_window(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    db_connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
+    db_connection.execute("DROP TABLE IF EXISTS cohort_membership")
+    db_connection.execute("DROP TABLE IF EXISTS cohorts")
+    db_connection.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
+    ensure_cohort_tables(db_connection)
+    db_connection.execute("CREATE TABLE IF NOT EXISTS events_normalized (user_id TEXT, event_name TEXT, event_time TIMESTAMP)")
+    
+    # Edge case user:
+    # A at 10:00
+    # B at 10:02 (valid but leads to dead end for C)
+    # B at 10:08 (valid if backtrack allowed, but greedy picks 10:02)
+    # C at 10:09 (valid if prev_B was 10:08, but invalid since prev_B was 10:02)
+    
+    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'A', '2023-01-01 10:00:00')")
+    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'B', '2023-01-01 10:02:00')")
+    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'B', '2023-01-01 10:08:00')")
+    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'C', '2023-01-01 10:09:00')")
+    
+    db_connection.execute("INSERT INTO cohorts (cohort_id, name, is_active) VALUES (6000, 'Greedy Test', TRUE)")
+    db_connection.execute("INSERT INTO cohort_membership (user_id, cohort_id, join_time) VALUES ('u_greedy', 6000, '2023-01-01 00:00:00')")
+    db_connection.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name) SELECT 6000, user_id, event_time, event_name FROM events_normalized")
+    
+    # Run with 5-minute window
+    response = client.post("/paths/run", json={
+        "steps": ["A", "B", "C"],
+        "max_step_gap_minutes": 5
+    })
+    
+    assert response.status_code == 200
+    res = [r for r in response.json()["results"] if r["cohort_id"] == 6000][0]
+    
+    assert res["steps"][0]["users"] == 1 # A@10:00
+    assert res["steps"][1]["users"] == 1 # B@10:02 (gap 2m <= 5m)
+    # Step 3 should be 0 because C@10:09 is 7m after B@10:02. 
+    # Backtracking to B@10:08 is NOT allowed.
+    assert res["steps"][2]["users"] == 0
+
+def test_run_paths_db_priority(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    """
+    Scenario: Saved path has 60 min gap. 
+    Request sends 3 min gap with path_id.
+    Backend MUST use 60 min gap.
+    """
+    setup_test_data(db_connection, start_id=7000)
+    # u1: A(10:00), B(10:05), gap=5
+    
+    # 1. Create a path in DB with 60m gap
+    path_res = client.post("/paths", json={
+        "name": "Test Priority",
+        "steps": [{"event_name": "A", "step_order": 0}, {"event_name": "B", "step_order": 1}],
+        "max_step_gap_minutes": 60
+    })
+    path_id = path_res.json()["id"]
+    
+    # 2. Run with path_id BUT send 3m gap in payload
+    # If it uses 3m -> u1 drops off (0 users at Step 2)
+    # If it uses 60m (DB) -> u1 converts (3 users at Step 2)
+    response = client.post("/paths/run", json={
+        "steps": ["A", "B"],
+        "path_id": path_id,
+        "max_step_gap_minutes": 3 
+    })
+    
+    assert response.status_code == 200
+    res = [r for r in response.json()["results"] if r["cohort_id"] == 7000][0]
+    
+    # Should use 60m from DB
+    assert res["steps"][1]["users"] == 3
+
+def test_run_paths_adhoc(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    """
+    Scenario: No path_id. Use payload.
+    """
+    setup_test_data(db_connection, start_id=8000)
+    
+    # Run with 3m gap, no path_id
+    response = client.post("/paths/run", json={
+        "steps": ["A", "B"],
+        "max_step_gap_minutes": 3,
+        "path_id": None
+    })
+    
+    assert response.status_code == 200
+    res = [r for r in response.json()["results"] if r["cohort_id"] == 8000][0]
+    
+    # Should use 3m from payload -> 0 users
+    assert res["steps"][1]["users"] == 0
+
