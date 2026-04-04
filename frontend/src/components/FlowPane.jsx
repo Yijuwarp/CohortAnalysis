@@ -163,16 +163,17 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
 
                 const sourceUsers = Number(val.parent_users || 0)
                 const targetUsers = Number(val.user_count || 0)
-                const dropOff = sourceUsers > 0 ? (sourceUsers - targetUsers) / sourceUsers : 0
 
                 edges.push({
                   cohort: cohortMap[cId]?.name || `Cohort ${cId}`,
+                  cohort_size: cohortMap[cId]?.size || 0,
                   source_step: node.path.length - 1,
                   source_event: eventName,
+                  source_users: sourceUsers,
                   target_step: node.path.length,
                   target_event: childEvent,
-                  users: targetUsers,
-                  drop_off: Math.max(0, dropOff)
+                  target_users: targetUsers,
+                  transition_pct: sourceUsers > 0 ? targetUsers / sourceUsers : 0
                 })
               })
             })
@@ -191,16 +192,17 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
 
         const sourceUsers = Number(val.parent_users || 0)
         const targetUsers = Number(val.user_count || 0)
-        const dropOff = sourceUsers > 0 ? (sourceUsers - targetUsers) / sourceUsers : 0
 
         edges.push({
           cohort: cohortMap[cId]?.name || `Cohort ${cId}`,
+          cohort_size: cohortMap[cId]?.size || 0,
           source_step: 0,
           source_event: controls.event,
+          source_users: sourceUsers,
           target_step: 1,
           target_event: eventName,
-          users: targetUsers,
-          drop_off: Math.max(0, dropOff)
+          target_users: targetUsers,
+          transition_pct: sourceUsers > 0 ? targetUsers / sourceUsers : 0
         })
       })
     })
@@ -217,12 +219,14 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
         title: `Flow Edge List (${controls.direction === 'forward' ? 'Steps After' : 'Steps Before'} ${controls.event})`,
         columns: [
           { key: 'cohort', label: 'Cohort', type: 'string' },
+          { key: 'cohort_size', label: 'Cohort Size', type: 'number' },
           { key: 'source_step', label: 'Source Step', type: 'number' },
           { key: 'source_event', label: 'Source Event', type: 'string' },
+          { key: 'source_users', label: 'Source Users', type: 'number' },
           { key: 'target_step', label: 'Target Step', type: 'number' },
           { key: 'target_event', label: 'Target Event', type: 'string' },
-          { key: 'users', label: 'Users Transitioned', type: 'number' },
-          { key: 'drop_off', label: 'Drop-off %', type: 'percentage' }
+          { key: 'target_users', label: 'Target Users', type: 'number' },
+          { key: 'transition_pct', label: 'Transition %', type: 'percentage' }
         ],
         data: edges
       }],

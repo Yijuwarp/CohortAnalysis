@@ -246,9 +246,11 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   const handleAddToExport = () => {
     if (!result || !result.results) return
 
-    const tables = result.results.map((cohort, idx) => ({
-      title: `Cohort: ${cohort.cohort_name} (${formatInteger(cohort.cohort_size)} users)`,
+    const tables = [{
+      title: 'Path Analysis Details',
       columns: [
+        { key: 'cohort_name', label: 'Cohort Name', type: 'string' },
+        { key: 'cohort_size', label: 'Cohort Size', type: 'number' },
         { key: 'step', label: 'Step', type: 'number' },
         { key: 'event', label: 'Event', type: 'string' },
         { key: 'users', label: 'Users', type: 'number' },
@@ -258,17 +260,21 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         { key: 'p20', label: 'P20 (s)', type: 'number' },
         { key: 'p80', label: 'P80 (s)', type: 'number' }
       ],
-      data: cohort.steps.map(s => ({
-        step: s.step,
-        event: s.event,
-        users: s.users,
-        conversion_pct: s.conversion_pct / 100,
-        drop_off_pct: s.drop_off_pct !== null ? s.drop_off_pct / 100 : null,
-        mean_time: s.mean_time,
-        p20: s.p20,
-        p80: s.p80
-      }))
-    }))
+      data: result.results.flatMap(cohort => 
+        cohort.steps.map(s => ({
+          cohort_name: cohort.cohort_name,
+          cohort_size: cohort.cohort_size,
+          step: s.step,
+          event: s.event,
+          users: s.users,
+          conversion_pct: s.conversion_pct / 100,
+          drop_off_pct: s.drop_off_pct !== null ? s.drop_off_pct / 100 : null,
+          mean_time: s.mean_time,
+          p20: s.p20,
+          p80: s.p80
+        }))
+      )
+    }]
 
     const payload = {
       id: crypto.randomUUID(),
