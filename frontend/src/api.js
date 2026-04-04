@@ -401,3 +401,10 @@ export async function createPathsReachedCohort(cohortId, stepIndex, steps, cohor
     }),
   })
 }
+export async function runImpactAnalysis(payload) {
+  return request('/impact/run', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  })
+}

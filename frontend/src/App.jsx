@@ -12,6 +12,7 @@ import TopToolbar from './components/TopToolbar'
 import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
 import PathsPane from './components/PathsPane'
+import ExperimentImpactPane from './components/ExperimentImpactPane'
 import { validateExportSnapshot } from './utils/exportValidator'
 import ExportModal from './components/ExportModal'
 
@@ -209,7 +210,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState(() => {
     const raw = persisted?.activeTab || 'retention'
     // Safety: if the persisted tab is 'funnel' (which is now removed) or isn't in our allowed set, default to 'retention'
-    const validTabs = ['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer']
+    const validTabs = ['retention', 'usage', 'monetization', 'paths', 'flow', 'experiment-impact', 'user-explorer']
     return validTabs.includes(raw) ? raw : 'retention'
   })
   const [banner, setBanner] = useState('')
@@ -228,7 +229,7 @@ export default function App() {
   const [appliedFilters, setAppliedFilters] = useState([])
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
 
-  const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'user-explorer'], [])
+  const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'experiment-impact', 'user-explorer'], [])
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
   const [tabRefreshTokens, setTabRefreshTokens] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: 0 }), {}))
   const [tabReloading, setTabReloading] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
@@ -657,7 +658,7 @@ export default function App() {
               <div className="analytics-tabs ui-tabs">
                 {TAB_KEYS.map(key => {
                   const labels = {
-                    retention: 'Retention', usage: 'Usage', monetization: 'Monetization', paths: 'Paths', flow: 'Flows', 'user-explorer': 'User Explorer'
+                    retention: 'Retention', usage: 'Usage', monetization: 'Monetization', paths: 'Paths', flow: 'Flows', 'experiment-impact': 'Experiment Impact', 'user-explorer': 'User Explorer'
                   }
                   return (
                     <button key={key} className={activeTab === key ? 'active' : ''} onClick={() => {
@@ -668,7 +669,7 @@ export default function App() {
                     </button>
                   )
                 })}
-              </div>
+				</div>
 
               {staleTabs[activeTab] && (
                 <div className="stale-banner" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: '8px', marginBottom: '16px' }}>
@@ -750,6 +751,16 @@ export default function App() {
                      onAddToExport={addToExport}
                    />
                  )}
+                 {activeTab === 'experiment-impact' && (
+                    <ExperimentImpactPane
+                      refreshToken={tabRefreshTokens['experiment-impact']}
+                      cohorts={cohorts}
+                      globalMaxDay={globalMaxDay}
+                      appliedFilters={appliedFilters}
+                      state={analyticsState['experiment-impact']}
+                      setState={(s) => updateAnalyticsState('experiment-impact', s)}
+                    />
+                  )}
                  {activeTab === 'user-explorer' && (
                    <UserExplorer
                       state={analyticsState['user-explorer']}
