@@ -2,10 +2,32 @@
 Short summary: service for computing experiment impact metrics.
 """
 import duckdb
+import time
+import uuid
 from fastapi import HTTPException
 from typing import Any, List, Optional, Tuple, Union
 from pydantic import BaseModel
 from app.utils.sql import quote_identifier
+
+# ---------------------------------------------------------------------------
+# Run cache for lazy stats endpoint
+# ---------------------------------------------------------------------------
+IMPACT_RUN_CACHE: dict[str, dict] = {}
+CACHE_TTL_SECONDS = 600   # 10 minutes
+MAX_CACHE_SIZE = 100
+
+
+def _cleanup_cache() -> None:
+    """Evict expired entries and enforce size cap."""
+    now = time.time()
+    expired = [k for k, v in IMPACT_RUN_CACHE.items()
+               if now - v["created_at"] > CACHE_TTL_SECONDS]
+    for k in expired:
+        del IMPACT_RUN_CACHE[k]
+    # Hard cap: evict oldest
+    while len(IMPACT_RUN_CACHE) > MAX_CACHE_SIZE:
+        oldest = min(IMPACT_RUN_CACHE, key=lambda k: IMPACT_RUN_CACHE[k]["created_at"])
+        del IMPACT_RUN_CACHE[oldest]
 
 class ImpactMetricValue(BaseModel):
     value: Optional[float]
@@ -86,6 +108,9 @@ def run_impact_analysis(
     interaction_events: List[Any],
     impact_events: List[Any] = []
 ) -> dict:
+    _cleanup_cache()
+    run_id = str(uuid.uuid4())
+
     all_cohort_ids = [baseline_cohort_id] + variant_cohort_ids
     source_table = get_events_source_table(connection)
     
@@ -116,7 +141,7 @@ def run_impact_analysis(
         JOIN {source_table} es ON cm.user_id = es.user_id
         WHERE cm.cohort_id IN ({ids_str})
           AND es.event_time >= cm.join_time + {int(start_day)} * INTERVAL 1 DAY
-          AND es.event_time <= cm.join_time + {int(end_day)} * INTERVAL 1 DAY
+          AND es.event_time < cm.join_time + ({int(end_day)} + 1) * INTERVAL 1 DAY
         """
     )
 
@@ -164,15 +189,27 @@ def run_impact_analysis(
                 [cid, *event_params]
             ).fetchone()
             event_name = getattr(config, 'event_name', None) or config.get('event_name')
-            reach = (row[0] or 0) / total_users if total_users > 0 else 0
+            event_users = row[0] or 0
+            reach = event_users / total_users if total_users > 0 else 0
             intensity = (row[1] or 0) / total_users if total_users > 0 else 0
-            impact_metrics.append({"event": event_name, "reach": reach, "intensity": intensity})
+            impact_metrics.append({
+                "event": event_name,
+                "reach": reach,
+                "intensity": intensity,
+                "event_users": event_users,
+                "total_users": total_users,
+            })
 
         results[cid] = {
             "exposure_rate": exposure_users / total_users if total_users > 0 else 0,
             "ctr": interaction_users / exposure_users if exposure_users > 0 else None,
             "engagement": interaction_counts / total_users if total_users > 0 else 0,
-            "impact_metrics": impact_metrics
+            "impact_metrics": impact_metrics,
+            # Raw aggregates for stats endpoint
+            "exposure_users": exposure_users,
+            "total_users": total_users,
+            "interaction_users": interaction_users,
+            "interaction_counts": interaction_counts,
         }
 
     # 3. Format response and calculate deltas
@@ -201,14 +238,17 @@ def run_impact_analysis(
     
     # Section 1: Exposure & Interaction
     metrics_list.append({
+        "metric_key": "exposure_rate",
         "metric": "Exposure Rate",
         "values": {str(cid): get_value_with_delta(cid, "exposure_rate") for cid in all_cohort_ids}
     })
     metrics_list.append({
+        "metric_key": "ctr",
         "metric": "CTR",
         "values": {str(cid): get_value_with_delta(cid, "ctr") for cid in all_cohort_ids}
     })
     metrics_list.append({
+        "metric_key": "engagement",
         "metric": "Engagement",
         "values": {str(cid): get_value_with_delta(cid, "engagement") for cid in all_cohort_ids}
     })
@@ -217,15 +257,45 @@ def run_impact_analysis(
     for i, config in enumerate(impact_events):
         event_name = getattr(config, 'event_name', None) or config.get('event_name')
         metrics_list.append({
+            "metric_key": f"{event_name}_reach",
             "metric": f"{event_name} → Reach",
             "values": {str(cid): get_value_with_delta(cid, "impact_metrics", i, "reach") for cid in all_cohort_ids}
         })
         metrics_list.append({
+            "metric_key": f"{event_name}_intensity",
             "metric": f"{event_name} → Intensity",
             "values": {str(cid): get_value_with_delta(cid, "impact_metrics", i, "intensity") for cid in all_cohort_ids}
         })
 
+    # Serialize request for stats endpoint cache
+    def _serialize_events(evts):
+        out = []
+        for e in evts:
+            if isinstance(e, dict):
+                out.append(e)
+            else:
+                out.append({"event_name": getattr(e, 'event_name', str(e)),
+                            "filters": [{"property": f.property, "operator": f.operator, "value": f.value}
+                                        for f in getattr(e, 'filters', [])]})
+        return out
+
+    IMPACT_RUN_CACHE[run_id] = {
+        "created_at": time.time(),
+        "request": {
+            "start_day": start_day,
+            "end_day": end_day,
+            "exposure_events": _serialize_events(exposure_events),
+            "interaction_events": _serialize_events(interaction_events),
+            "impact_events": _serialize_events(impact_events),
+        },
+        "results": results,
+        "baseline_cohort_id": baseline_cohort_id,
+        "all_cohort_ids": all_cohort_ids,
+        "cohort_info": cohort_info,
+    }
+
     return {
+        "run_id": run_id,
         "cohorts": response_cohorts,
         "metrics": metrics_list
     }

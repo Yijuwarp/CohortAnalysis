@@ -4119,6 +4119,19 @@ th.flow-path-col {
   color: #ef4444;
 }
 
+/* Statistical Significance Colors */
+.sig-positive {
+  color: #16a34a !important;
+}
+
+.sig-negative {
+  color: #dc2626 !important;
+}
+
+.sig-neutral {
+  color: #ca8a04 !important;
+}
+
 .impact-metric-row:hover {
   background-color: #f8fafc;
 }
@@ -4133,5 +4146,34 @@ th.flow-path-col {
   padding: 16px;
   display: flex;
   justify-content: space-between;
+}
+
+.impact-events-section-title {
+  margin-top: 24px;
+  margin-bottom: 8px;
+}
+
+.impact-events-section-title h4 {
+  margin: 0;
+  color: #1e293b;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.impact-events-box {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 16px;
+  margin-top: 0;
+  margin-bottom: 24px;
+  background-color: #fcfcfc;
+}
+
+.impact-disclaimer {
+  font-size: 13px;
+  color: #64748b;
+  margin-top: 12px;
+  font-style: italic;
+  opacity: 0.8;
 }
 

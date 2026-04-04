@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { getEventProperties, getEventPropertyValues } from '../api'
 import SearchableSelect from './SearchableSelect'
 
@@ -6,6 +6,24 @@ export default function EventFilterChip({ eventConfig, updateEvent, removeEvent,
   const [properties, setProperties] = useState([])
   const [propertyValuesCache, setPropertyValuesCache] = useState({})
   const [loadingProperties, setLoadingProperties] = useState(false)
+  const chipRef = useRef(null)
+
+  useEffect(() => {
+    if (!isExpanded) return
+
+    const handleDocumentClick = (e) => {
+      if (chipRef.current && !chipRef.current.contains(e.target)) {
+        // Also check if the click is on a portalled SearchableSelect dropdown
+        const isDropdown = e.target.closest('.searchable-select-dropdown')
+        if (!isDropdown) {
+          setExpanded(null)
+        }
+      }
+    }
+
+    document.addEventListener('mousedown', handleDocumentClick)
+    return () => document.removeEventListener('mousedown', handleDocumentClick)
+  }, [isExpanded, setExpanded])
 
   const eventName = eventConfig.event_name
   const filters = eventConfig.filters || []
@@ -50,7 +68,10 @@ export default function EventFilterChip({ eventConfig, updateEvent, removeEvent,
   }
 
   return (
-    <div className={`impact-tag event-filter-chip ${isExpanded ? 'impact-tag-expanded' : ''}`}>
+    <div 
+      className={`impact-tag event-filter-chip ${isExpanded ? 'impact-tag-expanded' : ''}`}
+      ref={chipRef}
+    >
       <div className="chip-header">
         <span className="chip-label" title={eventName}>{getLabel()}</span>
         <div className="chip-actions">
@@ -60,6 +81,7 @@ export default function EventFilterChip({ eventConfig, updateEvent, removeEvent,
           }} title="Toggle filters">⚙️</button>
           <button className="remove-btn" onClick={(e) => {
             e.stopPropagation()
+            setExpanded(null)
             removeEvent()
           }}>×</button>
         </div>

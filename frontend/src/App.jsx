@@ -274,12 +274,14 @@ export default function App() {
   const updateAnalyticsState = useCallback((tab, newState) => {
     setAnalyticsState((prev) => {
       const prevTabState = prev[tab]
-      if (JSON.stringify(prevTabState) === JSON.stringify(newState)) {
+      const nextTabState = typeof newState === 'function' ? newState(prevTabState) : newState
+      
+      if (JSON.stringify(prevTabState) === JSON.stringify(nextTabState)) {
         return prev
       }
       return {
         ...prev,
-        [tab]: newState,
+        [tab]: nextTabState,
       }
     })
   }, [])

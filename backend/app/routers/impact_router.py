@@ -3,7 +3,7 @@ import duckdb
 from typing import List, Optional
 from pydantic import BaseModel, Field
 from app.db.connection import get_connection
-from app.domains.analytics.impact_service import run_impact_analysis
+from app.domains.analytics.impact_service import run_impact_analysis, IMPACT_RUN_CACHE
 
 router = APIRouter()
 
@@ -25,6 +25,9 @@ class ImpactRequest(BaseModel):
     interaction_events: List[EventConfig] = Field(min_length=1)
     impact_events: List[EventConfig] = []
 
+class ImpactStatsRequest(BaseModel):
+    run_id: str
+
 @router.post("/impact/run")
 async def impact_run_endpoint(
     payload: ImpactRequest,
@@ -43,3 +46,21 @@ async def impact_run_endpoint(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+@router.post("/impact/stats")
+async def impact_stats_endpoint(
+    payload: ImpactStatsRequest,
+    conn: duckdb.DuckDBPyConnection = Depends(get_connection)
+):
+    """Lazy statistical significance computation using cached run data."""
+    cached = IMPACT_RUN_CACHE.get(payload.run_id)
+    if not cached:
+        raise HTTPException(status_code=404, detail="Run expired or invalid")
+
+    try:
+        from app.domains.analytics.impact_stats_service import compute_all_stats
+        stats = compute_all_stats(conn, cached)
+        return {"stats": stats}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+

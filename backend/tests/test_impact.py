@@ -52,9 +52,9 @@ def test_impact_accuracy(client):
     res = client.post("/impact/run", json={
         "baseline_cohort_id": b_id,
         "variant_cohort_ids": [v_id],
-        "exposure_events": ["exposure"],
-        "interaction_events": ["interaction"],
-        "impact_events": ["impact_event"]
+        "exposure_events": [{"event_name": "exposure"}],
+        "interaction_events": [{"event_name": "interaction"}],
+        "impact_events": [{"event_name": "impact_event"}]
     })
     if res.status_code != 200:
         print("MY_ERROR", res.text)
@@ -95,8 +95,8 @@ def test_impact_zero_baseline(client):
     res = client.post("/impact/run", json={
         "baseline_cohort_id": b_id,
         "variant_cohort_ids": [v_id],
-        "exposure_events": ["exposure"],
-        "interaction_events": ["interaction"]
+        "exposure_events": [{"event_name": "exposure"}],
+        "interaction_events": [{"event_name": "interaction"}]
     })
     m = next(row for row in res.json()["metrics"] if row["metric"] == "Exposure Rate")
     assert m["values"][str(b_id)]["value"] == 0
@@ -111,8 +111,8 @@ def test_impact_no_exposure(client):
     res = client.post("/impact/run", json={
         "baseline_cohort_id": b_id,
         "variant_cohort_ids": [],
-        "exposure_events": ["not_found"],
-        "interaction_events": ["interaction"]
+        "exposure_events": [{"event_name": "not_found"}],
+        "interaction_events": [{"event_name": "interaction"}]
     })
     m = next(row for row in res.json()["metrics"] if row["metric"] == "CTR")
     assert m["values"][str(b_id)]["value"] is None
