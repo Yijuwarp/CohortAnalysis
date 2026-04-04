@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, Component } from 'react'
 import { getRetention, getScope, listCohorts, listEvents, uploadCSV } from './api'
 import Mapping from './components/Mapping'
 import FilterData from './components/FilterData'
@@ -24,31 +24,178 @@ const ANALYTICS_STORAGE_KEY = 'analytics-state'
 const WORKSPACE_STORAGE_VERSION = 2
 const LEFT_PANE_WIDTH = 600
 
+const REASON_MESSAGES = {
+  version_mismatch: "Your session is outdated after a recent update.",
+  malformed_structure: "The saved data appears to be corrupted.",
+  invalid_flow_state: "The session could not be restored.",
+  unknown: "An unexpected error occurred while loading your session."
+};
+
+const isValidState = (state) => {
+  if (!state || typeof state !== "object") return false;
+  if (!["empty", "mapping", "workspace"].includes(state.appState)) return false;
+
+  // Validate fields required for specific appState
+  if (state.appState === "workspace") {
+    if (!state.datasetMeta || typeof state.datasetMeta !== "object") return false;
+    if (!Array.isArray(state.columns)) return false;
+  }
+  
+  if (state.appState === "mapping") {
+    if (!Array.isArray(state.columns)) return false;
+  }
+
+  return true;
+};
+
 function readPersistedState() {
   try {
     const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY)
-    if (!raw) return null
+    if (!raw) return { status: "EMPTY" }
+    
     const parsed = JSON.parse(raw)
-    if (!parsed || parsed.version !== WORKSPACE_STORAGE_VERSION || typeof parsed.state !== 'object') {
-      return null
+    
+    if (!parsed || typeof parsed !== 'object') {
+       console.warn("Workspace state corrupted (not an object):", { raw });
+       return { status: "CORRUPTED", reason: "malformed_structure" }
     }
-    return parsed.state
-  } catch {
-    return null
+
+    if (parsed.version !== WORKSPACE_STORAGE_VERSION) {
+      console.warn("Workspace state version mismatch:", { expected: WORKSPACE_STORAGE_VERSION, found: parsed.version });
+      return { status: "CORRUPTED", reason: "version_mismatch" }
+    }
+
+    if (!isValidState(parsed.state)) {
+      console.warn("Workspace state failed contract validation:", { state: parsed.state });
+      return { status: "CORRUPTED", reason: "malformed_structure" }
+    }
+
+    return { status: "VALID", state: parsed.state }
+  } catch (err) {
+    console.warn("Workspace state corrupted (parse error):", { err });
+    return { status: "CORRUPTED", reason: "malformed_structure" }
   }
 }
 
 function readAnalyticsState() {
   try {
     const raw = localStorage.getItem(ANALYTICS_STORAGE_KEY)
-    return raw ? JSON.parse(raw) : {}
-  } catch {
+    if (!raw) return {}
+    const parsed = JSON.parse(raw)
+    // Lazy validation: if it's not a valid object, just return empty
+    if (!parsed || typeof parsed !== 'object') {
+      console.warn("Analytics state corrupted, falling back to empty:", { raw });
+      return {};
+    }
+    return parsed
+  } catch (err) {
+    console.warn("Failed to read persisted analytics state:", err)
     return {}
   }
 }
 
+// Global-Aware Reset Dialog
+function ResetDialog({ reason, onReset }) {
+  const message = REASON_MESSAGES[reason] || REASON_MESSAGES.unknown;
+  
+  return (
+    <div className="reset-dialog-overlay" style={{
+      position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      zIndex: 9999, padding: '20px'
+    }}>
+      <div className="card onboarding-card" style={{ maxWidth: '500px', textAlign: 'center' }}>
+        <h2 style={{ color: '#1f2937', marginBottom: '12px' }}>We couldn't restore your last session</h2>
+        <p style={{ color: '#4b5563', marginBottom: '24px' }}>{message}</p>
+        <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+          <button 
+            className="button button-primary"
+            onClick={onReset}
+            style={{ background: '#ef4444', borderColor: '#ef4444' }}
+          >
+            Reset Session & Restart
+          </button>
+          <button 
+            className="button"
+            onClick={() => window.location.reload()}
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Simple Class-based Error Boundary for unforeseen logic bugs
+export class SimpleErrorBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error("Unforeseen runtime crash:", error, errorInfo);
+  }
+
+  handleReset = () => {
+    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    localStorage.removeItem(ANALYTICS_STORAGE_KEY);
+    window.location.reload();
+  };
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="error-boundary-container" style={{ padding: '60px 20px', textAlign: 'center', fontFamily: 'system-ui' }}>
+          <div className="card onboarding-card" style={{ maxWidth: '600px', margin: '0 auto' }}>
+            <h2 style={{ color: '#ef4444', marginBottom: '16px' }}>An unexpected error occurred</h2>
+            <p style={{ color: '#666', marginBottom: '24px' }}>
+              {this.state.error?.message || "A critical error stopped the application from rendering."}
+            </p>
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button 
+                className="button button-primary"
+                onClick={this.handleReset}
+                style={{ background: '#ef4444', borderColor: '#ef4444' }}
+              >
+                Reset Application
+              </button>
+              <button 
+                className="button"
+                onClick={() => window.location.reload()}
+              >
+                Retry
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  const persisted = useMemo(() => readPersistedState(), [])
+  const persistedResult = useMemo(() => readPersistedState(), [])
+  
+  const handleHardReset = () => {
+    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    localStorage.removeItem(ANALYTICS_STORAGE_KEY);
+    window.location.reload();
+  };
+
+  if (persistedResult.status === "CORRUPTED") {
+    return <ResetDialog reason={persistedResult.reason} onReset={handleHardReset} />;
+  }
+
+  const persisted = persistedResult.status === "VALID" ? persistedResult.state : null;
   const fileInputRef = useRef(null)
   const [appState, setAppState] = useState(persisted?.appState || 'empty')
   const [columns, setColumns] = useState(persisted?.columns || [])
@@ -270,7 +417,8 @@ export default function App() {
   }
 
   const handleMappingComplete = async (data) => {
-    clearPersistedState()
+    // We update current state, but clearPersistedState is called to ensure we start from a clean version-controlled state if needed
+    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
 
     setDatasetMeta((prev) => ({
       ...prev,
@@ -336,6 +484,7 @@ export default function App() {
     { key: 'cohorts', icon: '👥', label: 'Cohorts' },
   ], [])
 
+  // Return the main workspace UI
   return (
     <main className="app-container workspace-root">
       <input
@@ -354,6 +503,7 @@ export default function App() {
           <p><strong>Required fields:</strong> user_id, event_name, event_time</p>
           <p><strong>Optional fields:</strong> event_count, revenue</p>
           <p>Your dataset can include any number of additional fields such as country, device, version, campaign, etc. These fields can later be used for filtering and cohort definitions.</p>
+          <p><strong>Example format:</strong></p>
           <pre className="sample-dataset">user_id,event_name,event_time,country,device,version\nu123,signup,2024-01-01 10:00:00,US,ios,3.9.1</pre>
           <button className="button button-primary" onClick={() => fileInputRef.current?.click()} disabled={uploading}>
             {uploading ? 'Uploading...' : 'Upload CSV'}
