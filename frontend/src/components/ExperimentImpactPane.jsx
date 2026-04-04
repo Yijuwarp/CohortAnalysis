@@ -7,10 +7,14 @@ const TOOLTIPS = {
   'CTR': 'Users who interacted / Users exposed',
   'Engagement': 'Total interaction events / total users',
   'Reach': 'Users who triggered event / total users',
-  'Intensity': 'Event count / total users'
+  'Intensity': 'Event count / total users',
+  'Revenue / User': 'Total revenue / total users',
+  'Revenue Conversion': 'Users with revenue > 0 / total users',
+  'Revenue / User (Active)': 'Total revenue / paying users (users with revenue > 0)'
 }
 
 const getTooltip = (metric) => {
+  if (TOOLTIPS[metric]) return TOOLTIPS[metric]
   if (metric === 'CTR') return TOOLTIPS.CTR
   if (metric === 'Engagement') return TOOLTIPS.Engagement
   if (metric.includes('Reach')) return TOOLTIPS.Reach
@@ -20,7 +24,7 @@ const getTooltip = (metric) => {
 
 const formatValue = (val, metric) => {
   if (val === null || val === undefined) return '—'
-  if (metric === 'Engagement' || metric.includes('Intensity')) {
+  if (metric === 'Engagement' || metric.includes('Intensity') || metric === 'Revenue / User' || metric === 'Revenue / User (Active)') {
     return val.toFixed(2)
   }
   return (val * 100).toFixed(1) + '%'
@@ -40,7 +44,7 @@ export default function ExperimentImpactPane({
   state, 
   setState 
 }) {
-  const [expandedEventName, setExpandedEventName] = useState(null)
+  const [expandedEventId, setExpandedEventId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [events, setEvents] = useState([])
@@ -72,7 +76,8 @@ export default function ExperimentImpactPane({
       end_day: globalMaxDay,
       exposure_events: [],
       interaction_events: [],
-      impact_events: []
+      impact_events: [],
+      monetization_events: []
     }
     return state?.config ? { ...defaults, ...state.config } : defaults
   }, [state?.config, cohorts, globalMaxDay])
@@ -134,7 +139,8 @@ export default function ExperimentImpactPane({
         end_day: config.end_day,
         exposure_events: sanitizeEvents(config.exposure_events),
         interaction_events: sanitizeEvents(config.interaction_events),
-        impact_events: sanitizeEvents(config.impact_events)
+        impact_events: sanitizeEvents(config.impact_events),
+        monetization_events: sanitizeEvents(config.monetization_events)
       }
 
       const data = await runImpactAnalysis(payload)
@@ -203,13 +209,13 @@ export default function ExperimentImpactPane({
     <div className="impact-tag-container">
       {list.map((ev, idx) => (
         <EventFilterChip 
-          key={`${ev.event_name}-${idx}`}
+          key={ev.id}
           eventConfig={ev}
           updateEvent={(newEv) => {
             updateConfig(curr => {
               const listArr = curr[type] || []
               const newList = [...listArr]
-              const index = listArr.findIndex(e => e.event_name === ev.event_name) // Match by name since filters might change
+              const index = listArr.findIndex(e => e.id === ev.id)
               if (index !== -1) {
                 newList[index] = newEv
                 return { [type]: newList }
@@ -219,11 +225,11 @@ export default function ExperimentImpactPane({
           }}
           removeEvent={() => {
             updateConfig(curr => ({ 
-              [type]: (curr[type] || []).filter(e => e.event_name !== ev.event_name) 
+              [type]: (curr[type] || []).filter(e => e.id !== ev.id) 
             }))
           }}
-          isExpanded={expandedEventName === ev.event_name}
-          setExpanded={setExpandedEventName}
+          isExpanded={expandedEventId === ev.id}
+          setExpanded={setExpandedEventId}
         />
       ))}
     </div>
@@ -296,7 +302,7 @@ export default function ExperimentImpactPane({
               <SearchableSelect
                 options={events.filter(e => !config.exposure_events.find(ev => ev.event_name === e))}
                 value=""
-                onChange={(val) => val && updateConfig(curr => ({ exposure_events: [...(curr.exposure_events || []), { event_name: val, filters: [] }] }))}
+                onChange={(val) => val && updateConfig(curr => ({ exposure_events: [...(curr.exposure_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select exposure events..."
               />
               {renderTags(config.exposure_events, 'exposure_events')}
@@ -307,7 +313,7 @@ export default function ExperimentImpactPane({
               <SearchableSelect
                 options={events.filter(e => !config.interaction_events.find(ev => ev.event_name === e))}
                 value=""
-                onChange={(val) => val && updateConfig(curr => ({ interaction_events: [...(curr.interaction_events || []), { event_name: val, filters: [] }] }))}
+                onChange={(val) => val && updateConfig(curr => ({ interaction_events: [...(curr.interaction_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select interaction events..."
               />
               {renderTags(config.interaction_events, 'interaction_events')}
@@ -318,10 +324,21 @@ export default function ExperimentImpactPane({
               <SearchableSelect
                 options={events.filter(e => !config.impact_events.find(ev => ev.event_name === e))}
                 value=""
-                onChange={(val) => val && updateConfig(curr => ({ impact_events: [...(curr.impact_events || []), { event_name: val, filters: [] }] }))}
+                onChange={(val) => val && updateConfig(curr => ({ impact_events: [...(curr.impact_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select impact events..."
               />
               {renderTags(config.impact_events, 'impact_events')}
+            </div>
+            
+            <div className="event-select-group">
+              <label>Monetization Events (Optional)</label>
+              <SearchableSelect
+                options={events.filter(e => !config.monetization_events.find(ev => ev.event_name === e))}
+                value=""
+                onChange={(val) => val && updateConfig(curr => ({ monetization_events: [...(curr.monetization_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
+                placeholder="Select monetization events..."
+              />
+              {renderTags(config.monetization_events, 'monetization_events')}
             </div>
           </div>
           <div className="impact-disclaimer">
@@ -363,7 +380,7 @@ export default function ExperimentImpactPane({
               <tr className="impact-section-header">
                 <td colSpan={sortedResults.cohorts.length + 1}>Exposure & Interaction</td>
               </tr>
-              {sortedResults.metrics.slice(0, 3).map(metricRow => (
+              {sortedResults.metrics.filter(m => ['exposure_rate', 'ctr', 'engagement'].includes(m.metric_key)).map(metricRow => (
                 <tr key={metricRow.metric} className="impact-metric-row">
                   <td 
                     className="metric-cell" 
@@ -402,12 +419,58 @@ export default function ExperimentImpactPane({
                 </tr>
               ))}
 
-              {sortedResults.metrics.length > 3 && (
+              {config.monetization_events.length > 0 && (
+                <>
+                  <tr className="impact-section-header">
+                    <td colSpan={sortedResults.cohorts.length + 1}>Monetization</td>
+                  </tr>
+                  {sortedResults.metrics.filter(m => ['revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)).map(metricRow => (
+                    <tr key={metricRow.metric} className="impact-metric-row">
+                      <td 
+                        className="metric-cell" 
+                        title={getTooltip(metricRow.metric)}
+                        onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
+                          {sortMetric === metricRow.metric ? '●' : '○'}
+                        </span>
+                        {metricRow.metric}
+                      </td>
+                      {sortedResults.cohorts.map((cohort, i) => {
+                        const data = metricRow.values[String(cohort.id)]
+                        const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
+                        const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
+                        
+                        return (
+                          <td key={cohort.id}>
+                            {cohort.size === 0 ? '—' : (
+                              <>
+                                {formatValue(data.value, metricRow.metric)}
+                                {i > 0 && (
+                                  <span 
+                                    className={`delta-val ${sigClass}`}
+                                    title={tooltip}
+                                  >
+                                    {formatDelta(data.delta)}
+                                  </span>
+                                )}
+                              </>
+                            )}
+                          </td>
+                        )
+                      })}
+                    </tr>
+                  ))}
+                </>
+              )}
+
+              {sortedResults.metrics.some(m => !['exposure_rate', 'ctr', 'engagement', 'revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)) && (
                 <>
                   <tr className="impact-section-header">
                     <td colSpan={sortedResults.cohorts.length + 1}>Impact</td>
                   </tr>
-                  {sortedResults.metrics.slice(3).map(metricRow => (
+                  {sortedResults.metrics.filter(m => !['exposure_rate', 'ctr', 'engagement', 'revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)).map(metricRow => (
                     <tr key={metricRow.metric} className="impact-metric-row">
                       <td 
                         className="metric-cell" 

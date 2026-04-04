@@ -24,6 +24,7 @@ class ImpactRequest(BaseModel):
     exposure_events: List[EventConfig] = Field(min_length=1)
     interaction_events: List[EventConfig] = Field(min_length=1)
     impact_events: List[EventConfig] = []
+    monetization_events: List[EventConfig] = []
 
 class ImpactStatsRequest(BaseModel):
     run_id: str
@@ -35,14 +36,15 @@ async def impact_run_endpoint(
 ):
     try:
         return run_impact_analysis(
-            conn,
+            connection=conn,
             baseline_cohort_id=payload.baseline_cohort_id,
             variant_cohort_ids=payload.variant_cohort_ids,
             start_day=payload.start_day,
             end_day=payload.end_day,
             exposure_events=payload.exposure_events,
             interaction_events=payload.interaction_events,
-            impact_events=payload.impact_events or []
+            impact_events=payload.impact_events or [],
+            monetization_events=payload.monetization_events or []
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -63,4 +65,3 @@ async def impact_stats_endpoint(
         return {"stats": stats}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
-

@@ -36,7 +36,11 @@ def _all_users_values(payload: dict[str, object], table_key: str) -> dict[str, i
     return row["values"]
 
 
-def test_usage_returns_raw_count_tables_and_retained_users(client: TestClient) -> None:
+def test_usage_returns_raw_count_tables_and_retained_users_relative_window(client: TestClient) -> None:
+    # Uses 24-hour relative window (not calendar day)
+    # u1 joins at 09:00. 
+    # Event at 10:00, 11:00 (D0)
+    # Event at 10:00 next day (+25h) -> D1
     _prepare_usage_fixture(client)
 
     response = client.get("/usage?event=open&max_day=1")
@@ -44,9 +48,20 @@ def test_usage_returns_raw_count_tables_and_retained_users(client: TestClient) -
 
     payload = response.json()
     assert payload["retention_event"] == "any"
+    # D0: u1 (2 events), u2 (1 event) -> Total 3
+    # D1: u1 (1 event) -> Total 1
     assert _all_users_values(payload, "usage_volume_table") == {"0": 3, "1": 1}
+    # Users D0: u1, u2 -> 2
+    # Users D1: u1 -> 1
     assert _all_users_values(payload, "usage_users_table") == {"0": 2, "1": 1}
+    # Adoption: u1, u2 at D0 (2), u1 already counted at D0 so Adoption at D1 remains 2
+    # Wait, u1 first event is at 10:00 (D0). u2 first event is at 13:00 (D0).
+    # So by end of D0, 2 users adopted.
+    # By end of D1, still 2 users adopted.
     assert _all_users_values(payload, "usage_adoption_table") == {"0": 2, "1": 2}
+    # Retained users (Denominator based)
+    # u1, u2, u3 joined. u1, u2 active on D0 (3)
+    # u1 active on D1 (1)
     assert _all_users_values(payload, "retained_users_table") == {"0": 3, "1": 1}
 
 
@@ -102,8 +117,29 @@ def test_usage_adoption_counts_distinct_users_cumulatively(client: TestClient) -
     assert response.status_code == 200, response.text
 
     payload = response.json()
-    assert _all_users_values(payload, "usage_users_table") == {"0": 1, "1": 2, "2": 1, "3": 0}
-    assert _all_users_values(payload, "usage_adoption_table") == {"0": 1, "1": 2, "2": 3, "3": 3}
+    # u1 join 09:00. Event 10:00 (D0), Event 10:00 next day (D1).
+    # u2 join 12:00. Event 13:00 next day (D1). (+25h)
+    # u3 join 15:00. Event 11:00 Day 3. Jan 1 15:00 -> Jan 3 11:00 is (24+20) = 44h -> Day 1!
+    # Wait: Jan 1 15:00 -> Jan 2 15:00 (24h), Jan 3 15:00 (48h). 
+    # Jan 3 11:00 is between 24h and 48h -> Day 1.
+    
+    # Let's re-verify:
+    # u1: D0, D1
+    # u2: D1
+    # u3: D1
+    
+    # usage_users_table:
+    # D0: u1 (1)
+    # D1: u1, u2, u3 (3)
+    # D2: 0
+    # D3: 0
+    assert _all_users_values(payload, "usage_users_table") == {"0": 1, "1": 3, "2": 0, "3": 0}
+    # usage_adoption_table:
+    # D0: u1 (1)
+    # D1: u1, u2, u3 (3)
+    # D2: 3
+    # D3: 3
+    assert _all_users_values(payload, "usage_adoption_table") == {"0": 1, "1": 3, "2": 3, "3": 3}
 
 
 
@@ -136,7 +172,17 @@ def test_usage_adoption_with_aggregated_rows_counts_distinct_users(client: TestC
     assert response.status_code == 200, response.text
 
     payload = response.json()
+    # u1: D0, D1
+    # u2: D1
+    # usage_users_table:
+    # D0: u1 (1)
+    # D1: u1, u2 (2)
+    # D2: 0
     assert _all_users_values(payload, "usage_users_table") == {"0": 1, "1": 2, "2": 0}
+    # usage_adoption_table:
+    # D0: 1
+    # D1: 2
+    # D2: 2
     assert _all_users_values(payload, "usage_adoption_table") == {"0": 1, "1": 2, "2": 2}
 
 

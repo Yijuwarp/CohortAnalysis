@@ -78,16 +78,18 @@ def test_retention_excludes_hidden_cohorts(client: TestClient) -> None:
     client.patch(f"/cohorts/{created.json()['cohort_id']}/hide")
     assert 'h_test' not in {r['cohort_name'] for r in client.get('/retention').json()['retention_table']}
 
-def test_retention_exact_correctness(client: TestClient) -> None:
+def test_retention_exact_correctness_relative_window(client: TestClient) -> None:
+    # Uses 24-hour relative window (not calendar day)
     csv_text = (
         "user_id,event_name,event_time\n"
         "eu1,join,2024-02-01 10:00:00\n"
-        "eu1,active,2024-02-01 11:00:00\n" # Day 0
-        "eu1,active,2024-02-02 09:00:00\n" # Day 1
+        "eu1,active,2024-02-01 11:00:00\n" # +1h  -> Day 0
+        "eu1,active,2024-02-02 11:00:00\n" # +25h -> Day 1
         "eu2,join,2024-02-01 10:00:00\n"
-        "eu2,active,2024-02-03 10:00:00\n" # Day 2
+        "eu2,active,2024-02-03 10:00:00\n" # +48h -> Day 2
         "eu3,join,2024-02-01 10:00:00\n"
-        "eu3,active,2024-02-01 12:00:00\n" # Day 0
+        "eu3,active,2024-02-01 12:00:00\n" # +2h  -> Day 0
+        "eu4,join,2024-02-01 10:00:00\n"   # No events -> dead user, but included in size
     )
     upload = csv_upload(client, csv_text=csv_text)
     assert upload.status_code == 200
@@ -98,12 +100,21 @@ def test_retention_exact_correctness(client: TestClient) -> None:
     resp = client.get("/retention?max_day=2&retention_type=classic")
     table = {r["cohort_name"]: r for r in resp.json()["retention_table"]}.get("exact_cohort")
     assert table is not None
+    # Size should be 4 (eu1, eu2, eu3, eu4)
+    assert table["size"] == 4
+    # D0: All users active at Join Time (due to join event itself) -> 4/4 = 100%
     assert round(table["retention"]["0"]) == 100
-    assert round(table["retention"]["1"]) == 33
-    assert round(table["retention"]["2"]) == 33
+    # D1: eu1 active at T + 25h -> 1/4 = 25%
+    assert round(table["retention"]["1"]) == 25
+    # D2: eu2 active at T + 48h -> 1/4 = 25%
+    assert round(table["retention"]["2"]) == 25
 
 
-def test_retention_time_boundary(client: TestClient) -> None:
+def test_retention_relative_window_semantics(client: TestClient) -> None:
+    # Uses 24-hour relative window (not calendar day)
+    # Join: Jan 1 23:50
+    # Event: Jan 2 00:10 (+20 mins) 
+    # Must be Day 0 in 24h logic (previously was Day 1 in calendar logic)
     csv_text = (
         "user_id,event_name,event_time\n"
         "bnd1,join,2024-01-01 23:50:00\n"
@@ -115,17 +126,20 @@ def test_retention_time_boundary(client: TestClient) -> None:
     
     resp = client.get("/retention?max_day=2&retention_type=classic&granularity=day")
     table = {r["cohort_name"]: r for r in resp.json()["retention_table"]}.get("boundary_cohort")
-    # Due to new DATE_TRUNC logic, 20 mins difference but over midnight constitutes Day 1
-    assert table["retention"]["1"] == 100.0
+    # Day 0 covers Join Time to Join Time + 24h
+    assert table["retention"]["0"] == 100.0
+    assert table["retention"]["1"] == 0.0
 
 
-def test_retention_hourly(client: TestClient) -> None:
+def test_retention_hourly_relative_window(client: TestClient) -> None:
+    # Uses 1-hour relative window
     csv_text = (
         "user_id,event_name,event_time\n"
         "h1,join,2024-01-01 10:15:00\n"
-        "h1,active,2024-01-01 10:45:00\n" # Hour 0
-        "h1,active,2024-01-01 11:10:00\n" # Hour 1
-        "h1,active,2024-01-01 13:00:00\n" # Hour 3
+        "h1,active,2024-01-01 10:45:00\n" # +30m -> Hour 0
+        "h1,active,2024-01-01 11:15:00\n" # +60m -> Hour 1
+        "h1,active,2024-01-01 13:14:59\n" # +2h 59m -> Hour 2
+        "h1,active,2024-01-01 13:15:00\n" # +3h -> Hour 3
     )
     csv_upload(client, csv_text=csv_text)
     client.post("/map-columns", json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"})
@@ -137,7 +151,7 @@ def test_retention_hourly(client: TestClient) -> None:
     table = {r["cohort_name"]: r for r in data["retention_table"]}.get("hourly_cohort")
     assert table["retention"]["0"] == 100.0
     assert table["retention"]["1"] == 100.0
-    assert table["retention"]["2"] == 0.0
+    assert table["retention"]["2"] == 100.0
     assert table["retention"]["3"] == 100.0
 
 
@@ -181,56 +195,54 @@ def test_retention_isolation(client: TestClient) -> None:
     assert tables["c2"]["retention"]["1"] == 0.0
 
 
-def test_classic_retention_matches_previous_logic(client: TestClient) -> None:
+def test_retention_relative_window_matches_new_logic(client: TestClient) -> None:
+    # Uses 24-hour relative window logic
     csv_text = (
         "user_id,event_name,event_time\n"
         "reg1,join,2024-01-01 10:00:00\n"
-        "reg1,active,2024-01-02 11:00:00\n"
+        "reg1,active,2024-01-02 11:00:00\n" # +25h -> Day 1
         "reg2,join,2024-01-01 14:00:00\n"
-        "reg2,active,2024-01-05 10:00:00\n"
+        "reg2,active,2024-01-05 15:00:00\n" # +4d 1h -> Day 4
     )
     csv_upload(client, csv_text=csv_text)
     client.post("/map-columns", json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"})
     client.post("/cohorts", json={"name": "reg_cohort", "logic_operator": "AND", "conditions": [{"event_name": "join", "min_event_count": 1}]})
     
-    # We test that the API output matches our manual logical calculation
-    # "New Logic" executes through the API
     resp = client.get("/retention?max_day=4&retention_type=classic")
     table = {r["cohort_name"]: r for r in resp.json()["retention_table"]}.get("reg_cohort")
     assert table is not None
 
-    # "Old Logic" - we manually assert the exact outputs we'd expect
-    old_output_day_0 = 100.0 
-    old_output_day_1 = 50.0  # reg1
-    old_output_day_2 = 0.0
-    old_output_day_3 = 0.0
-    old_output_day_4 = 50.0  # reg2
+    # Logic: 2 active users (reg1, reg2)
+    # Day 0: 100% (both active by definition/signup)
+    # Day 1: 50% (reg1)
+    # Day 2: 0%
+    # Day 3: 0%
+    # Day 4: 50% (reg2)
 
-    assert table["retention"]["0"] == old_output_day_0
-    assert table["retention"]["1"] == old_output_day_1
-    assert table["retention"]["2"] == old_output_day_2
-    assert table["retention"]["3"] == old_output_day_3
-    assert table["retention"]["4"] == old_output_day_4
+    assert table["retention"]["0"] == 100.0
+    assert table["retention"]["1"] == 50.0 
+    assert table["retention"]["2"] == 0.0
+    assert table["retention"]["3"] == 0.0
+    assert table["retention"]["4"] == 50.0
 
 
-def test_hourly_calendar_boundary(client: TestClient) -> None:
+def test_hourly_relative_window_semantics(client: TestClient) -> None:
+    # Uses 1-hour relative window (not calendar hour)
     csv_text = (
         "user_id,event_name,event_time\n"
         "hbnd1,join,2024-01-01 10:50:00\n"
-        "hbnd1,active,2024-01-01 11:10:00\n" # < 1hr apart but crosses an hour boundary -> Hour 1
+        "hbnd1,active,2024-01-01 11:10:00\n" # < 60m apart -> Hour 0 (even though it crosses calendar hour)
         "hbnd2,join,2024-01-01 10:10:00\n"
-        "hbnd2,active,2024-01-01 10:50:00\n" # > 30m apart but within same bucket -> Hour 0
+        "hbnd2,active,2024-01-01 11:15:00\n" # > 60m apart -> Hour 1
     )
     csv_upload(client, csv_text=csv_text)
     client.post("/map-columns", json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"})
     client.post("/cohorts", json={"name": "hourly_boundary", "logic_operator": "AND", "conditions": [{"event_name": "join", "min_event_count": 1}]})
     
-    resp = client.get("/retention?max_day=0&retention_type=classic&granularity=hour") # using max_day=0 actually isn't total bucket 24 for hour if code parses max_day + 1. wait max_day*24 total buckets.
-    # Actually request max_day=1 to test hourly buckets up to 24 hours.
     resp = client.get("/retention?max_day=1&retention_type=classic&granularity=hour")
     table = {r["cohort_name"]: r for r in resp.json()["retention_table"]}.get("hourly_boundary")
     
-    # Hour 0: both are active (hbnd2 is active natively, plus they both joined in hour 0)
+    # Hour 0: hbnd1 joins/active, hbnd2 joins. Both active.
     assert table["retention"]["0"] == 100.0
-    # Hour 1: hbnd1 is active, hbnd2 is NOT (50.0%)
+    # Hour 1: hbnd1 NOT active (active was +20m), hbnd2 IS active (+65m).
     assert table["retention"]["1"] == 50.0

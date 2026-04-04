@@ -77,6 +77,8 @@ def build_event_filter_sql(event_configs: List[Union[dict, Any]]) -> Tuple[str, 
         event_part = "(event_name = ?"
         event_params = [event_name]
         
+        standard_cols = {'user_id', 'event_name', 'event_time', 'original_revenue', 'modified_revenue'}
+        
         for f in filters:
             if isinstance(f, dict):
                 prop = f.get('property')
@@ -106,15 +108,22 @@ def run_impact_analysis(
     end_day: int,
     exposure_events: List[Any],
     interaction_events: List[Any],
-    impact_events: List[Any] = []
+    impact_events: List[Any] = [],
+    monetization_events: List[Any] = []
 ) -> dict:
     _cleanup_cache()
     run_id = str(uuid.uuid4())
 
     all_cohort_ids = [baseline_cohort_id] + variant_cohort_ids
     source_table = get_events_source_table(connection)
+
+    if not monetization_events:
+        # Skip monetization if none selected
+        monetized_cohort_ids = []
+    else:
+        monetized_cohort_ids = all_cohort_ids
     
-    # 1. Fetch cohort details and total sizes (including users with no events)
+    # 1. Fetch cohort details and total sizes
     cohort_data = connection.execute(
         """
         SELECT cohort_id, name, COUNT(DISTINCT user_id) as total_users
@@ -128,7 +137,7 @@ def run_impact_analysis(
     
     cohort_info = {row[0]: {"name": row[1], "size": row[2]} for row in cohort_data}
     
-    # 2. Base CTE for scoped events joined with membership and time window
+    # 2. Base CTE for scoped events
     ids_str = ", ".join(map(str, all_cohort_ids))
     connection.execute(
         f"""
@@ -147,6 +156,31 @@ def run_impact_analysis(
 
     results = {}
     
+    # 3. Monetization Distributions (per user)
+    monetization_data = {}
+    if monetization_events:
+        rev_sql, rev_params = build_event_filter_sql(monetization_events)
+        for cid in all_cohort_ids:
+            # Mandatory pattern: LEFT JOIN with filters in the ON clause to preserve denominator
+            # Sum COALESCE(modified_revenue, 0) to handle users with no events
+            sql = f"""
+                SELECT
+                    cm.user_id,
+                    SUM(COALESCE(es.modified_revenue, 0.0)) as total_rev
+                FROM cohort_membership cm
+                LEFT JOIN {source_table} es
+                    ON cm.user_id = es.user_id
+                    AND es.event_time >= cm.join_time + ? * INTERVAL 1 DAY
+                    AND es.event_time < cm.join_time + (? + 1) * INTERVAL 1 DAY
+                    AND {rev_sql}
+                WHERE cm.cohort_id = ?
+                GROUP BY cm.user_id
+            """
+            params = [start_day, end_day, *rev_params, cid]
+            rows = connection.execute(sql, params).fetchall()
+            monetization_data[cid] = [float(r[1]) for r in rows]
+            
+
     # Helper to compute core metrics for each cohort
     for cid in all_cohort_ids:
         total_users = cohort_info[cid]["size"]
@@ -200,11 +234,28 @@ def run_impact_analysis(
                 "total_users": total_users,
             })
 
+        # Monetization Metrics
+        m_metrics = {}
+        if cid in monetization_data:
+            dist = monetization_data[cid]
+            total_rev = sum(dist)
+            # Define paying_users as total_user_revenue > 0
+            paying_users = sum(1 for v in dist if v > 0.0001)
+            m_metrics = {
+                "revenue_per_user": total_rev / total_users if total_users > 0 else 0,
+                "revenue_conversion": paying_users / total_users if total_users > 0 else 0,
+                "revenue_intensity": total_rev / paying_users if paying_users > 0 else None,
+                "total_revenue": total_rev,
+                "paying_users": paying_users,
+                "distribution": dist
+            }
+
         results[cid] = {
             "exposure_rate": exposure_users / total_users if total_users > 0 else 0,
             "ctr": interaction_users / exposure_users if exposure_users > 0 else None,
             "engagement": interaction_counts / total_users if total_users > 0 else 0,
             "impact_metrics": impact_metrics,
+            "monetization": m_metrics,
             # Raw aggregates for stats endpoint
             "exposure_users": exposure_users,
             "total_users": total_users,
@@ -221,11 +272,14 @@ def run_impact_analysis(
     baseline = results[baseline_cohort_id]
     
     def get_value_with_delta(cid, metric_key, impact_event_idx=None, sub_key=None):
-        val = results[cid][metric_key]
-        if impact_event_idx is not None:
+        if metric_key == "monetization":
+             val = results[cid][metric_key][sub_key]
+             base_val = baseline[metric_key][sub_key]
+        elif impact_event_idx is not None:
              val = results[cid][metric_key][impact_event_idx][sub_key]
              base_val = baseline[metric_key][impact_event_idx][sub_key]
         else:
+             val = results[cid][metric_key]
              base_val = baseline[metric_key]
              
         delta = None
@@ -252,6 +306,24 @@ def run_impact_analysis(
         "metric": "Engagement",
         "values": {str(cid): get_value_with_delta(cid, "engagement") for cid in all_cohort_ids}
     })
+
+    # Section 1.5: Monetization
+    if monetization_events:
+        metrics_list.append({
+            "metric_key": "revenue_per_user",
+            "metric": "Revenue / User",
+            "values": {str(cid): get_value_with_delta(cid, "monetization", sub_key="revenue_per_user") for cid in all_cohort_ids}
+        })
+        metrics_list.append({
+            "metric_key": "revenue_conversion",
+            "metric": "Revenue Conversion",
+            "values": {str(cid): get_value_with_delta(cid, "monetization", sub_key="revenue_conversion") for cid in all_cohort_ids}
+        })
+        metrics_list.append({
+            "metric_key": "revenue_intensity",
+            "metric": "Revenue / User (Active)",
+            "values": {str(cid): get_value_with_delta(cid, "monetization", sub_key="revenue_intensity") for cid in all_cohort_ids}
+        })
     
     # Section 2: Impact
     for i, config in enumerate(impact_events):
@@ -287,6 +359,7 @@ def run_impact_analysis(
             "exposure_events": _serialize_events(exposure_events),
             "interaction_events": _serialize_events(interaction_events),
             "impact_events": _serialize_events(impact_events),
+            "monetization_events": _serialize_events(monetization_events)
         },
         "results": results,
         "baseline_cohort_id": baseline_cohort_id,

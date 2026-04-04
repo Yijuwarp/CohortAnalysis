@@ -33,6 +33,9 @@ METRIC_TEST_MAP = {
     "reach":         "z_test",
     "engagement":    "mwu",
     "intensity":     "mwu",
+    "revenue_per_user":    "mwu",
+    "revenue_conversion":  "z_test",
+    "revenue_intensity":   "mwu",
 }
 
 TEST_LABELS = {
@@ -247,6 +250,42 @@ def compute_all_stats(
             stat = compute_stat_test("engagement", {"values": vec_b}, {"values": vec_v})
             _log_stat("engagement", vid, stat)
             stats["engagement"][str(vid)] = stat
+
+    # --- Monetization metrics ---
+    if request_data.get("monetization_events"):
+        stats["revenue_per_user"] = {}
+        stats["revenue_conversion"] = {}
+        stats["revenue_intensity"] = {}
+
+        for vid in variant_ids:
+            # Revenue / User: MWU on full cohort distributions
+            stat_rpu = compute_stat_test(
+                "revenue_per_user",
+                {"values": baseline_results["monetization"]["distribution"]},
+                {"values": results[vid]["monetization"]["distribution"]}
+            )
+            _log_stat("revenue_per_user", vid, stat_rpu)
+            stats["revenue_per_user"][str(vid)] = stat_rpu
+
+            # Revenue Conversion: Z-test on (paying_users, total_users)
+            stat_conv = compute_stat_test(
+                "revenue_conversion",
+                {"x": baseline_results["monetization"]["paying_users"], "n": baseline_results["total_users"]},
+                {"x": results[vid]["monetization"]["paying_users"], "n": results[vid]["total_users"]}
+            )
+            _log_stat("revenue_conversion", vid, stat_conv)
+            stats["revenue_conversion"][str(vid)] = stat_conv
+
+            # Revenue / User (Active): MWU on distribution of PAYING users
+            dist_b_active = [v for v in baseline_results["monetization"]["distribution"] if v > 0]
+            dist_v_active = [v for v in results[vid]["monetization"]["distribution"] if v > 0]
+            stat_int = compute_stat_test(
+                "revenue_intensity",
+                {"values": dist_b_active},
+                {"values": dist_v_active}
+            )
+            _log_stat("revenue_intensity", vid, stat_int)
+            stats["revenue_intensity"][str(vid)] = stat_int
 
     # --- Per-impact-event metrics ---
 

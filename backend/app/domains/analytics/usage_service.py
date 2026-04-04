@@ -194,14 +194,18 @@ def get_usage(
             SELECT
                 cm.cohort_id,
                 cm.user_id,
-                DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) AS day_number,
+                CASE 
+                    WHEN es.event_time < cm.join_time THEN -1
+                    ELSE CAST(FLOOR(DATE_DIFF('second', cm.join_time, es.event_time) / 86400.0) AS INTEGER)
+                END AS day_number,
                 es.event_count AS event_count
             FROM cohort_membership cm
             JOIN cohorts c ON c.cohort_id = cm.cohort_id
             JOIN events_scoped es ON es.user_id = cm.user_id
             WHERE c.hidden = FALSE
               AND es.event_name = ?
-              AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?{property_clause}
+              AND es.event_time >= cm.join_time
+              AND es.event_time < cm.join_time + (? + 1) * INTERVAL 1 DAY{property_clause}
         )
         SELECT
             cohort_id,
@@ -220,13 +224,14 @@ def get_usage(
             SELECT
                 cm.cohort_id,
                 cm.user_id,
-                MIN(DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)) AS first_event_day
+                MIN(CAST(FLOOR(DATE_DIFF('second', cm.join_time, es.event_time) / 86400.0) AS INTEGER)) AS first_event_day
             FROM cohort_membership cm
             JOIN cohorts c ON c.cohort_id = cm.cohort_id
             JOIN events_scoped es ON es.user_id = cm.user_id
             WHERE c.hidden = FALSE
               AND es.event_name = ?
-              AND DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE) BETWEEN 0 AND ?{property_clause}
+              AND es.event_time >= cm.join_time
+              AND es.event_time < cm.join_time + (? + 1) * INTERVAL 1 DAY{property_clause}
             GROUP BY cm.cohort_id, cm.user_id
         )
         SELECT cohort_id, first_event_day, COUNT(DISTINCT user_id) AS first_event_users

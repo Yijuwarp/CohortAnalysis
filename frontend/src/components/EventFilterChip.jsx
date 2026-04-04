@@ -77,7 +77,7 @@ export default function EventFilterChip({ eventConfig, updateEvent, removeEvent,
         <div className="chip-actions">
           <button className="gear-btn" onClick={(e) => {
             e.stopPropagation()
-            setExpanded(isExpanded ? null : eventName)
+            setExpanded(isExpanded ? null : eventConfig.id)
           }} title="Toggle filters">⚙️</button>
           <button className="remove-btn" onClick={(e) => {
             e.stopPropagation()
