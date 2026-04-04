@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react'
 import { runImpactAnalysis, listEvents } from '../api'
 import SearchableSelect from './SearchableSelect'
+import EventFilterChip from './EventFilterChip'
 
 const TOOLTIPS = {
   'CTR': 'Users who interacted / Users exposed',
@@ -39,6 +40,7 @@ export default function ExperimentImpactPane({
   state, 
   setState 
 }) {
+  const [expandedEventName, setExpandedEventName] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [events, setEvents] = useState([])
@@ -78,20 +80,27 @@ export default function ExperimentImpactPane({
         .filter(c => Number(c.cohort_id) !== Number(config.baseline_cohort_id) && !c.hidden)
         .map(c => c.cohort_id)
 
+      // Pre-process events to remove incomplete filters
+      const sanitizeEvents = (list) => list.map(ev => ({
+        event_name: ev.event_name,
+        filters: (ev.filters || []).filter(f => f.property && f.value)
+      }))
+
       const payload = {
         baseline_cohort_id: config.baseline_cohort_id,
         variant_cohort_ids,
         start_day: config.start_day,
         end_day: config.end_day,
-        exposure_events: config.exposure_events,
-        interaction_events: config.interaction_events,
-        impact_events: config.impact_events
+        exposure_events: sanitizeEvents(config.exposure_events),
+        interaction_events: sanitizeEvents(config.interaction_events),
+        impact_events: sanitizeEvents(config.impact_events)
       }
 
       const data = await runImpactAnalysis(payload)
       setState({ ...state, results: data })
     } catch (err) {
-      setError('Failed to run analysis. Please try again.')
+      console.error(err)
+      setError(err.response?.data?.detail || 'Failed to run analysis. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -99,13 +108,24 @@ export default function ExperimentImpactPane({
 
   const renderTags = (list, type) => (
     <div className="impact-tag-container">
-      {list.map(event => (
-        <span key={event} className="impact-tag">
-          {event}
-          <button onClick={() => {
-            updateConfig({ [type]: list.filter(e => e !== event) })
-          }}>×</button>
-        </span>
+      {list.map((ev, idx) => (
+        <EventFilterChip 
+          key={`${ev.event_name}-${idx}`}
+          eventConfig={ev}
+          updateEvent={(newEv) => {
+            const newList = [...list]
+            const index = list.indexOf(ev)
+            if (index !== -1) {
+              newList[index] = newEv
+              updateConfig({ [type]: newList })
+            }
+          }}
+          removeEvent={() => {
+            updateConfig({ [type]: list.filter(e => e !== ev) })
+          }}
+          isExpanded={expandedEventName === ev.event_name}
+          setExpanded={setExpandedEventName}
+        />
       ))}
     </div>
   )
@@ -171,9 +191,9 @@ export default function ExperimentImpactPane({
           <div className="event-select-group">
             <label>Exposure Events</label>
             <SearchableSelect
-              options={events.filter(e => !config.exposure_events.includes(e))}
+              options={events.filter(e => !config.exposure_events.find(ev => ev.event_name === e))}
               value=""
-              onChange={(val) => val && updateConfig({ exposure_events: [...config.exposure_events, val] })}
+              onChange={(val) => val && updateConfig({ exposure_events: [...config.exposure_events, { event_name: val, filters: [] }] })}
               placeholder="Select exposure events..."
             />
             {renderTags(config.exposure_events, 'exposure_events')}
@@ -182,9 +202,9 @@ export default function ExperimentImpactPane({
           <div className="event-select-group">
             <label>Interaction Events</label>
             <SearchableSelect
-              options={events.filter(e => !config.interaction_events.includes(e))}
+              options={events.filter(e => !config.interaction_events.find(ev => ev.event_name === e))}
               value=""
-              onChange={(val) => val && updateConfig({ interaction_events: [...config.interaction_events, val] })}
+              onChange={(val) => val && updateConfig({ interaction_events: [...config.interaction_events, { event_name: val, filters: [] }] })}
               placeholder="Select interaction events..."
             />
             {renderTags(config.interaction_events, 'interaction_events')}
@@ -193,22 +213,26 @@ export default function ExperimentImpactPane({
           <div className="event-select-group">
             <label>Impact Events (Optional)</label>
             <SearchableSelect
-              options={events.filter(e => !config.impact_events.includes(e))}
+              options={events.filter(e => !config.impact_events.find(ev => ev.event_name === e))}
               value=""
-              onChange={(val) => val && updateConfig({ impact_events: [...config.impact_events, val] })}
+              onChange={(val) => val && updateConfig({ impact_events: [...config.impact_events, { event_name: val, filters: [] }] })}
               placeholder="Select impact events..."
             />
             {renderTags(config.impact_events, 'impact_events')}
           </div>
         </div>
 
-        <button 
-          className="button button-primary impact-run-btn" 
-          onClick={handleRun} 
-          disabled={loading || !config.baseline_cohort_id || config.exposure_events.length === 0 || config.interaction_events.length === 0}
-        >
-          {loading ? 'Running Analysis...' : 'Run Analysis'}
-        </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: 'var(--space-6)' }}>
+          <button 
+            className="button button-primary impact-run-btn" 
+            onClick={handleRun} 
+            disabled={loading || !config.baseline_cohort_id || config.exposure_events.length === 0 || config.interaction_events.length === 0}
+            style={{ margin: 0 }}
+          >
+            {loading ? 'Running Analysis...' : 'Run Analysis'}
+          </button>
+          <span className="impact-helper-text">Filters apply only to the selected event</span>
+        </div>
       </div>
 
       {error && (
@@ -237,24 +261,27 @@ export default function ExperimentImpactPane({
                 <td colSpan={sortedResults.cohorts.length + 1}>Exposure & Interaction</td>
               </tr>
               {sortedResults.metrics.slice(0, 3).map(metricRow => (
-                <tr key={metricRow.metric}>
-                  <td className="metric-cell" title={getTooltip(metricRow.metric)}>
-                    <span 
-                      className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}
-                      onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
-                    >
+                <tr key={metricRow.metric} className="impact-metric-row">
+                  <td 
+                    className="metric-cell" 
+                    title={getTooltip(metricRow.metric)}
+                    onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                    style={{ cursor: 'pointer' }}
+                  >
+                    <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
                       {sortMetric === metricRow.metric ? '●' : '○'}
                     </span>
                     {metricRow.metric}
                   </td>
                   {sortedResults.cohorts.map((cohort, i) => {
                     const data = metricRow.values[String(cohort.id)]
+                    const deltaClass = data.delta > 0 ? 'delta-positive' : data.delta < 0 ? 'delta-negative' : ''
                     return (
                       <td key={cohort.id}>
                         {cohort.size === 0 ? '—' : (
                           <>
                             {formatValue(data.value, metricRow.metric)}
-                            {i > 0 && <span className="delta-val">{formatDelta(data.delta)}</span>}
+                            {i > 0 && <span className={`delta-val ${deltaClass}`}>{formatDelta(data.delta)}</span>}
                           </>
                         )}
                       </td>
@@ -269,24 +296,27 @@ export default function ExperimentImpactPane({
                     <td colSpan={sortedResults.cohorts.length + 1}>Impact</td>
                   </tr>
                   {sortedResults.metrics.slice(3).map(metricRow => (
-                    <tr key={metricRow.metric}>
-                      <td className="metric-cell" title={getTooltip(metricRow.metric)}>
-                        <span 
-                          className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}
-                          onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
-                        >
+                    <tr key={metricRow.metric} className="impact-metric-row">
+                      <td 
+                        className="metric-cell" 
+                        title={getTooltip(metricRow.metric)}
+                        onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                        style={{ cursor: 'pointer' }}
+                      >
+                        <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
                           {sortMetric === metricRow.metric ? '●' : '○'}
                         </span>
                         {metricRow.metric}
                       </td>
                       {sortedResults.cohorts.map((cohort, i) => {
                         const data = metricRow.values[String(cohort.id)]
+                        const deltaClass = data.delta > 0 ? 'delta-positive' : data.delta < 0 ? 'delta-negative' : ''
                         return (
                           <td key={cohort.id}>
                             {cohort.size === 0 ? '—' : (
                               <>
                                 {formatValue(data.value, metricRow.metric)}
-                                {i > 0 && <span className="delta-val">{formatDelta(data.delta)}</span>}
+                                {i > 0 && <span className={`delta-val ${deltaClass}`}>{formatDelta(data.delta)}</span>}
                               </>
                             )}
                           </td>

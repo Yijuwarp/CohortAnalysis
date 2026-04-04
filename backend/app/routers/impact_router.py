@@ -7,14 +7,23 @@ from app.domains.analytics.impact_service import run_impact_analysis
 
 router = APIRouter()
 
+class EventFilter(BaseModel):
+    property: str
+    operator: str = "="
+    value: str
+
+class EventConfig(BaseModel):
+    event_name: str
+    filters: List[EventFilter] = []
+
 class ImpactRequest(BaseModel):
     baseline_cohort_id: int
     variant_cohort_ids: List[int]
     start_day: int = Field(default=0, ge=0)
     end_day: int = Field(default=7, ge=0)
-    exposure_events: List[str] = Field(min_length=1)
-    interaction_events: List[str] = Field(min_length=1)
-    impact_events: List[str] = []
+    exposure_events: List[EventConfig] = Field(min_length=1)
+    interaction_events: List[EventConfig] = Field(min_length=1)
+    impact_events: List[EventConfig] = []
 
 @router.post("/impact/run")
 async def impact_run_endpoint(

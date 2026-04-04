@@ -192,7 +192,9 @@ export default function SearchableSelect({ options, value, onChange, onSearch, p
             position: "fixed",
             top: `${coords.top}px`,
             left: `${coords.left}px`,
-            width: `${coords.width}px`,
+            minWidth: `${coords.width}px`,
+            width: "max-content",
+            maxWidth: "400px",
             zIndex: 20002, // Higher than modal
             background: "#fff",
             border: "1px solid #ddd",
