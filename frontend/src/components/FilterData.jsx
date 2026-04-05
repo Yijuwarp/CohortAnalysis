@@ -37,7 +37,7 @@ const normalizeRowValue = (operator, value) => {
   return String(value)
 }
 
-export default function FilterData({ refreshToken, onFiltersApplied, onActiveFilterCountChange }) {
+export default function FilterData({ refreshToken, onFiltersApplied }) {
   const [columns, setColumns] = useState([])
   const [dateRange, setDateRange] = useState({ start: '', end: '' })
   const [filters, setFilters] = useState([defaultFilter])
@@ -201,13 +201,7 @@ export default function FilterData({ refreshToken, onFiltersApplied, onActiveFil
 
   const activeFilterCount = filters.filter((row) => row.enabled && row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== '')).length
 
-  useEffect(() => {
-    onActiveFilterCountChange?.(activeFilterCount)
-
-    return () => {
-      onActiveFilterCountChange?.(0)
-    }
-  }, [activeFilterCount, onActiveFilterCountChange])
+  // No-op or logic removed for parent-derived filter count
 
   return (
     <section className="card">
