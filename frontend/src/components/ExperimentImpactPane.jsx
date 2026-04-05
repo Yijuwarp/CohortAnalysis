@@ -4,30 +4,46 @@ import SearchableSelect from './SearchableSelect'
 import EventFilterChip from './EventFilterChip'
 
 const TOOLTIPS = {
-  'CTR': 'Users who interacted / Users exposed',
-  'Engagement': 'Total interaction events / total users',
-  'Reach': 'Users who triggered event / total users',
-  'Intensity': 'Event count / total users',
-  'Revenue / User': 'Total revenue / total users',
-  'Revenue Conversion': 'Users with revenue > 0 / total users',
-  'Revenue / User (Active)': 'Total revenue / paying users (users with revenue > 0)'
+  'Exposure Rate': 'Users exposed / Total users',
+  'Usage Rate': 'Users who interacted / Users exposed',
+  'Time to First Interaction (Median)': 'Median time between first exposure and first interaction afterward',
+  'Reuse Rate': 'Users with >1 interaction / Users who interacted',
+  'CTR': 'Total interactions / Total exposures (Event-level)',
+  'Engagement (Total)': 'Total interactions / Total users',
+  'Engagement (Retained Daily Avg)': 'Average interactions per retained user per day (Simple avg over window)',
+  'Revenue / User (Total)': 'Total revenue / Total users',
+  'Revenue Conversion': 'Users with revenue > 0 / Total users',
+  'Revenue / User (Retained Daily Avg)': 'Average revenue per retained user per day (Simple avg over window)',
+  'Reach': 'Users who triggered impact event / Total users',
+  'Intensity': 'Impact event count / Total users',
 }
 
 const getTooltip = (metric) => {
   if (TOOLTIPS[metric]) return TOOLTIPS[metric]
-  if (metric === 'CTR') return TOOLTIPS.CTR
-  if (metric === 'Engagement') return TOOLTIPS.Engagement
   if (metric.includes('Reach')) return TOOLTIPS.Reach
   if (metric.includes('Intensity')) return TOOLTIPS.Intensity
   return ''
 }
 
-const formatValue = (val, metric) => {
+const formatValue = (val, metricKey) => {
   if (val === null || val === undefined) return '—'
-  if (metric === 'Engagement' || metric.includes('Intensity') || metric === 'Revenue / User' || metric === 'Revenue / User (Active)') {
-    return val.toFixed(2)
+  
+  // Time metric formatting
+  if (metricKey === 'time_to_first_interaction') {
+    if (val < 60) return `${val.toFixed(1)}s`
+    if (val < 3600) return `${(val / 60).toFixed(1)}m`
+    if (val < 86400) return `${(val / 3600).toFixed(1)}h`
+    return `${(val / 86400).toFixed(1)}d`
   }
-  return (val * 100).toFixed(1) + '%'
+
+  // Rate metrics (displayed as %)
+  const rates = ['exposure_rate', 'usage_rate', 'revenue_conversion', 'reuse_rate', 'ctr', 'reach']
+  if (rates.some(r => metricKey.includes(r))) {
+    return (val * 100).toFixed(1) + '%'
+  }
+
+  // Count/Currency metrics
+  return val.toFixed(2)
 }
 
 const formatDelta = (delta) => {
@@ -36,11 +52,35 @@ const formatDelta = (delta) => {
   return `(${arrow} ${Math.abs(delta * 100).toFixed(1)}%)`
 }
 
+const renderSparkline = (values) => {
+  if (!values || values.length === 0) return null
+  // Use only visible blocks to ensure non-empty days are seen
+  const blocks = ['▂', '▃', '▄', '▅', '▆', '▇', '█']
+  const min = Math.min(...values)
+  const max = Math.max(...values)
+  const range = max - min
+
+  return (
+    <div className="sparkline" title={values.map((v, i) => `Day ${i}: ${v.toFixed(2)}`).join('\n')}>
+      {values.map((v, i) => {
+        let idx = 0
+        if (range > 0) {
+          idx = Math.floor(((v - min) / range) * (blocks.length - 1))
+        } else {
+          idx = 2 // Mid-height for flat lines
+        }
+        return <span key={i}>{blocks[idx]}</span>
+      })}
+    </div>
+  )
+}
+
 export default function ExperimentImpactPane({ 
   refreshToken, 
   cohorts, 
   globalMaxDay, 
   appliedFilters, 
+  retentionEvent,
   state, 
   setState 
 }) {
@@ -137,6 +177,7 @@ export default function ExperimentImpactPane({
         variant_cohort_ids,
         start_day: config.start_day,
         end_day: config.end_day,
+        retention_event: retentionEvent,
         exposure_events: sanitizeEvents(config.exposure_events),
         interaction_events: sanitizeEvents(config.interaction_events),
         impact_events: sanitizeEvents(config.impact_events),
@@ -183,6 +224,13 @@ export default function ExperimentImpactPane({
     if (!statsData) return '' // Black while loading or no stats
     const stat = statsData[metricKey]?.[String(cohortId)]
     if (!stat || stat.p_value === null || stat.p_value >= 0.05) return 'sig-neutral'
+    
+    // Logic for "Lower is Better"
+    const lowerIsBetter = ['time_to_first_interaction'].includes(metricKey)
+    if (lowerIsBetter) {
+      return delta < 0 ? 'sig-positive' : delta > 0 ? 'sig-negative' : 'sig-neutral'
+    }
+    
     return delta > 0 ? 'sig-positive' : delta < 0 ? 'sig-negative' : 'sig-neutral'
   }
 
@@ -377,137 +425,183 @@ export default function ExperimentImpactPane({
               </tr>
             </thead>
             <tbody>
+              {/* SECTION 1: Exposure & Engagement */}
               <tr className="impact-section-header">
-                <td colSpan={sortedResults.cohorts.length + 1}>Exposure & Interaction</td>
+                <td colSpan={sortedResults.cohorts.length + 1}>Exposure & Engagement</td>
               </tr>
-              {sortedResults.metrics.filter(m => ['exposure_rate', 'ctr', 'engagement'].includes(m.metric_key)).map(metricRow => (
-                <tr key={metricRow.metric} className="impact-metric-row">
-                  <td 
-                    className="metric-cell" 
-                    title={getTooltip(metricRow.metric)}
-                    onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
-                    style={{ cursor: 'pointer' }}
-                  >
-                    <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
-                      {sortMetric === metricRow.metric ? '●' : '○'}
-                    </span>
-                    {metricRow.metric}
-                  </td>
-                  {sortedResults.cohorts.map((cohort, i) => {
-                    const data = metricRow.values[String(cohort.id)]
-                    const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
-                    const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
-                    
-                    return (
-                      <td key={cohort.id}>
-                        {cohort.size === 0 ? '—' : (
-                          <>
-                            {formatValue(data.value, metricRow.metric)}
-                            {i > 0 && (
-                              <span 
-                                className={`delta-val ${sigClass}`}
-                                title={tooltip}
-                              >
-                                {formatDelta(data.delta)}
-                              </span>
-                            )}
-                          </>
-                        )}
-                      </td>
-                    )
-                  })}
-                </tr>
-              ))}
+              {[
+                { key: 'exposure_rate', label: 'Exposure Rate' },
+                { key: 'usage_rate', label: 'Usage Rate' },
+                { key: 'time_to_first_interaction', label: 'Time to First Interaction (Median)' },
+                { key: 'reuse_rate', label: 'Reuse Rate' },
+                { key: 'ctr', label: 'CTR' },
+                { key: 'engagement', label: 'Engagement (Total)' },
+                { key: 'engagement_daily_avg', label: 'Engagement (Retained Daily Avg)' },
+              ].map(row => {
+                const metricRow = sortedResults.metrics.find(m => m.metric_key === row.key)
+                if (!metricRow) return null
+                
+                return (
+                  <tr key={row.key} className="impact-metric-row">
+                    <td 
+                      className="metric-cell" 
+                      title={getTooltip(row.label)}
+                      onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                      style={{ cursor: 'pointer' }}
+                    >
+                      <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
+                        {sortMetric === metricRow.metric ? '●' : '○'}
+                      </span>
+                      {row.label}
+                    </td>
+                    {sortedResults.cohorts.map((cohort, i) => {
+                      const data = metricRow.values[String(cohort.id)]
+                      const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
+                      const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
+                      
+                      return (
+                        <td key={cohort.id}>
+                          {cohort.size === 0 ? '—' : (
+                            <div className="metric-cell-content">
+                              <div className="metric-main-val">
+                                {formatValue(data.value, metricRow.metric_key)}
+                                {data.sparkline && renderSparkline(data.sparkline)}
+                              </div>
+                              {i > 0 && (
+                                <span 
+                                  className={`delta-val ${sigClass}`}
+                                  title={tooltip}
+                                >
+                                  {formatDelta(data.delta)}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                      )
+                    })}
+                  </tr>
+                )
+              })}
 
+              {/* SECTION 2: Monetization */}
               {config.monetization_events.length > 0 && (
                 <>
                   <tr className="impact-section-header">
                     <td colSpan={sortedResults.cohorts.length + 1}>Monetization</td>
                   </tr>
-                  {sortedResults.metrics.filter(m => ['revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)).map(metricRow => (
-                    <tr key={metricRow.metric} className="impact-metric-row">
-                      <td 
-                        className="metric-cell" 
-                        title={getTooltip(metricRow.metric)}
-                        onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
-                          {sortMetric === metricRow.metric ? '●' : '○'}
-                        </span>
-                        {metricRow.metric}
-                      </td>
-                      {sortedResults.cohorts.map((cohort, i) => {
-                        const data = metricRow.values[String(cohort.id)]
-                        const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
-                        const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
-                        
-                        return (
-                          <td key={cohort.id}>
-                            {cohort.size === 0 ? '—' : (
-                              <>
-                                {formatValue(data.value, metricRow.metric)}
-                                {i > 0 && (
-                                  <span 
-                                    className={`delta-val ${sigClass}`}
-                                    title={tooltip}
-                                  >
-                                    {formatDelta(data.delta)}
-                                  </span>
-                                )}
-                              </>
-                            )}
-                          </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
+                  {[
+                    { key: 'revenue_per_user', label: 'Revenue / User (Total)' },
+                    { key: 'revenue_conversion', label: 'Revenue Conversion' },
+                    { key: 'revenue_daily_avg', label: 'Revenue / User (Retained Daily Avg)' },
+                  ].map(row => {
+                    const metricRow = sortedResults.metrics.find(m => m.metric_key === row.key)
+                    if (!metricRow) return null
+                    
+                    return (
+                      <tr key={row.key} className="impact-metric-row">
+                        <td 
+                          className="metric-cell" 
+                          title={getTooltip(row.label)}
+                          onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                          style={{ cursor: 'pointer' }}
+                        >
+                          <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
+                            {sortMetric === metricRow.metric ? '●' : '○'}
+                          </span>
+                          {row.label}
+                        </td>
+                        {sortedResults.cohorts.map((cohort, i) => {
+                          const data = metricRow.values[String(cohort.id)]
+                          const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
+                          const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
+                          
+                          return (
+                            <td key={cohort.id}>
+                              {cohort.size === 0 ? '—' : (
+                                <div className="metric-cell-content">
+                                  <div className="metric-main-val">
+                                    {formatValue(data.value, metricRow.metric_key)}
+                                    {data.sparkline && renderSparkline(data.sparkline)}
+                                  </div>
+                                  {i > 0 && (
+                                    <span 
+                                      className={`delta-val ${sigClass}`}
+                                      title={tooltip}
+                                    >
+                                      {formatDelta(data.delta)}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    )
+                  })}
                 </>
               )}
 
-              {sortedResults.metrics.some(m => !['exposure_rate', 'ctr', 'engagement', 'revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)) && (
+              {/* SECTION 3: Individual Impact Events */}
+              {config.impact_events.length > 0 && (
                 <>
                   <tr className="impact-section-header">
-                    <td colSpan={sortedResults.cohorts.length + 1}>Impact</td>
+                    <td colSpan={sortedResults.cohorts.length + 1}>Individual Events</td>
                   </tr>
-                  {sortedResults.metrics.filter(m => !['exposure_rate', 'ctr', 'engagement', 'revenue_per_user', 'revenue_conversion', 'revenue_intensity'].includes(m.metric_key)).map(metricRow => (
-                    <tr key={metricRow.metric} className="impact-metric-row">
-                      <td 
-                        className="metric-cell" 
-                        title={getTooltip(metricRow.metric)}
-                        onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
-                        style={{ cursor: 'pointer' }}
-                      >
-                        <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
-                          {sortMetric === metricRow.metric ? '●' : '○'}
-                        </span>
-                        {metricRow.metric}
-                      </td>
-                      {sortedResults.cohorts.map((cohort, i) => {
-                        const data = metricRow.values[String(cohort.id)]
-                        const sigClass = i > 0 ? getSignificanceClass(metricRow.metric_key, cohort.id, data.delta) : ''
-                        const tooltip = i > 0 ? getStatTooltip(metricRow.metric_key, cohort.id) : ''
-                        
-                        return (
-                          <td key={cohort.id}>
-                            {cohort.size === 0 ? '—' : (
-                              <>
-                                {formatValue(data.value, metricRow.metric)}
-                                {i > 0 && (
-                                  <span 
-                                    className={`delta-val ${sigClass}`}
-                                    title={tooltip}
-                                  >
-                                    {formatDelta(data.delta)}
-                                  </span>
-                                )}
-                              </>
-                            )}
+                  {config.impact_events.map(ev => {
+                    const reachKey = `${ev.event_name}_reach`
+                    const intensityKey = `${ev.event_name}_intensity`
+                    
+                    return [
+                      { key: reachKey, label: `${ev.event_name} Reach`, baseKey: 'reach' },
+                      { key: intensityKey, label: `${ev.event_name} Intensity`, baseKey: 'intensity' }
+                    ].map(row => {
+                      const metricRow = sortedResults.metrics.find(m => m.metric_key === row.key)
+                      if (!metricRow) return null
+                      
+                      return (
+                        <tr key={row.key} className="impact-metric-row">
+                          <td 
+                            className="metric-cell" 
+                            title={getTooltip(row.baseKey)}
+                            onClick={() => setSortMetric(sortMetric === metricRow.metric ? null : metricRow.metric)}
+                            style={{ cursor: 'pointer' }}
+                          >
+                            <span className={`sort-indicator ${sortMetric === metricRow.metric ? 'active' : ''}`}>
+                              {sortMetric === metricRow.metric ? '●' : '○'}
+                            </span>
+                            {row.label}
                           </td>
-                        )
-                      })}
-                    </tr>
-                  ))}
+                          {sortedResults.cohorts.map((cohort, i) => {
+                            const data = metricRow.values[String(cohort.id)]
+                            const sigClass = i > 0 ? getSignificanceClass(row.key, cohort.id, data.delta) : ''
+                            const tooltip = i > 0 ? getStatTooltip(row.key, cohort.id) : ''
+                            
+                            return (
+                              <td key={cohort.id}>
+                                {cohort.size === 0 ? '—' : (
+                                  <div className="metric-cell-content">
+                                    <div className="metric-main-val">
+                                      {formatValue(data.value, row.key)}
+                                    </div>
+                                    {i > 0 && (
+                                      <span 
+                                        className={`delta-val ${sigClass}`}
+                                        title={tooltip}
+                                      >
+                                        {formatDelta(data.delta)}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            )
+                          })}
+                        </tr>
+                      )
+                    })
+                  })}
                 </>
               )}
             </tbody>

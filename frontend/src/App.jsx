@@ -759,6 +759,7 @@ export default function App() {
                       cohorts={cohorts}
                       globalMaxDay={globalMaxDay}
                       appliedFilters={appliedFilters}
+                      retentionEvent={selectedRetentionEvent}
                       state={analyticsState['experiment-impact']}
                       setState={(s) => updateAnalyticsState('experiment-impact', s)}
                     />
