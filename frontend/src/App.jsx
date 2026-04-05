@@ -605,9 +605,9 @@ export default function App() {
                       <p className="pane-section-hint">Date range • Property filters</p>
                       <FilterData 
                         refreshToken={tabRefreshTokens.retention} 
-                        onFiltersApplied={(filters) => {
+                        onFiltersApplied={(filters, options = {}) => {
                           setAppliedFilters(filters)
-                          markTabsStale()
+                          if (!options.skipStale) markTabsStale()
                         }} 
                       />
                     </section>
