@@ -48,6 +48,17 @@ def test_usage_frequency_strict_semantics(client: TestClient) -> None:
     assert response.status_code == 200, f"Usage frequency failed: {response.text}"
     payload = response.json()
     
+    # User u1: join 02 00:00. Event 03 10:00 (+34h) -> Day 1. (01 10:00 is excluded)
+    # User u2: join 02 00:00. Event 01 10:00 is excluded.
+    # User u3: join 02 00:00. No events.
+    # User u4: join 02 00:00. Event 02 10:00 (D0), 03 10:00 (D1), 04 10:00 (D2). Total 3 events.
+    
+    # Resulting Frequencies for 'open':
+    # u1: 1
+    # u2: 0
+    # u3: 0
+    # u4: 3
+    
     found_cohort = False
     buckets = {}
     for b in payload["buckets"]:
@@ -57,9 +68,9 @@ def test_usage_frequency_strict_semantics(client: TestClient) -> None:
                 found_cohort = True
     
     assert found_cohort, f"Cohort {cohort_id} not found in results: {payload}"
-    assert buckets.get("0", 0) == 2, f"Expected 2 in bucket 0, got {buckets.get('0')}"
-    assert buckets.get("1", 0) == 1, f"Expected 1 in bucket 1, got {buckets.get('1')}"
-    assert buckets.get("2-5", 0) == 1, f"Expected 1 in bucket 2-5, got {buckets.get('2-5')}"
+    assert buckets.get("0", 0) == 2, f"Expected 2 in bucket 0 (u2, u3), got {buckets.get('0')}"
+    assert buckets.get("1", 0) == 1, f"Expected 1 in bucket 1 (u1), got {buckets.get('1')}"
+    assert buckets.get("2-5", 0) == 1, f"Expected 1 in bucket 2-5 (u4), got {buckets.get('2-5')}"
     assert sum(buckets.values()) == 4
 
 def test_usage_frequency_property_filter_strict(client: TestClient) -> None:

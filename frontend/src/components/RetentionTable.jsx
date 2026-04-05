@@ -503,7 +503,8 @@ export default function RetentionTable({
                         const cellStyle = getAvailabilityStyle(ratio)
 
                         const label = mode === "hour" ? "Hour" : "Day"
-                        const tooltip = `${label} ${b}\n\nValue: ${hasValue ? `${value.toFixed(2)}%` : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+                        const availabilityPct = Math.round((eligible_users / cohort_size) * 100)
+                        const tooltip = `${label} ${b}\n\nValue: ${hasValue ? `${value.toFixed(2)}%` : '—'}\nAvailability: ${availabilityPct}% (${eligible_users} / ${cohort_size} users)`
 
                         return (
                           <td

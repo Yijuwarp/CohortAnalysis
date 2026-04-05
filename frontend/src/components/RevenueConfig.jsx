@@ -186,7 +186,10 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
               const isInvalid = invalidOverrideEvents.includes(eventName)
               return (
                 <tr key={eventName}>
-                  <td>{eventName}</td>
+                  <td title={eventName}>
+                    {eventName}
+                  </td>
+
                   <td>
                     <input
                       type="checkbox"

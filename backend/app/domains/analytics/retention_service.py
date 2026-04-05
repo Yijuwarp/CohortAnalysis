@@ -27,8 +27,7 @@ def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[lis
         SELECT c.cohort_id, COUNT(DISTINCT cm.user_id) AS cohort_size
         FROM cohorts c
         LEFT JOIN cohort_membership cm ON c.cohort_id = cm.cohort_id
-        LEFT JOIN events_scoped es ON cm.user_id = es.user_id
-        WHERE c.is_active = TRUE AND c.hidden = FALSE AND es.user_id IS NOT NULL
+        WHERE c.is_active = TRUE AND c.hidden = FALSE
         GROUP BY c.cohort_id
         """
     )
