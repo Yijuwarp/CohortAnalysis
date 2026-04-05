@@ -457,9 +457,46 @@ button:disabled {
   white-space: nowrap;
 }
 
+.revenue-config-table {
+  table-layout: fixed;
+}
+
+.revenue-config-table th:nth-child(1),
+.revenue-config-table td:nth-child(1) {
+  width: auto; /* takes remaining space */
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.revenue-config-table th:nth-child(2),
+.revenue-config-table td:nth-child(2) {
+  width: 80px;
+  text-align: center;
+}
+
+.revenue-config-table th:nth-child(3),
+.revenue-config-table td:nth-child(3) {
+  width: 140px;
+}
+
+.revenue-config-table th:nth-child(4),
+.revenue-config-table td:nth-child(4) {
+  width: 44px;
+  text-align: center;
+}
+
 .revenue-config-table input[type='checkbox'] {
   width: auto;
+  cursor: pointer;
 }
+
+.revenue-config-table input[type='text'] {
+  width: 100%;
+}
+
 
 .invalid-number-input {
   border-color: #dc2626;
@@ -1978,6 +2015,8 @@ th.sticky-col.sticky-col-top {
   gap: 8px;
   margin-bottom: 0;
   padding-left: 4px;
+  position: relative;
+  z-index: 10; /* Ensure tabs are always clickable above overlapping panes */
 }
 
 /* ============================
@@ -2073,6 +2112,8 @@ body {
 .analytics-tabs {
   gap: 6px;
   margin-bottom: -1px;
+  position: relative;
+  z-index: 10;
 }
 
 .analytics-tabs button {
@@ -2197,13 +2238,12 @@ tbody tr:hover {
   text-align: left;
 }
 
-/* Experiment Impact Enhancements */
-.experiment-impact-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
-  animation: fadeIn 0.3s ease;
+/* experiment-impact-pane moved to end for consistency */
+
+.experiment-impact-pane > .card:first-child {
+  border-top-left-radius: 0;
 }
+
 
 .impact-config-grid {
   display: grid;
@@ -4020,7 +4060,10 @@ th.flow-path-col {
 .experiment-impact-pane {
   display: flex;
   flex-direction: column;
-  gap: var(--space-5);
+  gap: 24px;
+  animation: fadeIn 0.3s ease;
+  margin-top: -24px; /* Move up to close the gap with tabs */
+  margin-left: -20px; /* Move left to align with the first tab edge */
   padding: var(--space-5);
   overflow-y: auto;
 }

@@ -274,7 +274,10 @@ def run_impact_analysis(
         
         # Calculate daily stats
         if retention_event:
-            ret_sql, ret_params = build_event_filter_sql([{"event_name": retention_event}])
+            if retention_event == 'any':
+                ret_sql, ret_params = "1=1", []
+            else:
+                ret_sql, ret_params = build_event_filter_sql([{"event_name": retention_event}])
             int_sql, int_params = build_event_filter_sql(interaction_events) if interaction_events else ("1=0", [])
             mon_sql, mon_params = build_event_filter_sql(monetization_events) if monetization_events else ("1=0", [])
             

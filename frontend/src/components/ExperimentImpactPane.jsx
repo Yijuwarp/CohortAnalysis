@@ -95,6 +95,7 @@ export default function ExperimentImpactPane({
   const statsLoading = state?.statsLoading || false
   const statsError = state?.statsError || false
   const statsAbortRef = useRef(null)
+  const lastHandledRefreshRef = useRef(refreshToken)
 
   // Config State (from persisted state or defaults)
   const config = useMemo(() => {
@@ -138,11 +139,12 @@ export default function ExperimentImpactPane({
   useEffect(() => {
     listEvents().then(data => setEvents(data.events || [])).catch(() => {})
     
-    // Auto-rerun analysis if we have already run it and a global refresh is triggered
-    if (refreshToken > 0 && results) {
+    // Only rerun if refreshToken has actually increased while mounted
+    if (refreshToken > lastHandledRefreshRef.current && results) {
       handleRun()
     }
-  }, [refreshToken])
+    lastHandledRefreshRef.current = refreshToken
+  }, [refreshToken, results])
 
   const handleRun = async () => {
     // Cancel previous stats request if any

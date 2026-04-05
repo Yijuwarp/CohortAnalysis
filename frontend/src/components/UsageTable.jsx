@@ -852,7 +852,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                     const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
                     const cellStyle = getAvailabilityStyle(ratio)
 
-                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+                    const availabilityPct = Math.round((eligible_users / cohort_size) * 100)
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailability: ${availabilityPct}% (${eligible_users} / ${cohort_size} users)`
 
                     return (
                       <td
@@ -996,7 +997,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                     const ratio = cohort_size > 0 ? (eligible_users / cohort_size) : 1
                     const cellStyle = getAvailabilityStyle(ratio)
 
-                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailable for ${eligible_users} / ${cohort_size} users`
+                    const availabilityPct = Math.round((eligible_users / cohort_size) * 100)
+                    const tooltip = `Day ${day}\n\nValue: ${hasValue ? value : '—'}\nAvailability: ${availabilityPct}% (${eligible_users} / ${cohort_size} users)`
 
                     return (
                       <td
