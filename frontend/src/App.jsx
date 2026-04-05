@@ -220,7 +220,6 @@ export default function App() {
   const [isExploreTransitioning, setIsExploreTransitioning] = useState(false)
   const [leftPaneTab, setLeftPaneTab] = useState(persisted?.leftPaneTab || 'filters')
   const [events, setEvents] = useState([])
-  const [activeFilterCount, setActiveFilterCount] = useState(0)
   const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
@@ -228,6 +227,7 @@ export default function App() {
   const [exportBuffer, setExportBuffer] = useState([])
   const [appliedFilters, setAppliedFilters] = useState([])
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
+  const activeFilterCount = useMemo(() => appliedFilters.length, [appliedFilters])
 
   const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'experiment-impact', 'user-explorer'], [])
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
@@ -609,7 +609,6 @@ export default function App() {
                           setAppliedFilters(filters)
                           markTabsStale()
                         }} 
-                        onActiveFilterCountChange={setActiveFilterCount} 
                       />
                     </section>
                   )}

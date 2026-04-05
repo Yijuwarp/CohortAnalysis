@@ -4058,14 +4058,10 @@ th.flow-path-col {
 
 /* Experiment Impact */
 .experiment-impact-pane {
-  display: flex;
-  flex-direction: column;
-  gap: 24px;
   animation: fadeIn 0.3s ease;
   margin-top: -24px; /* Move up to close the gap with tabs */
   margin-left: -20px; /* Move left to align with the first tab edge */
   padding: var(--space-5);
-  overflow-y: auto;
 }
 
 .impact-config-card {
@@ -4137,6 +4133,8 @@ th.flow-path-col {
   align-items: center;
   gap: 6px;
   border: 1px solid var(--color-border);
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .impact-tag button {
@@ -4166,6 +4164,17 @@ th.flow-path-col {
   justify-content: space-between;
   width: 100%;
   align-items: center;
+  min-width: 0; /* Allow inner contents to shrink */
+  gap: var(--space-2);
+}
+
+.chip-label {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
 }
 
 .chip-actions {
