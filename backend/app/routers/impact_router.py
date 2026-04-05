@@ -25,6 +25,7 @@ class ImpactRequest(BaseModel):
     interaction_events: List[EventConfig] = Field(min_length=1)
     impact_events: List[EventConfig] = []
     monetization_events: List[EventConfig] = []
+    retention_event: Optional[str] = None
 
 class ImpactStatsRequest(BaseModel):
     run_id: str
@@ -34,6 +35,8 @@ async def impact_run_endpoint(
     payload: ImpactRequest,
     conn: duckdb.DuckDBPyConnection = Depends(get_connection)
 ):
+    if not payload.retention_event:
+        raise HTTPException(status_code=400, detail="retention_event is required")
     try:
         return run_impact_analysis(
             connection=conn,
@@ -44,7 +47,8 @@ async def impact_run_endpoint(
             exposure_events=payload.exposure_events,
             interaction_events=payload.interaction_events,
             impact_events=payload.impact_events or [],
-            monetization_events=payload.monetization_events or []
+            monetization_events=payload.monetization_events or [],
+            retention_event=payload.retention_event
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
