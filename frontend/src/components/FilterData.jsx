@@ -102,7 +102,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
         })
         : [defaultFilter]
 
-      onFiltersApplied?.(payload.filters || [])
+      onFiltersApplied?.(payload.filters || [], { skipStale: true })
 
       setFilters(mappedFilters)
       const columnsToLoad = [...new Set(mappedFilters.map((row) => row.column).filter(Boolean))]
