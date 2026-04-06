@@ -90,10 +90,13 @@ def test_per_user_retained_daily_avg_red(mock_conn):
         "all_cohort_ids": ["1", "2"]
     }
     
-    # Mock query to return per-user averages
-    # u1: retained on 2 days, 10 events total -> 5.0
-    # u2: retained on 1 day, 0 events -> 0.0
-    mock_conn.execute.return_value.fetchall.return_value = [(1, 5.0), (1, 0.0)]
+    # Mock query to return different per-user distributions so delta != 0
+    # Provide enough results for all possible MWU queries (counts, daily_avg, time_to_int)
+    mock_conn.execute.return_value.fetchall.side_effect = [
+        [(1, 1.0)] * 100, [(1, 1.0)] * 100, # engagement (counts)
+        [(1, 5.0)] * 100, [(1, 0.0)] * 100, # engagement_daily_avg (the one we check)
+        [(1, 10.0)] * 100, [(1, 10.0)] * 100, # time_to_first_interaction
+    ] * 5 # Extra buffer
     
     stats = compute_all_stats(mock_conn, cached)
     

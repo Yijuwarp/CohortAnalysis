@@ -221,9 +221,10 @@ def compute_all_stats(
     rate_metrics = [
         ("exposure_rate", "exposure_users", "total_users"),
         ("usage_rate", "interaction_users", "exposure_users"),
-        ("revenue_conversion", "monetization.paying_users", "total_users"),
         ("reuse_rate", "reuse_users", "interaction_users"),
     ]
+    if request_data.get("monetization_events"):
+        rate_metrics.append(("revenue_conversion", "monetization.paying_users", "total_users"))
     
     for key, num_key, den_key in rate_metrics:
         stats[key] = {}
