@@ -80,8 +80,8 @@ def test_usage_cumulative_matches_impact_engagement(db_connection):
     )
     
     # Engagement is interaction_counts / total_users
-    # Structure: metrics: [{'metric': 'Engagement', 'values': {'1': {'value': 15.0}}}]
-    engagement_metric = next(m for m in impact_res['metrics'] if m['metric'] == "Engagement")
+    # Structure: metrics: [{'metric': 'Engagement (Total)', 'values': {'1': {'value': 15.0}}}]
+    engagement_metric = next(m for m in impact_res['metrics'] if m['metric'] == "Engagement (Total)")
     impact_engagement = engagement_metric['values']['1']['value']
     
     assert impact_engagement == 15.0, f"Impact Engagement (15.0) should match Usage Per User (15.0). Got {impact_engagement}"

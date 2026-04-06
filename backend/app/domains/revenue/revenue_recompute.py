@@ -32,7 +32,7 @@ def recompute_modified_revenue_columns(connection: duckdb.DuckDBPyConnection, ta
         f"""
         UPDATE {table_name}
         SET modified_revenue = CASE
-            WHEN res.override_revenue IS NOT NULL THEN res.override_revenue * t_base.event_count
+            WHEN res.is_included = TRUE AND res.override_revenue IS NOT NULL THEN res.override_revenue * t_base.event_count
             WHEN res.is_included = TRUE THEN t_base.original_revenue
             ELSE 0.0
         END

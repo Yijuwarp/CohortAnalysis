@@ -37,7 +37,7 @@ class TestZTest:
     def test_z_test_not_significant(self):
         """baseline: 50/100, variant: 52/100 → p > 0.05"""
         result = compute_stat_test(
-            "ctr",
+            "usage_rate",
             {"x": 50, "n": 100},
             {"x": 52, "n": 100},
         )
@@ -159,15 +159,20 @@ class TestMetricKeyConsistency:
     """Metric key mapping is complete and correct."""
 
     def test_all_metric_keys_mapped(self):
-        expected_keys = {"exposure_rate", "ctr", "reach", "engagement", "intensity"}
+        expected_keys = {
+            "exposure_rate", "usage_rate", "revenue_conversion", "reuse_rate",
+            "ctr", "engagement", "intensity", "time_to_first_interaction",
+            "engagement_daily_avg", "revenue_daily_avg", "revenue_per_user",
+            "revenue_intensity", "reach"
+        }
         assert set(METRIC_TEST_MAP.keys()) == expected_keys
 
     def test_z_test_metrics(self):
-        for k in ["exposure_rate", "ctr", "reach"]:
+        for k in ["exposure_rate", "usage_rate", "revenue_conversion", "reuse_rate", "reach"]:
             assert METRIC_TEST_MAP[k] == "z_test"
 
     def test_mwu_metrics(self):
-        for k in ["engagement", "intensity"]:
+        for k in ["ctr", "engagement", "intensity", "time_to_first_interaction", "engagement_daily_avg", "revenue_daily_avg", "revenue_per_user", "revenue_intensity"]:
             assert METRIC_TEST_MAP[k] == "mwu"
 
 
@@ -247,6 +252,7 @@ def test_run_id_flow(client):
         "exposure_events": [{"event_name": "exposure"}],
         "interaction_events": [{"event_name": "interaction"}],
         "impact_events": [{"event_name": "impact_ev"}],
+        "retention_event": "interaction"
     })
     assert run_res.status_code == 200, run_res.text
     run_data = run_res.json()
@@ -284,6 +290,7 @@ def test_stats_keys_match_metrics(client):
         "exposure_events": [{"event_name": "exposure"}],
         "interaction_events": [{"event_name": "interaction"}],
         "impact_events": [{"event_name": "impact_ev"}],
+        "retention_event": "interaction"
     })
     run_data = run_res.json()
     run_id = run_data["run_id"]

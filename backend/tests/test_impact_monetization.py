@@ -30,7 +30,8 @@ def test_monetization_metrics_accuracy(client):
         "variant_cohort_ids": [v_id],
         "monetization_events": [{"event_name": "purchase"}, {"event_name": "ad_impression"}],
         "exposure_events": [{"event_name": "exposure"}],
-        "interaction_events": [{"event_name": "interaction"}]
+        "interaction_events": [{"event_name": "interaction"}],
+        "retention_event": "interaction"
     }
     res = client.post("/impact/run", json=payload)
     data = res.json()
@@ -51,7 +52,8 @@ def test_monetization_left_join_correctness(client):
         "variant_cohort_ids": [],
         "exposure_events": [{"event_name": "signup"}],
         "interaction_events": [{"event_name": "signup"}],
-        "monetization_events": [{"event_name": "purchase"}]
+        "monetization_events": [{"event_name": "purchase"}],
+        "retention_event": "signup"
     }
     res = client.post("/impact/run", json=payload)
     data = res.json()
@@ -73,7 +75,8 @@ def test_monetization_filter_isolation(client):
         "variant_cohort_ids": [],
         "exposure_events": [{"event_name": "signup"}],
         "interaction_events": [{"event_name": "signup"}],
-        "monetization_events": [{"event_name": "purchase", "filters": [{"property": "category", "value": "electronics"}]}]
+        "monetization_events": [{"event_name": "purchase", "filters": [{"property": "category", "value": "electronics"}]}],
+        "retention_event": "signup"
     }
     res = client.post("/impact/run", json=payload)
     data = res.json()
@@ -96,7 +99,8 @@ def test_monetization_stats_significance(client):
         "variant_cohort_ids": [v_id],
         "exposure_events": [{"event_name": "exposure"}],
         "interaction_events": [{"event_name": "interaction"}],
-        "monetization_events": [{"event_name": "purchase"}]
+        "monetization_events": [{"event_name": "purchase"}],
+        "retention_event": "interaction"
     }
     run_res = client.post("/impact/run", json=payload)
     run_id = run_res.json()["run_id"]
@@ -111,7 +115,8 @@ def test_monetization_empty_events(client):
         "variant_cohort_ids": [v_id],
         "exposure_events": [{"event_name": "exposure"}],
         "interaction_events": [{"event_name": "interaction"}],
-        "monetization_events": []
+        "monetization_events": [],
+        "retention_event": "interaction"
     }
     res = client.post("/impact/run", json=payload)
     metrics = [m["metric"] for m in res.json()["metrics"]]

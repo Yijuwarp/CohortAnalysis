@@ -54,7 +54,8 @@ def test_impact_accuracy(client):
         "variant_cohort_ids": [v_id],
         "exposure_events": [{"event_name": "exposure"}],
         "interaction_events": [{"event_name": "interaction"}],
-        "impact_events": [{"event_name": "impact_event"}]
+        "impact_events": [{"event_name": "impact_event"}],
+        "retention_event": "interaction"
     })
     if res.status_code != 200:
         print("MY_ERROR", res.text)
@@ -65,12 +66,16 @@ def test_impact_accuracy(client):
     m = next(row for row in data["metrics"] if row["metric"] == "Exposure Rate")
     assert m["values"][str(b_id)]["value"] == 0.6
     
-    # 2. CTR: 30/60 = 0.5
-    m = next(row for row in data["metrics"] if row["metric"] == "CTR")
+    # 2. Usage Rate: 30/60 = 0.5
+    m = next(row for row in data["metrics"] if row["metric"] == "Usage Rate")
     assert m["values"][str(b_id)]["value"] == 0.5
     
+    # 2b. CTR (event-based): 120/60 = 2.0
+    m = next(row for row in data["metrics"] if row["metric"] == "CTR")
+    assert m["values"][str(b_id)]["value"] == 2.0
+    
     # 3. Engagement: 120/100 = 1.2
-    m = next(row for row in data["metrics"] if row["metric"] == "Engagement")
+    m = next(row for row in data["metrics"] if row["metric"] == "Engagement (Total)")
     assert m["values"][str(b_id)]["value"] == 1.2
     
     # 4. Reach: 40/100 = 0.4
@@ -96,7 +101,8 @@ def test_impact_zero_baseline(client):
         "baseline_cohort_id": b_id,
         "variant_cohort_ids": [v_id],
         "exposure_events": [{"event_name": "exposure"}],
-        "interaction_events": [{"event_name": "interaction"}]
+        "interaction_events": [{"event_name": "interaction"}],
+        "retention_event": "interaction"
     })
     m = next(row for row in res.json()["metrics"] if row["metric"] == "Exposure Rate")
     assert m["values"][str(b_id)]["value"] == 0
@@ -112,7 +118,8 @@ def test_impact_no_exposure(client):
         "baseline_cohort_id": b_id,
         "variant_cohort_ids": [],
         "exposure_events": [{"event_name": "not_found"}],
-        "interaction_events": [{"event_name": "interaction"}]
+        "interaction_events": [{"event_name": "interaction"}],
+        "retention_event": "interaction"
     })
     m = next(row for row in res.json()["metrics"] if row["metric"] == "CTR")
     assert m["values"][str(b_id)]["value"] is None
