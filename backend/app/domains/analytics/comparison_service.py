@@ -12,7 +12,6 @@ from fastapi import HTTPException
 from scipy import stats
 
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
-from app.queries.retention_queries import fetch_retention_active_rows
 from app.queries.usage_queries import build_usage_property_filter_clause
 
 # ---------------------------------------------------------------------------
@@ -259,257 +258,7 @@ def _mann_whitney_u(vec_a: list[float], vec_b: list[float]) -> float:
 
 # ---------------------------------------------------------------------------
 # Per-user metric computation
-# ---------------------------------------------------------------------------
-
-def _compute_retention_vectors(
-    conn: duckdb.DuckDBPyConnection,
-    cohort_id: int,
-    day: int,
-    retention_event: str | None = None,
-    granularity: str = "day",
-    retention_type: str = "classic",
-) -> tuple[list[float], int, int]:
-    """
-    Returns (binary_vector, n_success, n_total) for retention on given day.
-    binary_vector[i] = 1 if user retained on day, 0 otherwise.
-    """
-    unit = "day" if granularity == "day" else "hour"
-    
-    if retention_event and retention_event != "any":
-        event_filter = "AND es.event_name = ?"
-        params = [cohort_id, retention_event, day]
-    else:
-        event_filter = ""
-        params = [cohort_id, day]
-
-    # NOTE:
-    # Day = calendar day difference (DATE_TRUNC)
-    # Hour = calendar hour bucket (NOT rolling duration)
-    # Classic retention MUST match previous implementation exactly.
-    # Do not modify query structure without updating regression tests.
-    
-    # Align date logic: use CAS event_time
-    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, cas.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', cas.event_time))"
-
-    if retention_type == "classic":
-        query = f"""
-        SELECT DISTINCT cm.user_id
-        FROM cohort_membership cm
-        JOIN cohort_activity_snapshot cas
-          ON cm.cohort_id = cas.cohort_id AND cm.user_id = cas.user_id
-        JOIN events_scoped es
-          ON es.user_id = cas.user_id
-         AND es.event_time = cas.event_time
-         AND es.event_name = cas.event_name
-        WHERE cm.cohort_id = ?
-          {event_filter}
-          AND {diff_expr} = ?
-        """
-    else:
-        query = f"""
-        SELECT DISTINCT cm.user_id
-        FROM cohort_membership cm
-        WHERE cm.cohort_id = ?
-          AND EXISTS (
-              SELECT 1 FROM cohort_activity_snapshot cas
-              JOIN events_scoped es
-                ON es.user_id = cas.user_id
-               AND es.event_time = cas.event_time
-               AND es.event_name = cas.event_name
-              WHERE cas.cohort_id = cm.cohort_id AND cas.user_id = cm.user_id
-                {event_filter}
-                AND {diff_expr} >= ?
-          )
-        """
-
-    retained_users = conn.execute(query, params).fetchall()
-    retained_set = {row[0] for row in retained_users}
-
-    all_users = conn.execute(
-        "SELECT DISTINCT user_id FROM cohort_membership WHERE cohort_id = ?",
-        [cohort_id],
-    ).fetchall()
-
-    vec = [1.0 if row[0] in retained_set else 0.0 for row in all_users]
-    return vec, len(retained_set), len(all_users)
-
-
-def _compute_usage_volume_vectors(
-    conn: duckdb.DuckDBPyConnection,
-    cohort_id: int,
-    event: str | None,
-    day: int,
-    metric: str,
-    granularity: str = "day",
-    property: str | None = None,
-    operator: str = "=",
-    value: str | None = None,
-) -> list[float]:
-    """
-    Returns per-user metric vector for volume-based usage metrics.
-    """
-    unit = "day" if granularity == "day" else "hour"
-    cumulative = metric in ("cumulative_per_installed_user",)
-    day_condition = "<= ?" if cumulative else "= ?"
-
-    property_clause, property_params = build_usage_property_filter_clause(
-        property=property,
-        operator=operator,
-        value=value,
-        table_alias="es",
-    )
-
-    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
-
-    rows = conn.execute(
-        f"""
-        SELECT cm.user_id, COALESCE(SUM(es.event_count), 0) AS event_count
-        FROM cohort_membership cm
-        LEFT JOIN events_scoped es
-          ON es.user_id = cm.user_id
-         AND es.event_name = ?
-         AND {diff_expr} {day_condition}
-         AND {diff_expr} >= 0{property_clause}
-        WHERE cm.cohort_id = ?
-        GROUP BY cm.user_id
-        """,
-        [event, day, *property_params, cohort_id],
-    ).fetchall()
-
-    cohort_size = conn.execute(
-        "SELECT COUNT(DISTINCT user_id) FROM cohort_membership WHERE cohort_id = ?",
-        [cohort_id],
-    ).fetchone()[0]
-
-    if metric in ("per_installed_user", "cumulative_per_installed_user"):
-        # Each user's event count divided by 1 → vector of per-user counts
-        return [float(r[1]) for r in rows]
-
-    if metric == "per_retained_user":
-        # Denominator: retained users on day
-        retained_rows = conn.execute(
-            f"""
-            SELECT DISTINCT cm.user_id
-            FROM cohort_membership cm
-            JOIN events_scoped es
-              ON es.user_id = cm.user_id
-            WHERE cm.cohort_id = ?
-              AND {diff_expr} = ?
-            """,
-            [cohort_id, day],
-        ).fetchall()
-        retained_set = {r[0] for r in retained_rows}
-        # Only include retained users in denominator context
-        return [float(r[1]) for r in rows if r[0] in retained_set]
-
-    if metric == "per_event_firer":
-        # Only users who fired the event
-        return [float(r[1]) for r in rows if float(r[1]) > 0]
-
-    return [float(r[1]) for r in rows]
-
-
-def _compute_unique_users_vectors(
-    conn: duckdb.DuckDBPyConnection,
-    cohort_id: int,
-    event: str | None,
-    day: int,
-    metric: str,
-    granularity: str = "day",
-    property: str | None = None,
-    operator: str = "=",
-    value: str | None = None,
-) -> tuple[list[float], int, int]:
-    """
-    Returns (binary_vector, n_success, n_total) for unique user proportion metrics.
-    """
-    unit = "day" if granularity == "day" else "hour"
-    cumulative = metric == "unique_users_cumulative_percent"
-    day_condition = "<= ?" if cumulative else "= ?"
-
-    property_clause, property_params = build_usage_property_filter_clause(
-        property=property,
-        operator=operator,
-        value=value,
-        table_alias="es",
-    )
-
-    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
-
-    fired_rows = conn.execute(
-        f"""
-        SELECT DISTINCT cm.user_id
-        FROM cohort_membership cm
-        JOIN events_scoped es
-          ON es.user_id = cm.user_id
-         AND es.event_name = ?
-         AND {diff_expr} {day_condition}
-         AND {diff_expr} >= 0{property_clause}
-        WHERE cm.cohort_id = ?
-        """,
-        [event, day, *property_params, cohort_id],
-    ).fetchall()
-
-    fired_set = {r[0] for r in fired_rows}
-    all_users = conn.execute(
-        "SELECT DISTINCT user_id FROM cohort_membership WHERE cohort_id = ?",
-        [cohort_id],
-    ).fetchall()
-
-    vec = [1.0 if r[0] in fired_set else 0.0 for r in all_users]
-    return vec, len(fired_set), len(all_users)
-
-
-def _compute_revenue_vectors(
-    conn: duckdb.DuckDBPyConnection,
-    cohort_id: int,
-    day: int,
-    metric: str,
-    granularity: str = "day",
-) -> list[float]:
-    """
-    Returns per-user metric vector for monetization metrics.
-    """
-    unit = "day" if granularity == "day" else "hour"
-    cumulative = metric == "cumulative_revenue_per_acquired_user"
-    day_condition = "<= ?" if cumulative else "= ?"
-
-    diff_expr = "DATE_DIFF('day', cm.join_time::DATE, es.event_time::DATE)" if unit == "day" else f"DATE_DIFF('hour', DATE_TRUNC('hour', cm.join_time), DATE_TRUNC('hour', es.event_time))"
-
-    rows = conn.execute(
-        f"""
-        SELECT cm.user_id, COALESCE(SUM(es.modified_revenue), 0.0) AS revenue
-        FROM cohort_membership cm
-        LEFT JOIN events_scoped es
-          ON es.user_id = cm.user_id
-         AND es.event_name IN (SELECT event_name FROM revenue_event_selection WHERE is_included = TRUE)
-         AND {diff_expr} {day_condition}
-         AND {diff_expr} >= 0
-        WHERE cm.cohort_id = ?
-        GROUP BY cm.user_id
-        """,
-        [day, cohort_id],
-    ).fetchall()
-
-    if metric in ("revenue_per_acquired_user", "cumulative_revenue_per_acquired_user"):
-        return [float(r[1]) for r in rows]
-
-    if metric == "revenue_per_retained_user":
-        retained_rows = conn.execute(
-            f"""
-            SELECT DISTINCT cm.user_id
-            FROM cohort_membership cm
-            JOIN events_scoped es
-              ON es.user_id = cm.user_id
-            WHERE cm.cohort_id = ?
-              AND {diff_expr} = ?
-            """,
-            [cohort_id, day],
-        ).fetchall()
-        retained_set = {r[0] for r in retained_rows}
-        return [float(r[1]) for r in rows if r[0] in retained_set]
-
-    return [float(r[1]) for r in rows]
+# -------------------------------------------------------------------------rows]
 
 
 # ---------------------------------------------------------------------------
@@ -577,40 +326,113 @@ def compare_cohorts(
     # ------------------------------------------------------------------
     # Compute vectors
     # ------------------------------------------------------------------
-    if metric == "retention_rate":
-        vec_a, s_a, n_a = _compute_retention_vectors(conn, cohort_a, day, event, granularity, retention_type)
-        vec_b, s_b, n_b = _compute_retention_vectors(conn, cohort_b, day, event, granularity, retention_type)
-        val_a = s_a / n_a if n_a > 0 else 0.0
-        val_b = s_b / n_b if n_b > 0 else 0.0
+    # ------------------------------------------------------------------
+    # Compute vectors via Shared Builders
+    # ------------------------------------------------------------------
+    import uuid
+    from app.domains.analytics.metric_builders.retention_vectors import build_retention_vector_sql
+    from app.domains.analytics.metric_builders.usage_vectors import build_usage_vector_sql
+    from app.domains.analytics.metric_builders.revenue_vectors import build_revenue_vector_sql
 
-    elif metric in ("unique_users_percent", "unique_users_cumulative_percent"):
-        if not event:
-            raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a, s_a, n_a = _compute_unique_users_vectors(conn, cohort_a, event, day, metric, granularity, property, operator, value)
-        vec_b, s_b, n_b = _compute_unique_users_vectors(conn, cohort_b, event, day, metric, granularity, property, operator, value)
-        val_a = s_a / n_a if n_a > 0 else 0.0
-        val_b = s_b / n_b if n_b > 0 else 0.0
+    request_id = str(uuid.uuid4())[:8]
+    
+    from app.utils.time_boundary import get_observation_end_time
+    observation_end_time = get_observation_end_time(conn)
 
-    elif metric in {"per_installed_user", "cumulative_per_installed_user", "per_retained_user", "per_event_firer"}:
-        if not event:
-            raise HTTPException(status_code=400, detail="event is required for usage metrics")
-        vec_a = _compute_usage_volume_vectors(conn, cohort_a, event, day, metric, granularity, property, operator, value)
-        vec_b = _compute_usage_volume_vectors(conn, cohort_b, event, day, metric, granularity, property, operator, value)
-        n_a, n_b = len(vec_a), len(vec_b)
-        s_a = s_b = None
-        val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
-        val_b = sum(vec_b) / n_b if n_b > 0 else 0.0
+    def _get_vector(cid: int, is_a: bool) -> tuple[list[float], Optional[int], int]:
+        suffix = f"{metric}_{'a' if is_a else 'b'}_{request_id}"
+        
+        builder_sql = ""
+        params = []
+        
+        # 1. Select Builder
+        if tab == "retention":
+            builder_sql, params = build_retention_vector_sql(
+                cohort_id=cid,
+                max_day=day, 
+                retention_event=event,
+                retention_type=retention_type,
+                granularity=granularity,
+                observation_end_time=observation_end_time
+            )
+            # Filter by specific day and ELIGIBILITY
+            fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+            params.append(day)
+            
+        elif tab == "usage":
+            metric_type = "unique" if metric in ("unique_users_percent", "unique_users_cumulative_percent") else "volume"
+            builder_sql, params = build_usage_vector_sql(
+                cohort_id=cid,
+                max_day=day,
+                event_name=event,
+                metric=metric_type,
+                granularity=granularity,
+                property_clause=property_clause,
+                property_params=property_params,
+                observation_end_time=observation_end_time
+            )
+            
+            if metric == "unique_users_cumulative_percent" or metric == "cumulative_per_installed_user":
+                agg = "MAX(value)" if "unique" in metric else "SUM(value)"
+                fetch_sql = f"SELECT {agg}::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                params.append(day)
+            elif metric == "per_retained_user":
+                ret_sql, ret_params = build_retention_vector_sql(cid, day, retention_event=None, observation_end_time=observation_end_time)
+                fetch_sql = f"""
+                    SELECT v.value::FLOAT 
+                    FROM ({builder_sql}) v
+                    JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
+                    WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
+                    ORDER BY v.user_id
+                """
+                params = params + ret_params + [day]
+            elif metric == "per_event_firer":
+                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND value > 0 AND is_eligible = 1 ORDER BY user_id"
+                params.append(day)
+            else:
+                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                params.append(day)
+                
+        elif tab == "monetization":
+            builder_sql, params = build_revenue_vector_sql(cid, day, granularity, observation_end_time=observation_end_time)
+            
+            if metric == "cumulative_revenue_per_acquired_user":
+                fetch_sql = f"SELECT SUM(value)::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                params.append(day)
+            elif metric == "revenue_per_retained_user":
+                ret_sql, ret_params = build_retention_vector_sql(cid, day, retention_event=None, observation_end_time=observation_end_time)
+                fetch_sql = f"""
+                    SELECT v.value::FLOAT 
+                    FROM ({builder_sql}) v
+                    JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
+                    WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
+                    ORDER BY v.user_id
+                """
+                params = params + ret_params + [day]
+            else:
+                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                params.append(day)
 
-    elif metric in MONETIZATION_METRICS:
-        vec_a = _compute_revenue_vectors(conn, cohort_a, day, metric, granularity)
-        vec_b = _compute_revenue_vectors(conn, cohort_b, day, metric, granularity)
-        n_a, n_b = len(vec_a), len(vec_b)
-        s_a = s_b = None
-        val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
-        val_b = sum(vec_b) / n_b if n_b > 0 else 0.0
+        # 2. Execute and Fetch
+        # We use a TEMP TABLE to fix the data for this request (and avoid multiple scans if needed later)
+        # But for now, we just execute the composed query.
+        vec_rows = conn.execute(fetch_sql, params).fetchall()
+        vec = [float(row[0]) for row in vec_rows]
+        
+        # 3. Derive summary stats for proportion metrics (s, n)
+        s = None
+        if metric in PROPORTION_METRICS:
+            s = int(sum(vec))
+            
+        return vec, s, len(vec)
 
-    else:
-        raise HTTPException(status_code=400, detail=f"Unknown metric: {metric}")
+    # Fetch vectors
+    vec_a, s_a, n_a = _get_vector(cohort_a, True)
+    vec_b, s_b, n_b = _get_vector(cohort_b, False)
+    
+    val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
+    val_b = sum(vec_b) / n_b if n_b > 0 else 0.0
+
 
     # ------------------------------------------------------------------
     # Run statistical tests
