@@ -59,13 +59,9 @@ def _scoped_exists(conn: duckdb.DuckDBPyConnection) -> bool:
 
 
 def _get_cohort_size(conn: duckdb.DuckDBPyConnection, cohort_id: int) -> int:
+    """Fixed: Use cohort_membership directly to avoid scoped inflation."""
     row = conn.execute(
-        """
-        SELECT COUNT(DISTINCT cm.user_id)
-        FROM cohort_membership cm
-        JOIN events_scoped es ON cm.user_id = es.user_id
-        WHERE cm.cohort_id = ?
-        """,
+        "SELECT COUNT(DISTINCT user_id) FROM cohort_membership WHERE cohort_id = ?",
         [cohort_id],
     ).fetchone()
     return int(row[0]) if row else 0
@@ -321,9 +317,6 @@ def compare_cohorts(
         if not row:
             raise HTTPException(status_code=404, detail=f"Cohort {cid} not found or inactive")
 
-    count = conn.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
-    print("COMPARE: using events_scoped row count:", count)
-
     # ------------------------------------------------------------------
     # Compute vectors
     # ------------------------------------------------------------------
@@ -335,7 +328,7 @@ def compare_cohorts(
     from app.domains.analytics.metric_builders.usage_vectors import build_usage_vector_sql
     from app.domains.analytics.metric_builders.revenue_vectors import build_revenue_vector_sql
 
-    request_id = str(uuid.uuid4())[:8]
+    request_id = uuid.uuid4().hex
     
     from app.utils.time_boundary import get_observation_end_time
     observation_end_time = get_observation_end_time(conn)
@@ -346,14 +339,11 @@ def compare_cohorts(
     if tab == "usage" and property:
         property_clause, property_params = build_usage_property_filter_clause(property, operator, value)
 
-    # Determine internal max_day for builders (ensure horizon parity)
-    # If not provided, use a sane default or the day being compared.
-    # We use day to avoid unnecessary window computation in classic retention,
-    # but for ever-after, we MUST look ahead.
     internal_max_day = max_day if max_day is not None else max(30, day)
 
     def _get_vector(cid: int, is_a: bool) -> tuple[list[float], Optional[int], int]:
-        suffix = f"{metric}_{'a' if is_a else 'b'}_{request_id}"
+        # Fix 6: Use unique temp table to prevent collisions
+        temp_table_name = f"tmp_vec_{cid}_{request_id}"
         
         builder_sql = ""
         params = []
@@ -368,9 +358,10 @@ def compare_cohorts(
                 granularity=granularity,
                 observation_end_time=observation_end_time
             )
-            # Filter by specific day and ELIGIBILITY
-            fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
-            params.append(day)
+            # Full grid for validation, then filter
+            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
+            fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+            fetch_params = [day]
             
         elif tab == "usage":
             metric_type = "unique" if metric in ("unique_users_percent", "unique_users_cumulative_percent") else "volume"
@@ -384,60 +375,69 @@ def compare_cohorts(
                 property_params=property_params,
                 observation_end_time=observation_end_time
             )
+            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
             
             if metric == "unique_users_cumulative_percent" or metric == "cumulative_per_installed_user":
                 agg = "MAX(value)" if "unique" in metric else "SUM(value)"
-                fetch_sql = f"SELECT {agg}::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
-                params.append(day)
+                fetch_sql = f"SELECT {agg}::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                fetch_params = [day]
             elif metric == "per_retained_user":
                 ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
                 fetch_sql = f"""
                     SELECT v.value::FLOAT 
-                    FROM ({builder_sql}) v
+                    FROM {temp_table_name} v
                     JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
                     WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
                     ORDER BY v.user_id
                 """
-                params = params + ret_params + [day]
+                fetch_params = ret_params + [day]
             elif metric == "per_event_firer":
-                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND value > 0 AND is_eligible = 1 ORDER BY user_id"
-                params.append(day)
+                fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND value > 0 AND is_eligible = 1 ORDER BY user_id"
+                fetch_params = [day]
             else:
-                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
-                params.append(day)
+                fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                fetch_params = [day]
                 
         elif tab == "monetization":
             builder_sql, params = build_revenue_vector_sql(cid, internal_max_day, granularity, observation_end_time=observation_end_time)
+            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
             
             if metric == "cumulative_revenue_per_acquired_user":
-                fetch_sql = f"SELECT SUM(value)::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
-                params.append(day)
+                fetch_sql = f"SELECT SUM(value)::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                fetch_params = [day]
             elif metric == "revenue_per_retained_user":
                 ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
                 fetch_sql = f"""
                     SELECT v.value::FLOAT 
-                    FROM ({builder_sql}) v
+                    FROM {temp_table_name} v
                     JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
                     WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
                     ORDER BY v.user_id
                 """
-                params = params + ret_params + [day]
+                fetch_params = ret_params + [day]
             else:
-                fetch_sql = f"SELECT value::FLOAT FROM ({builder_sql}) WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
-                params.append(day)
+                fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                fetch_params = [day]
 
-        # 2. Execute and Fetch
-        # We use a TEMP TABLE to fix the data for this request (and avoid multiple scans if needed later)
-        # But for now, we just execute the composed query.
-        vec_rows = conn.execute(fetch_sql, params).fetchall()
-        vec = [float(row[0]) for row in vec_rows]
-        
-        # 3. Derive summary stats for proportion metrics (s, n)
-        s = None
-        if metric in PROPORTION_METRICS:
-            s = int(sum(vec))
+        try:
+            # Execute fetch
+            vec_rows = conn.execute(fetch_sql, fetch_params).fetchall()
+            vec = [float(row[0]) for row in vec_rows]
             
-        return vec, s, len(vec)
+            # Fix 9: Vector completeness and uniqueness validation
+            cohort_size = _get_cohort_size(conn, cid)
+            
+            # Special handling for metrics that filter users (per_retained_user, per_event_firer)
+            is_subset_metric = metric in ("per_retained_user", "per_event_firer", "revenue_per_retained_user")
+            
+            if not is_subset_metric:
+                if not observation_end_time and len(vec) != cohort_size:
+                    raise ValueError(f"Vector length mismatch for cohort {cid}: expected {cohort_size}, got {len(vec)}")
+            
+            s = int(sum(vec)) if metric in PROPORTION_METRICS else None
+            return vec, s, len(vec)
+        finally:
+            conn.execute(f"DROP TABLE IF EXISTS {temp_table_name}")
 
     # Fetch vectors
     vec_a, s_a, n_a = _get_vector(cohort_a, True)

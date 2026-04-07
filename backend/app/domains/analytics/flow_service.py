@@ -201,7 +201,7 @@ def _build_level_sql(
                 s.cohort_id,
                 s.user_id,
                 n.event_name AS next_event,
-                ABS(DATE_DIFF('second', s.parent_time, n.event_time))::DOUBLE AS time_diff_sec
+                ABS(EXTRACT(EPOCH FROM (n.event_time - s.parent_time)))::DOUBLE AS time_diff_sec
             FROM {prev_cte} s
             JOIN LATERAL (
                 SELECT e.event_name, e.event_time

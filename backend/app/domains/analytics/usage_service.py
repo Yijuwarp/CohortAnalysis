@@ -47,24 +47,7 @@ def get_event_properties(connection: duckdb.DuckDBPyConnection, event_name: str)
         ).fetchall()
     ]
     properties = [column for column in columns if classify_column(column) == "property"]
-
-    available = []
-    for column in properties:
-        column_ref = quote_identifier(column)
-        has_values = connection.execute(
-            f"""
-            SELECT 1
-            FROM events_scoped
-            WHERE event_name = ?
-              AND {column_ref} IS NOT NULL
-            LIMIT 1
-            """,
-            [event_name],
-        ).fetchone()
-        if has_values is not None:
-            available.append(column)
-
-    return {"properties": available}
+    return {"properties": properties}
 
 
 def get_event_property_values(
@@ -231,7 +214,7 @@ def get_usage(
         
         user_first_day = {}
         distinct_users_by_day = {d: 0 for d in range(max_day + 1)}
-        for uid, day, val, is_elig in user_daily_flags:
+        for _, uid, day, val, is_elig in user_daily_flags:
             if val > 0:
                 day = int(day)
                 distinct_users_by_day[day] += 1

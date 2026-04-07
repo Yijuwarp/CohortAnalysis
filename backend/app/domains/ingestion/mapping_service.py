@@ -3,6 +3,7 @@ Short summary: suggests and validates CSV column mappings.
 """
 import json
 import duckdb
+from datetime import datetime
 from fastapi import HTTPException
 from app.utils.perf import time_block
 from app.utils.sql import quote_identifier
@@ -284,6 +285,34 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         else:
             rev_expr = "0.0"
 
+        # ---------- CALCULATE BOUNDARY ----------
+        time_q = quote_identifier(mapping.event_time_column)
+        actual_time_type = actual_types.get(mapping.event_time_column)
+        
+        if actual_time_type == "TIMESTAMP":
+            raw_time_expr = time_q
+        else:
+            v_col_raw = f"TRIM(BOTH '\"' FROM TRIM(CAST({time_q} AS VARCHAR)))"
+            cleaned_expr = f"REPLACE(TRIM(REGEXP_REPLACE({v_col_raw}, '\\s*(UTC|Z|[+-]\\d{{2}}:?\\d{{2}})$', '', 'i')), 'T', ' ')"
+            raw_time_expr = f"COALESCE(TRY_CAST({cleaned_expr} AS TIMESTAMP), TRY_CAST({cleaned_expr} || ':00:00' AS TIMESTAMP))"
+
+        p99_99_row = connection.execute(f"SELECT quantile_cont({raw_time_expr}, 0.9999) FROM events").fetchone()
+        p99_99_threshold = p99_99_row[0] if p99_99_row else None
+        
+        now_local = datetime.now()
+        if p99_99_threshold:
+            # Handle possible conversion issues
+            if not isinstance(p99_99_threshold, datetime):
+                try:
+                    p99_99_threshold = datetime.fromisoformat(str(p99_99_threshold))
+                except:
+                    p99_99_threshold = now_local
+            import_upper_bound = min(p99_99_threshold, now_local)
+        else:
+            import_upper_bound = now_local
+            
+        import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S')
+
         connection.execute("DROP TABLE IF EXISTS events_normalized")
 
         sql = f"""
@@ -294,6 +323,7 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
                 {rev_expr} AS original_revenue,
                 {rev_expr} AS modified_revenue
             FROM events
+            WHERE {raw_time_expr} <= '{import_upper_bound_str}'::TIMESTAMP
             GROUP BY {group_by_indices}
         """
 

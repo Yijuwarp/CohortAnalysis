@@ -12,13 +12,22 @@ def build_usage_vector_sql(
     observation_end_time: Optional[Any] = None
 ) -> Tuple[str, List[Any]]:
     """
-    Returns (SQL, params) producing (user_id, day_offset, value, is_eligible) for a specific cohort.
+    Returns (SQL, params) producing (cohort_id, user_id, day_offset, value, is_eligible) for a specific cohort.
     Windowing: FLOOR(EXTRACT(EPOCH FROM (event_time - join_time)) / 86400)
     """
     if property_params is None:
         property_params = []
         
-    unit_seconds = 86400 if granularity == "day" else 3600
+    if granularity == "day":
+        bucket_val = 86400
+        total_buckets = max_day
+    else:
+        bucket_val = 3600
+        total_buckets = max_day * 24
+
+    bucket_expr = f"FLOOR(EXTRACT(EPOCH FROM (es.event_time - cm.join_time)) / {bucket_val})"
+    pushdown_clause = f"AND {bucket_expr} <= {total_buckets}"
+    
     val_expr = "COALESCE(SUM(eo.event_count), 0)" if metric == "volume" else "MAX(CASE WHEN eo.user_id IS NOT NULL THEN 1 ELSE 0 END)"
 
     # Eligibility expression
@@ -27,13 +36,14 @@ def build_usage_vector_sql(
             obs_time_str = observation_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
             obs_time_str = str(observation_end_time)
-        eligibility_expr = f"(EXTRACT(EPOCH FROM ('{obs_time_str}'::TIMESTAMP - cm.join_time)) / {unit_seconds}) >= dg.day_offset"
+        eligibility_expr = f"cm.join_time + (dg.day_offset * INTERVAL '1 {granularity}') <= '{obs_time_str}'::TIMESTAMP"
     else:
         eligibility_expr = "TRUE"
 
     final_sql = f"""
     WITH day_grid AS (
-        SELECT range AS day_offset FROM range(0, {max_day} + 1)
+        SELECT generate_series AS day_offset
+        FROM generate_series(0, {total_buckets})
     ),
     user_grid AS (
         SELECT 
@@ -50,7 +60,7 @@ def build_usage_vector_sql(
         SELECT 
             es.user_id,
             es.event_count,
-            FLOOR(EXTRACT(EPOCH FROM (es.event_time - cm.join_time)) / {unit_seconds}) AS day_offset
+            {bucket_expr} AS day_offset
         FROM events_scoped es
         JOIN cohort_membership cm 
           ON es.user_id = cm.user_id 
@@ -59,9 +69,11 @@ def build_usage_vector_sql(
           AND es.event_name = ?
           AND es.event_time >= cm.join_time
           {property_clause}
+          {pushdown_clause}
     ),
     daily_activity AS (
         SELECT 
+            ug.cohort_id,
             ug.user_id,
             ug.day_offset,
             {val_expr} AS value,
@@ -70,10 +82,11 @@ def build_usage_vector_sql(
         LEFT JOIN event_offsets eo
           ON ug.user_id = eo.user_id
          AND ug.day_offset = eo.day_offset
-        GROUP BY 1, 2
+        GROUP BY 1, 2, 3
     )
-    SELECT user_id, day_offset, (value * is_eligible)::INTEGER AS value, is_eligible
+    SELECT cohort_id, user_id, day_offset, (value * is_eligible)::INTEGER AS value, is_eligible
     FROM daily_activity
+    ORDER BY user_id, day_offset
     """
     
     # params: [cohort_id, cohort_id, cohort_id, event_name, *property_params]
