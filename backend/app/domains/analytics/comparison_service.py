@@ -278,6 +278,7 @@ def compare_cohorts(
     property: str | None = None,
     operator: str = "=",
     value: str | None = None,
+    max_day: int | None = None,
 ) -> dict:
     if metric != "retention_rate" and granularity != "day":
         raise HTTPException(
@@ -339,6 +340,18 @@ def compare_cohorts(
     from app.utils.time_boundary import get_observation_end_time
     observation_end_time = get_observation_end_time(conn)
 
+    # Prepare usage property filters if applicable
+    property_clause = ""
+    property_params = []
+    if tab == "usage" and property:
+        property_clause, property_params = build_usage_property_filter_clause(property, operator, value)
+
+    # Determine internal max_day for builders (ensure horizon parity)
+    # If not provided, use a sane default or the day being compared.
+    # We use day to avoid unnecessary window computation in classic retention,
+    # but for ever-after, we MUST look ahead.
+    internal_max_day = max_day if max_day is not None else max(30, day)
+
     def _get_vector(cid: int, is_a: bool) -> tuple[list[float], Optional[int], int]:
         suffix = f"{metric}_{'a' if is_a else 'b'}_{request_id}"
         
@@ -349,7 +362,7 @@ def compare_cohorts(
         if tab == "retention":
             builder_sql, params = build_retention_vector_sql(
                 cohort_id=cid,
-                max_day=day, 
+                max_day=internal_max_day, 
                 retention_event=event,
                 retention_type=retention_type,
                 granularity=granularity,
@@ -363,7 +376,7 @@ def compare_cohorts(
             metric_type = "unique" if metric in ("unique_users_percent", "unique_users_cumulative_percent") else "volume"
             builder_sql, params = build_usage_vector_sql(
                 cohort_id=cid,
-                max_day=day,
+                max_day=internal_max_day,
                 event_name=event,
                 metric=metric_type,
                 granularity=granularity,
@@ -377,7 +390,7 @@ def compare_cohorts(
                 fetch_sql = f"SELECT {agg}::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
                 params.append(day)
             elif metric == "per_retained_user":
-                ret_sql, ret_params = build_retention_vector_sql(cid, day, retention_event=None, observation_end_time=observation_end_time)
+                ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
                 fetch_sql = f"""
                     SELECT v.value::FLOAT 
                     FROM ({builder_sql}) v
@@ -394,13 +407,13 @@ def compare_cohorts(
                 params.append(day)
                 
         elif tab == "monetization":
-            builder_sql, params = build_revenue_vector_sql(cid, day, granularity, observation_end_time=observation_end_time)
+            builder_sql, params = build_revenue_vector_sql(cid, internal_max_day, granularity, observation_end_time=observation_end_time)
             
             if metric == "cumulative_revenue_per_acquired_user":
                 fetch_sql = f"SELECT SUM(value)::FLOAT FROM ({builder_sql}) WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
                 params.append(day)
             elif metric == "revenue_per_retained_user":
-                ret_sql, ret_params = build_retention_vector_sql(cid, day, retention_event=None, observation_end_time=observation_end_time)
+                ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
                 fetch_sql = f"""
                     SELECT v.value::FLOAT 
                     FROM ({builder_sql}) v
@@ -432,6 +445,10 @@ def compare_cohorts(
     
     val_a = sum(vec_a) / n_a if n_a > 0 else 0.0
     val_b = sum(vec_b) / n_b if n_b > 0 else 0.0
+
+    print(f"DIAGNOSTIC [{tab}] [{metric}] Day {day}")
+    print(f"  Cohort A ({cohort_a}): s={s_a}, n={n_a}, rate={val_a*100:.4f}%")
+    print(f"  Cohort B ({cohort_b}): s={s_b}, n={n_b}, rate={val_b*100:.4f}%")
 
 
     # ------------------------------------------------------------------

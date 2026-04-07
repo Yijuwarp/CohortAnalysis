@@ -80,7 +80,7 @@ def build_retention_vector_sql(
     
     if retention_type == "classic":
         final_sql += """
-        SELECT user_id, day_offset, has_activity AS value, is_eligible
+        SELECT user_id, day_offset, (has_activity AND is_eligible::BOOLEAN)::INTEGER AS value, is_eligible
         FROM daily_activity
         """
     else:
@@ -89,11 +89,11 @@ def build_retention_vector_sql(
         SELECT 
             user_id, 
             day_offset,
-            MAX(has_activity) OVER (
+            MAX(has_activity AND is_eligible::BOOLEAN) OVER (
                 PARTITION BY user_id 
                 ORDER BY day_offset 
                 ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
-            ) AS value,
+            )::INTEGER AS value,
             is_eligible
         FROM daily_activity
         """

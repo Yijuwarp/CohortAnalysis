@@ -72,7 +72,7 @@ def build_usage_vector_sql(
          AND ug.day_offset = eo.day_offset
         GROUP BY 1, 2
     )
-    SELECT user_id, day_offset, value, is_eligible
+    SELECT user_id, day_offset, (value * is_eligible)::INTEGER AS value, is_eligible
     FROM daily_activity
     """
     

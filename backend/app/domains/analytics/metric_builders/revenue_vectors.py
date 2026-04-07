@@ -65,7 +65,12 @@ def build_revenue_vector_sql(
          AND ug.day_offset = eo.day_offset
         GROUP BY 1, 2
     )
-    SELECT user_id, day_offset, value, event_count, is_eligible
+    SELECT 
+        user_id, 
+        day_offset, 
+        (value * is_eligible)::NUMERIC AS value, 
+        (event_count * is_eligible)::INTEGER AS event_count, 
+        is_eligible
     FROM daily_revenue
     """
     

@@ -138,6 +138,14 @@ def run_impact_analysis(
     
     cohort_info = {row[0]: {"name": row[1], "size": row[2]} for row in cohort_data}
     
+    # Validation: Ensure all requested cohorts actually exist to avoid KeyError
+    missing_ids = [cid for cid in all_cohort_ids if cid not in cohort_info]
+    if missing_ids:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Requested cohort ID(s) {missing_ids} not found in current dataset. Please reset your experiment configuration."
+        )
+    
     # 2. Base CTE for scoped events
     ids_str = ", ".join(map(str, all_cohort_ids))
     connection.execute(

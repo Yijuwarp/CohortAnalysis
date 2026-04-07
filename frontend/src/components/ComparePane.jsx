@@ -183,6 +183,7 @@ export default function ComparePane({
         tab: getBackendTab(tab),
         metric: selectedMetric,
         day: Number(selectedDay),
+        max_day: Number(maxDay),
         event: tab === 'retention' ? retentionEvent : (needsEvent ? currentEvent : null),
         granularity: tab === 'retention' ? granularity : 'day',
         retention_type: tab === 'retention' ? retentionType : 'classic',
