@@ -96,13 +96,14 @@ async def flow_l1_endpoint(
     property_operator: str = Query("="),
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
+    limit: int = Query(3, ge=1, le=50),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     depth = min(max(2, depth), MAX_DEPTH)
     if not property_column or not property_values:
         property_values = None
     try:
-        return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k)
+        return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k, limit=limit)
     except Exception as e:
         logger.exception(f"flow_l1 failed for {start_event}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -118,6 +119,7 @@ async def flow_l2_endpoint(
     property_operator: str = Query("="),
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
+    limit: int = Query(3, ge=1, le=50),
     conn: duckdb.DuckDBPyConnection = Depends(get_connection),
 ):
     if not property_column or not property_values:
@@ -140,6 +142,7 @@ async def flow_l2_endpoint(
             property_operator,
             property_values,
             include_top_k,
+            limit=limit,
         )
     except Exception as e:
         logger.exception("flow_l2 failed")
