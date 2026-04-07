@@ -22,7 +22,6 @@ from app.domains.ingestion.type_detection import detect_column_type
 from app.utils.math_utils import wilson_ci
 from app.domains.analytics.retention_service import get_retention, build_active_cohort_base
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
-from app.queries.retention_queries import fetch_retention_active_rows
 from app.db.connection import get_connection as app_get_connection
 
 DATABASE_PATH = Path(__file__).resolve().parent.parent / "cohort_analysis.duckdb"
@@ -63,5 +62,4 @@ __all__ = [
     "get_retention",
     "ensure_cohort_tables",
     "build_active_cohort_base",
-    "fetch_retention_active_rows",
 ]

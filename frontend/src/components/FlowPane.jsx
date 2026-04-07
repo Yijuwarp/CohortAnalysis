@@ -13,6 +13,7 @@ function makeCacheKey(path, controls, propertyFilter, depth) {
     property_value: propertyFilter?.values?.[0] || null,
     depth,
     parent_path: path,
+    limit: controls.nodeExpansion?.[`${depth}_${nodeKey(path)}`] || 3,
   })
 }
 
@@ -31,6 +32,7 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
   const [cache, setCache] = useState({})
   const [loadingNodes, setLoadingNodes] = useState({})
   const [loadingRoot, setLoadingRoot] = useState(false)
+  const [nodeExpansion, setNodeExpansion] = useState({})
 
   useEffect(() => {
     const nextState = {
@@ -93,8 +95,9 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
     setLoadingRoot(true)
     setExpandedNodes(new Set())
     setCache({})
+    setNodeExpansion({})
 
-    getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
+    getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter, 3)
       .then(resp => {
         if (rid !== reqIdRef.current) return
         setFlowTree(resp.rows || [])
@@ -118,8 +121,10 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
 
   const onToggle = async (path) => {
     const key = nodeKey(path)
-    const cacheKey = makeCacheKey(path, controls, propertyFilter, TABLE_MAX_DEPTH)
     const depth = path.length - 1
+    const limit = nodeExpansion[`${depth}_${key}`] || 3
+    const cacheKey = makeCacheKey(path, { ...controls, nodeExpansion }, propertyFilter, TABLE_MAX_DEPTH)
+    
     if (depth >= TABLE_MAX_DEPTH) return
 
     setExpandedNodes(prev => {
@@ -133,10 +138,40 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
 
     setLoadingNodes(prev => ({ ...prev, [key]: true }))
     try {
-      const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter)
+      const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter, limit)
       setCache(prev => ({ ...prev, [cacheKey]: resp.rows || [] }))
     } finally {
       setLoadingNodes(prev => ({ ...prev, [key]: false }))
+    }
+  }
+
+  const onExpandOther = async (path) => {
+    const key = nodeKey(path)
+    const depth = path.length - 1
+    const nextLimit = (nodeExpansion[`${depth}_${key}`] || 3) + 3
+    const stateKey = `${depth}_${key}`
+
+    setNodeExpansion(prev => ({ ...prev, [stateKey]: nextLimit }))
+    
+    // If it's root level (depth 0), we re-fetch L1
+    if (depth === 0) {
+      setLoadingRoot(true)
+      try {
+        const resp = await getFlowL1(controls.event, controls.direction, TABLE_MAX_DEPTH, propertyFilter, nextLimit)
+        setFlowTree(resp.rows || [])
+      } finally {
+        setLoadingRoot(false)
+      }
+    } else {
+      // It's a child node, we re-fetch L2 and update cache
+      const cacheKey = makeCacheKey(path, { ...controls, nodeExpansion: { ...nodeExpansion, [stateKey]: nextLimit } }, propertyFilter, TABLE_MAX_DEPTH)
+      setLoadingNodes(prev => ({ ...prev, [key]: true }))
+      try {
+        const resp = await getFlowL2(controls.event, path, controls.direction, TABLE_MAX_DEPTH, propertyFilter, nextLimit)
+        setCache(prev => ({ ...prev, [cacheKey]: resp.rows || [] }))
+      } finally {
+        setLoadingNodes(prev => ({ ...prev, [key]: false }))
+      }
     }
   }
 
@@ -305,8 +340,16 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
           cohortMap={cohortMap}
           expandedNodes={expandedNodes}
           loadingNodes={loadingNodes}
-          getChildren={getChildren}
+          getChildren={(path) => {
+            const depth = path.length - 1
+            const key = nodeKey(path)
+            const limit = nodeExpansion[`${depth}_${key}`] || 3
+            const ck = makeCacheKey(path, { ...controls, nodeExpansion }, propertyFilter, TABLE_MAX_DEPTH)
+            return cache[ck] || []
+          }}
           onToggle={onToggle}
+          onExpandOther={onExpandOther}
+          nodeExpansion={nodeExpansion}
           maxDepth={TABLE_MAX_DEPTH}
         />
       )}

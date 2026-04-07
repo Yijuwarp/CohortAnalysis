@@ -7,7 +7,6 @@ from fastapi import HTTPException
 from app.utils.perf import time_block
 from app.utils.math_utils import Z_SCORES, wilson_ci
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
-from app.queries.retention_queries import fetch_retention_active_rows, fetch_eligibility_rows
 from app.utils.time_boundary import get_observation_end_time
 from app.utils.db_utils import to_dict, to_dicts
 
@@ -21,7 +20,8 @@ def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[lis
         """
     )
     cohorts_rows = cursor.fetchall()
-    cohorts = [(row["cohort_id"], row["name"]) for row in to_dicts(cursor, cohorts_rows)]
+    dicts = to_dicts(cursor, cohorts_rows)
+    cohorts = [(row["cohort_id"], row["name"]) for row in dicts]
     s_cursor = connection.execute(
         """
         SELECT c.cohort_id, COUNT(DISTINCT cm.user_id) AS cohort_size
@@ -78,26 +78,48 @@ def get_retention(
             res["max_hour"] = total_buckets
         return res
 
-    active_rows = fetch_retention_active_rows(connection, max_day, retention_event, granularity, retention_type)
-    eligibility_rows = fetch_eligibility_rows(connection, max_day, granularity)
-
-    active_by_bucket = {(int(c), int(b)): int(a) for c, b, a in active_rows}
-    eligible_by_bucket = {(int(c), int(b)): int(a) for c, b, a in eligibility_rows}
+    from app.domains.analytics.metric_builders.retention_vectors import build_retention_vector_sql
+    observation_end_time = get_observation_end_time(connection)
 
     retention_table: list[dict[str, Any]] = []
     for cohort_id, cohort_name in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
+        
+        # Build SQL for this specific cohort
+        sql, params = build_retention_vector_sql(
+            cohort_id=cohort_id,
+            max_day=max_day,
+            retention_event=retention_event,
+            retention_type=retention_type,
+            granularity=granularity,
+            observation_end_time=observation_end_time
+        )
+        
+        # Aggregate per day
+        # result: (day_offset, active_users, eligible_users)
+        agg_sql = f"""
+        SELECT day_offset, SUM(value::INTEGER), SUM(is_eligible::INTEGER)
+        FROM ({sql})
+        GROUP BY 1
+        ORDER BY 1
+        """
+        
+        rows = connection.execute(agg_sql, params).fetchall()
+        active_by_day = {int(d): int(a) for d, a, e in rows}
+        eligible_by_day = {int(d): int(e) for d, a, e in rows}
+        
         retention: dict[str, float | None] = {}
         availability: dict[str, dict[str, int]] = {}
         retention_ci: dict[str, dict[str, float | None]] = {}
+        
         for bucket_number in range(total_buckets):
-            active_users = active_by_bucket.get((cohort_id, bucket_number), 0)
-            eligible_users = eligible_by_bucket.get((cohort_id, bucket_number), 0)
+            active_users = active_by_day.get(bucket_number, 0)
+            eligible_users = eligible_by_day.get(bucket_number, 0)
             
             percent: float | None = None
-            if cohort_size > 0:
-                percent = active_users / cohort_size * 100.0
+            if eligible_users > 0:
+                percent = active_users / eligible_users * 100.0
             
             retention[str(bucket_number)] = float(percent) if percent is not None else None
             
@@ -107,7 +129,7 @@ def get_retention(
             }
 
             if include_ci:
-                lower, upper = wilson_ci(active_users, cohort_size, confidence)
+                lower, upper = wilson_ci(active_users, eligible_users, confidence)
                 retention_ci[str(bucket_number)] = {
                     "lower": (float(lower) * 100.0) if lower is not None else None,
                     "upper": (float(upper) * 100.0) if upper is not None else None,

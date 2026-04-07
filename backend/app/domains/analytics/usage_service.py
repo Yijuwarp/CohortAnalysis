@@ -10,7 +10,6 @@ from app.utils.perf import time_block
 from app.utils.sql import quote_identifier, classify_column
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.domains.analytics.retention_service import build_active_cohort_base
-from app.queries.retention_queries import fetch_retention_active_rows, fetch_eligibility_rows
 from app.utils.time_boundary import get_observation_end_time
 from app.queries.usage_queries import build_usage_property_filter_clause
 
@@ -48,24 +47,7 @@ def get_event_properties(connection: duckdb.DuckDBPyConnection, event_name: str)
         ).fetchall()
     ]
     properties = [column for column in columns if classify_column(column) == "property"]
-
-    available = []
-    for column in properties:
-        column_ref = quote_identifier(column)
-        has_values = connection.execute(
-            f"""
-            SELECT 1
-            FROM events_scoped
-            WHERE event_name = ?
-              AND {column_ref} IS NOT NULL
-            LIMIT 1
-            """,
-            [event_name],
-        ).fetchone()
-        if has_values is not None:
-            available.append(column)
-
-    return {"properties": available}
+    return {"properties": properties}
 
 
 def get_event_property_values(
@@ -188,106 +170,110 @@ def get_usage(
         value=value,
     )
 
-    usage_rows = connection.execute(
-        """
-        WITH usage_deltas AS (
-            SELECT
-                cm.cohort_id,
-                cm.user_id,
-                CASE 
-                    WHEN es.event_time < cm.join_time THEN -1
-                    ELSE CAST(FLOOR(DATE_DIFF('second', cm.join_time, es.event_time) / 86400.0) AS INTEGER)
-                END AS day_number,
-                es.event_count AS event_count
-            FROM cohort_membership cm
-            JOIN cohorts c ON c.cohort_id = cm.cohort_id
-            JOIN events_scoped es ON es.user_id = cm.user_id
-            WHERE c.hidden = FALSE
-              AND es.event_name = ?
-              AND es.event_time >= cm.join_time
-              AND es.event_time < cm.join_time + (? + 1) * INTERVAL 1 DAY{property_clause}
-        )
-        SELECT
-            cohort_id,
-            day_number,
-            SUM(event_count) AS total_events,
-            COUNT(DISTINCT user_id) AS distinct_users
-        FROM usage_deltas
-        GROUP BY cohort_id, day_number
-        """.format(property_clause=property_clause),
-        [event, max_day, *property_params],
-    ).fetchall()
-
-    adoption_rows = connection.execute(
-        """
-        WITH user_first_event_day AS (
-            SELECT
-                cm.cohort_id,
-                cm.user_id,
-                MIN(CAST(FLOOR(DATE_DIFF('second', cm.join_time, es.event_time) / 86400.0) AS INTEGER)) AS first_event_day
-            FROM cohort_membership cm
-            JOIN cohorts c ON c.cohort_id = cm.cohort_id
-            JOIN events_scoped es ON es.user_id = cm.user_id
-            WHERE c.hidden = FALSE
-              AND es.event_name = ?
-              AND es.event_time >= cm.join_time
-              AND es.event_time < cm.join_time + (? + 1) * INTERVAL 1 DAY{property_clause}
-            GROUP BY cm.cohort_id, cm.user_id
-        )
-        SELECT cohort_id, first_event_day, COUNT(DISTINCT user_id) AS first_event_users
-        FROM user_first_event_day
-        GROUP BY cohort_id, first_event_day
-        """.format(property_clause=property_clause),
-        [event, max_day, *property_params],
-    ).fetchall()
-
-    usage_by_day = {
-        (int(cohort_id), int(day_number)): {"total_events": int(total_events), "distinct_users": int(distinct_users)}
-        for cohort_id, day_number, total_events, distinct_users in usage_rows
-    }
-    adoption_by_first_day = {
-        (int(cohort_id), int(day_number)): int(first_event_users)
-        for cohort_id, day_number, first_event_users in adoption_rows
-    }
-
-    retention_rows = fetch_retention_active_rows(connection, max_day, retention_event)
-    retained_by_day = {(int(c), int(d)): int(a) for c, d, a in retention_rows}
-
-    eligibility_rows = fetch_eligibility_rows(connection, max_day)
-    eligible_by_bucket = {(int(c), int(b)): int(a) for c, b, a in eligibility_rows}
+    from app.domains.analytics.metric_builders.usage_vectors import build_usage_vector_sql
+    from app.domains.analytics.metric_builders.retention_vectors import build_retention_vector_sql
+    observation_end_time = get_observation_end_time(connection)
 
     usage_volume_table = []
     usage_users_table = []
     usage_adoption_table = []
     retained_users_table = []
+    
     for cohort_id, cohort_name in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
+        
+        # 1. Volume & Unique Vectors
+        vol_sql, vol_params = build_usage_vector_sql(
+            cohort_id=cohort_id,
+            max_day=max_day,
+            event_name=event,
+            metric="volume",
+            property_clause=property_clause,
+            property_params=property_params,
+            observation_end_time=observation_end_time
+        )
+        # Fetch volume and eligibility
+        vol_agg_sql = f"SELECT day_offset, SUM(value), SUM(is_eligible::INTEGER) FROM ({vol_sql}) GROUP BY 1"
+        vol_rows = connection.execute(vol_agg_sql, vol_params).fetchall()
+        volume_by_day = {int(d): int(v) for d, v, e in vol_rows}
+        eligible_by_day = {int(d): int(e) for d, v, e in vol_rows}
+        
+        # 2. Adoption (Cumulative Unique)
+        unique_sql, unique_params = build_usage_vector_sql(
+            cohort_id=cohort_id,
+            max_day=max_day,
+            event_name=event,
+            metric="unique",
+            property_clause=property_clause,
+            property_params=property_params,
+            observation_end_time=observation_end_time
+        )
+        user_daily_flags = connection.execute(unique_sql, unique_params).fetchall()
+        # (user_id, day_offset, value, is_eligible)
+        
+        user_first_day = {}
+        distinct_users_by_day = {d: 0 for d in range(max_day + 1)}
+        for _, uid, day, val, is_elig in user_daily_flags:
+            if val > 0:
+                day = int(day)
+                distinct_users_by_day[day] += 1
+                if uid not in user_first_day or day < user_first_day[uid]:
+                    user_first_day[uid] = day
+        
+        adoption_increment = {d: 0 for d in range(max_day + 1)}
+        for day in user_first_day.values():
+            if day <= max_day:
+                adoption_increment[day] += 1
+        
+        # 3. Retained Users
+        ret_sql, ret_params = build_retention_vector_sql(
+            cohort_id=cohort_id,
+            max_day=max_day,
+            retention_event=retention_event,
+            observation_end_time=observation_end_time
+        )
+        ret_agg_sql = f"SELECT day_offset, SUM(value::INTEGER), SUM(is_eligible::INTEGER) FROM ({ret_sql}) GROUP BY 1"
+        ret_rows = connection.execute(ret_agg_sql, ret_params).fetchall()
+        retained_by_day = {int(d): int(a) for d, a, e in ret_rows}
+        ret_eligible_by_day = {int(d): int(e) for d, a, e in ret_rows}
+
+        # 4. Assemble Tables
         volume_values = {}
         user_values = {}
         adoption_values = {}
         retained_values = {}
         availability = {}
+        ret_availability = {}
         cumulative_adoption = 0
+        
         for day_number in range(max_day + 1):
-            bucket = usage_by_day.get((cohort_id, day_number), {})
-            volume_values[str(day_number)] = int(bucket.get("total_events", 0))
-            user_values[str(day_number)] = int(bucket.get("distinct_users", 0))
-            cumulative_adoption += int(adoption_by_first_day.get((cohort_id, day_number), 0))
-            adoption_values[str(day_number)] = cumulative_adoption
-            retained_values[str(day_number)] = int(retained_by_day.get((cohort_id, day_number), 0))
+            day_str = str(day_number)
+            volume_values[day_str] = volume_by_day.get(day_number, 0)
+            user_values[day_str] = distinct_users_by_day.get(day_number, 0)
             
-            eligible_users = eligible_by_bucket.get((cohort_id, day_number), 0)
-            availability[str(day_number)] = {
-                "eligible_users": int(eligible_users),
+            cumulative_adoption += adoption_increment.get(day_number, 0)
+            adoption_values[day_str] = cumulative_adoption
+            
+            retained_values[day_str] = retained_by_day.get(day_number, 0)
+            
+            eligible = eligible_by_day.get(day_number, 0)
+            availability[day_str] = {
+                "eligible_users": int(eligible),
+                "cohort_size": int(cohort_size)
+            }
+            
+            ret_eligible = ret_eligible_by_day.get(day_number, 0)
+            ret_availability[day_str] = {
+                "eligible_users": int(ret_eligible),
                 "cohort_size": int(cohort_size)
             }
 
-        common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size), "availability": availability}
-        usage_volume_table.append({**common_metadata, "values": volume_values})
-        usage_users_table.append({**common_metadata, "values": user_values})
-        usage_adoption_table.append({**common_metadata, "values": adoption_values})
-        retained_users_table.append({**common_metadata, "values": retained_values})
+        common_metadata = {"cohort_id": cohort_id, "cohort_name": str(cohort_name), "size": int(cohort_size)}
+        usage_volume_table.append({**common_metadata, "values": volume_values, "availability": availability})
+        usage_users_table.append({**common_metadata, "values": user_values, "availability": availability})
+        usage_adoption_table.append({**common_metadata, "values": adoption_values, "availability": availability})
+        retained_users_table.append({**common_metadata, "values": retained_values, "availability": ret_availability})
 
     end_timer(
         event=event,

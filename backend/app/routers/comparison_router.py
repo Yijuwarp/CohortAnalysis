@@ -19,6 +19,7 @@ class CompareCohortRequest(BaseModel):
     tab: str          # retention | usage | monetization
     metric: str
     day: int
+    max_day: int | None = None
     event: str | None = None
     granularity: str = "day"
     retention_type: str = "classic"
@@ -39,6 +40,7 @@ async def compare_cohorts_endpoint(
         tab=payload.tab,
         metric=payload.metric,
         day=payload.day,
+        max_day=payload.max_day,
         event=payload.event,
         granularity=payload.granularity,
         retention_type=payload.retention_type,

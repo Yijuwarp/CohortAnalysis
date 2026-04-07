@@ -264,12 +264,13 @@ export async function compareCohorts(payload) {
 // Flow Analytics
 // ---------------------------------------------------------------------------
 
-export async function getFlowL1(startEvent, direction = 'forward', depth = 20, propertyFilter = null) {
+export async function getFlowL1(startEvent, direction = 'forward', depth = 20, propertyFilter = null, limit = 3) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
     depth: String(depth),
     include_top_k: 'true',
+    limit: String(limit),
   })
 
   query.set('property_operator', propertyFilter?.operator || '=')
@@ -282,12 +283,13 @@ export async function getFlowL1(startEvent, direction = 'forward', depth = 20, p
   return request(`/flow/l1?${query.toString()}`, { method: 'GET' })
 }
 
-export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 20, propertyFilter = null) {
+export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 20, propertyFilter = null, limit = 3) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
     depth: String(depth),
     include_top_k: 'true',
+    limit: String(limit),
   })
   ;(parentPath || []).forEach(node => query.append('parent_path', node))
 

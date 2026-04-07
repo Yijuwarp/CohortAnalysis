@@ -7,7 +7,7 @@ def get_observation_end_time(connection: duckdb.DuckDBPyConnection) -> datetime 
     Uses p99.9 of event_time from events_scoped, clamped to UTC now.
     """
     row = connection.execute("""
-        SELECT quantile_cont(event_time, 0.999)
+        SELECT MAX(event_time)
         FROM events_scoped
     """).fetchone()
 
@@ -24,8 +24,7 @@ def get_observation_end_time(connection: duckdb.DuckDBPyConnection) -> datetime 
         except Exception:
             return None
     
-    now = datetime.now(timezone.utc).replace(tzinfo=None) # Keep it naive to match DuckDB TIMESTAMP
-
+    now = datetime.now() # Use local naive now to match likely naive DB timestamps
     # Clamp to prevent future leakage
     observation_end_time = min(p99_time, now)
 

@@ -383,6 +383,8 @@ export default function App() {
     setUploadError('')
 
     clearPersistedState()
+    localStorage.removeItem(ANALYTICS_STORAGE_KEY)
+    setAnalyticsState({})
     setAppState('empty')
     setColumns([])
     setDetectedTypes({})
