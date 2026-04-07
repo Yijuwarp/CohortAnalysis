@@ -13,6 +13,7 @@ import FlowPane from './components/FlowPane'
 import UserExplorer from './components/UserExplorer'
 import PathsPane from './components/PathsPane'
 import ExperimentImpactPane from './components/ExperimentImpactPane'
+import Login from './components/Login'
 import { validateExportSnapshot } from './utils/exportValidator'
 import ExportModal from './components/ExportModal'
 
@@ -20,10 +21,11 @@ if (!UserExplorer) {
   console.error('UserExplorer component failed to load from ./components/UserExplorer')
 }
 
-const WORKSPACE_STORAGE_KEY = 'cohort-analysis-workspace-v2'
-const ANALYTICS_STORAGE_KEY = 'analytics-state'
 const WORKSPACE_STORAGE_VERSION = 2
 const LEFT_PANE_WIDTH = 600
+
+const getWorkspaceStorageKey = (userId) => `cohort-analysis-workspace-v2-${userId || 'guest'}`
+const getAnalyticsStorageKey = (userId) => `analytics-state-${userId || 'guest'}`
 
 const REASON_MESSAGES = {
   version_mismatch: "Your session is outdated after a recent update.",
@@ -49,9 +51,10 @@ const isValidState = (state) => {
   return true;
 };
 
-function readPersistedState() {
+function readPersistedState(userId) {
   try {
-    const raw = localStorage.getItem(WORKSPACE_STORAGE_KEY)
+    const key = getWorkspaceStorageKey(userId)
+    const raw = localStorage.getItem(key)
     if (!raw) return { status: "EMPTY" }
     
     const parsed = JSON.parse(raw)
@@ -78,9 +81,10 @@ function readPersistedState() {
   }
 }
 
-function readAnalyticsState() {
+function readAnalyticsState(userId) {
   try {
-    const raw = localStorage.getItem(ANALYTICS_STORAGE_KEY)
+    const key = getAnalyticsStorageKey(userId)
+    const raw = localStorage.getItem(key)
     if (!raw) return {}
     const parsed = JSON.parse(raw)
     // Lazy validation: if it's not a valid object, just return empty
@@ -145,8 +149,12 @@ export class SimpleErrorBoundary extends Component {
   }
 
   handleReset = () => {
-    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
-    localStorage.removeItem(ANALYTICS_STORAGE_KEY);
+    // Note: This global reset clears the current user's state only if we can find it
+    const userId = localStorage.getItem('user_id');
+    if (userId) {
+       localStorage.removeItem(getWorkspaceStorageKey(userId));
+       localStorage.removeItem(getAnalyticsStorageKey(userId));
+    }
     window.location.reload();
   };
 
@@ -183,20 +191,10 @@ export class SimpleErrorBoundary extends Component {
   }
 }
 
-export default function App() {
-  const persistedResult = useMemo(() => readPersistedState(), [])
-  
-  const handleHardReset = () => {
-    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
-    localStorage.removeItem(ANALYTICS_STORAGE_KEY);
-    window.location.reload();
-  };
-
-  if (persistedResult.status === "CORRUPTED") {
-    return <ResetDialog reason={persistedResult.reason} onReset={handleHardReset} />;
-  }
-
+function AppWorkspace({ userId, onLogout }) {
+  const persistedResult = useMemo(() => readPersistedState(userId), [userId])
   const persisted = persistedResult.status === "VALID" ? persistedResult.state : null;
+
   const fileInputRef = useRef(null)
   const [appState, setAppState] = useState(persisted?.appState || 'empty')
   const [columns, setColumns] = useState(persisted?.columns || [])
@@ -209,7 +207,6 @@ export default function App() {
   const [detectedMaxDay, setDetectedMaxDay] = useState(persisted?.detectedMaxDay || null)
   const [activeTab, setActiveTab] = useState(() => {
     const raw = persisted?.activeTab || 'retention'
-    // Safety: if the persisted tab is 'funnel' (which is now removed) or isn't in our allowed set, default to 'retention'
     const validTabs = ['retention', 'usage', 'monetization', 'paths', 'flow', 'experiment-impact', 'user-explorer']
     return validTabs.includes(raw) ? raw : 'retention'
   })
@@ -220,19 +217,26 @@ export default function App() {
   const [isExploreTransitioning, setIsExploreTransitioning] = useState(false)
   const [leftPaneTab, setLeftPaneTab] = useState(persisted?.leftPaneTab || 'filters')
   const [events, setEvents] = useState([])
-  const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState())
+  const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState(userId))
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
   const [cohortsRefreshToken, setCohortsRefreshToken] = useState(0)
   const [exportBuffer, setExportBuffer] = useState([])
   const [appliedFilters, setAppliedFilters] = useState([])
   const [isExportModalOpen, setIsExportModalOpen] = useState(false)
-  const activeFilterCount = useMemo(() => appliedFilters.length, [appliedFilters])
 
+  const activeFilterCount = useMemo(() => appliedFilters.length, [appliedFilters])
   const TAB_KEYS = useMemo(() => ['retention', 'usage', 'monetization', 'paths', 'flow', 'experiment-impact', 'user-explorer'], [])
+  
   const [staleTabs, setStaleTabs] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
   const [tabRefreshTokens, setTabRefreshTokens] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: 0 }), {}))
   const [tabReloading, setTabReloading] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
+
+  const leftPaneTabs = useMemo(() => [
+    { key: 'filters', icon: '🔎', label: 'Filters' },
+    { key: 'settings', icon: '⚙', label: 'Analytics Settings' },
+    { key: 'cohorts', icon: '👥', label: 'Cohorts' },
+  ], [])
 
   const markTabsStale = useCallback((tabsObj) => {
     if (tabsObj) {
@@ -313,7 +317,7 @@ export default function App() {
     if (uploading) return
 
     localStorage.setItem(
-      WORKSPACE_STORAGE_KEY,
+      getWorkspaceStorageKey(userId),
       JSON.stringify({
         version: WORKSPACE_STORAGE_VERSION,
         state: {
@@ -330,23 +334,17 @@ export default function App() {
         },
       })
     )
-  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, detectedMaxDay, activeTab, leftPaneTab, uploading])
+  }, [appState, columns, detectedTypes, suggestedMappings, datasetMeta, selectedRetentionEvent, globalMaxDay, detectedMaxDay, activeTab, leftPaneTab, uploading, userId])
 
   useEffect(() => {
-    localStorage.setItem(ANALYTICS_STORAGE_KEY, JSON.stringify(analyticsState))
-  }, [analyticsState])
-
+    localStorage.setItem(getAnalyticsStorageKey(userId), JSON.stringify(analyticsState))
+  }, [analyticsState, userId])
 
   useEffect(() => {
     if (!banner) return
     const id = setTimeout(() => setBanner(''), 5000)
     return () => clearTimeout(id)
   }, [banner])
-
-  const refreshRetention = () => {
-    setRetentionRefreshToken((current) => current + 1)
-    setScopeVersion((current) => current + 1)
-  }
 
   const refreshDatasetInfo = useCallback(async () => {
     if (appState !== 'workspace') return
@@ -368,8 +366,33 @@ export default function App() {
     refreshDatasetInfo()
   }, [refreshDatasetInfo, tabRefreshTokens])
 
+  useEffect(() => {
+    const load = async () => {
+      try {
+        const [eventsPayload, cohortsPayload] = await Promise.all([
+          listEvents(),
+          listCohorts()
+        ])
+        setEvents(eventsPayload.events || [])
+        setCohorts(cohortsPayload.cohorts || [])
+      } catch {
+        setEvents([])
+        setCohorts([])
+      }
+    }
+    if (appState === 'workspace') {
+      load()
+    }
+  }, [appState, cohortsRefreshToken])
+
+  const handleHardReset = () => {
+    localStorage.removeItem(getWorkspaceStorageKey(userId));
+    localStorage.removeItem(getAnalyticsStorageKey(userId));
+    window.location.reload();
+  };
+
   const clearPersistedState = () => {
-    localStorage.removeItem(WORKSPACE_STORAGE_KEY)
+    localStorage.removeItem(getWorkspaceStorageKey(userId))
   }
 
   const handleUploadFile = async (file) => {
@@ -383,7 +406,7 @@ export default function App() {
     setUploadError('')
 
     clearPersistedState()
-    localStorage.removeItem(ANALYTICS_STORAGE_KEY)
+    localStorage.removeItem(getAnalyticsStorageKey(userId))
     setAnalyticsState({})
     setAppState('empty')
     setColumns([])
@@ -422,8 +445,7 @@ export default function App() {
   }
 
   const handleMappingComplete = async (data) => {
-    // We update current state, but clearPersistedState is called to ensure we start from a clean version-controlled state if needed
-    localStorage.removeItem(WORKSPACE_STORAGE_KEY);
+    localStorage.removeItem(getWorkspaceStorageKey(userId));
 
     setDatasetMeta((prev) => ({
       ...prev,
@@ -436,9 +458,7 @@ export default function App() {
 
 	try {
 	  const retData = await getRetention(365, "any")
-
 	  const maxDay = retData?.max_day
-
 	  if (typeof maxDay === "number" && !Number.isNaN(maxDay)) {
 		setDetectedMaxDay(maxDay)
 		setGlobalMaxDay(maxDay)
@@ -459,37 +479,15 @@ export default function App() {
     }, 650)
   }
 
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const [eventsPayload, cohortsPayload] = await Promise.all([
-          listEvents(),
-          listCohorts()
-        ])
-        setEvents(eventsPayload.events || [])
-        setCohorts(cohortsPayload.cohorts || [])
-      } catch {
-        setEvents([])
-        setCohorts([])
-      }
-    }
-    if (appState === 'workspace') {
-      load()
-    }
-  }, [appState, cohortsRefreshToken]) // global load on workspace entry or refresh token change
-
   const openPaneSection = (key) => {
     setIsLeftPaneCollapsed(false)
     setLeftPaneTab(key)
   }
 
-  const leftPaneTabs = useMemo(() => [
-    { key: 'filters', icon: '🔎', label: 'Filters' },
-    { key: 'settings', icon: '⚙', label: 'Analytics Settings' },
-    { key: 'cohorts', icon: '👥', label: 'Cohorts' },
-  ], [])
+  if (persistedResult.status === "CORRUPTED") {
+    return <ResetDialog reason={persistedResult.reason} onReset={handleHardReset} />;
+  }
 
-  // Return the main workspace UI
   return (
     <main className="app-container workspace-root">
       <input
@@ -555,6 +553,7 @@ export default function App() {
             exportBuffer={exportBuffer}
             onRemoveExportItem={removeExportItem}
             onOpenExportModal={() => setIsExportModalOpen(true)}
+            onLogout={onLogout}
           />
 
           {isExportModalOpen && (
@@ -779,5 +778,32 @@ export default function App() {
         </div>
       )}
     </main>
-  )
+  );
+}
+
+export default function App() {
+  const [userId, setUserId] = useState(() => {
+    const raw = localStorage.getItem('user_id')
+    if (raw && /^[a-f0-9]{8}$/.test(raw)) {
+      return raw
+    }
+    localStorage.removeItem('user_id')
+    return null
+  })
+
+  const handleLogout = () => {
+    localStorage.removeItem('user_id');
+    setUserId(null);
+    window.location.reload();
+  };
+
+  if (!userId) {
+    return <Login onLogin={setUserId} />;
+  }
+
+  return (
+    <SimpleErrorBoundary>
+      <AppWorkspace key={userId} userId={userId} onLogout={handleLogout} />
+    </SimpleErrorBoundary>
+  );
 }

@@ -1,16 +1,40 @@
 const BASE_URL =
   import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000'
 
+const SKIP_AUTH = ['/login']
+
 async function request(path, options = {}) {
-  const response = await fetch(`${BASE_URL}${path}`, options)
+  const userId = localStorage.getItem('user_id')
+  
+  // Clean path for matching (remove query params)
+  const cleanPath = path.split('?')[0]
+  
+  let authPath = path
+  if (!SKIP_AUTH.includes(cleanPath) && userId) {
+    const separator = path.includes('?') ? '&' : '?'
+    authPath = `${path}${separator}user_id=${userId}`
+  }
+  
+  const response = await fetch(`${BASE_URL}${authPath}`, options)
   const data = await response.json()
 
   if (!response.ok) {
-    const message = data?.detail || 'Request failed'
+    let message = 'Request failed'
+    if (data?.detail) {
+      message = typeof data.detail === 'object' ? JSON.stringify(data.detail) : data.detail
+    }
     throw new Error(message)
   }
 
   return data
+}
+
+export async function login(email) {
+  return request('/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
 }
 
 function normalizeMaxDay(value) {
@@ -314,7 +338,7 @@ export async function searchUsers(query = '', limit = 20, cohortId = null) {
 
 export async function getUserExplorer(params) {
   const query = new URLSearchParams()
-  query.set('user_id', params.userId)
+  query.set('target_user_id', params.userId)
   query.set('page', String(params.page ?? 1))
   query.set('page_size', String(params.pageSize ?? 50))
 
