@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException
 import duckdb
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from app.db.connection import get_connection
+from app.db.connection import get_db
 from app.domains.analytics.impact_service import run_impact_analysis, IMPACT_RUN_CACHE
 
 router = APIRouter()
@@ -33,7 +33,7 @@ class ImpactStatsRequest(BaseModel):
 @router.post("/impact/run")
 async def impact_run_endpoint(
     payload: ImpactRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection)
+    conn: duckdb.DuckDBPyConnection = Depends(get_db)
 ):
     if not payload.retention_event:
         raise HTTPException(status_code=400, detail="retention_event is required")
@@ -56,7 +56,7 @@ async def impact_run_endpoint(
 @router.post("/impact/stats")
 async def impact_stats_endpoint(
     payload: ImpactStatsRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection)
+    conn: duckdb.DuckDBPyConnection = Depends(get_db)
 ):
     """Lazy statistical significance computation using cached run data."""
     cached = IMPACT_RUN_CACHE.get(payload.run_id)

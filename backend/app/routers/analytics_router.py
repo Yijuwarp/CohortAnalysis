@@ -3,7 +3,7 @@ import duckdb
 from typing import Any
 from datetime import datetime
 import logging
-from app.db.connection import get_connection
+from app.db.connection import get_db
 from app.domains.analytics.retention_service import get_retention
 from app.domains.analytics.usage_service import (
     list_events,
@@ -29,21 +29,24 @@ async def retention_endpoint(
     confidence: float = Query(0.95),
     retention_type: str = Query("classic"),
     granularity: str = Query("day"),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     parsed_max_day = parse_max_day(max_day)
-    return get_retention(conn, parsed_max_day, retention_event, include_ci, confidence, granularity=granularity, retention_type=retention_type)
+    try:
+        return get_retention(conn, parsed_max_day, retention_event, include_ci, confidence, granularity=granularity, retention_type=retention_type)
+    except duckdb.CatalogException:
+        raise HTTPException(status_code=202, detail={"status": "processing", "message": "Dataset update in progress"})
 
 @router.get("/events")
 async def list_events_endpoint(
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return list_events(conn)
 
 @router.get("/events/{event_name}/properties")
 async def event_properties_endpoint(
     event_name: str,
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return get_event_properties(conn, event_name)
 
@@ -52,7 +55,7 @@ async def event_property_values_endpoint(
     event_name: str,
     property: str,
     limit: int = 25,
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return get_event_property_values(conn, event_name, property, limit)
 
@@ -64,10 +67,13 @@ async def usage_endpoint(
     property: str | None = Query(None),
     operator: str = Query("="),
     value: str | None = Query(None),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     parsed_max_day = parse_max_day(max_day)
-    return get_usage(conn, event, parsed_max_day, retention_event, property, operator, value)
+    try:
+        return get_usage(conn, event, parsed_max_day, retention_event, property, operator, value)
+    except duckdb.CatalogException:
+        raise HTTPException(status_code=202, detail={"status": "processing", "message": "Dataset update in progress"})
 
 @router.get("/usage-frequency")
 async def usage_frequency_endpoint(
@@ -75,17 +81,20 @@ async def usage_frequency_endpoint(
     property: str | None = Query(None),
     operator: str = Query("="),
     value: str | None = Query(None),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return get_usage_frequency(conn, event, property, operator, value)
 
 @router.get("/monetization")
 async def monetization_endpoint(
     max_day: Any = Query(7),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     parsed_max_day = parse_max_day(max_day)
-    return get_monetization(conn, parsed_max_day)
+    try:
+        return get_monetization(conn, parsed_max_day)
+    except duckdb.CatalogException:
+        raise HTTPException(status_code=202, detail={"status": "processing", "message": "Dataset update in progress"})
 
 @router.get("/flow/l1")
 async def flow_l1_endpoint(
@@ -97,13 +106,15 @@ async def flow_l1_endpoint(
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
     limit: int = Query(3, ge=1, le=50),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     depth = min(max(2, depth), MAX_DEPTH)
     if not property_column or not property_values:
         property_values = None
     try:
         return get_l1_flows(conn, start_event, direction, depth, property_column, property_operator, property_values, include_top_k, limit=limit)
+    except duckdb.CatalogException:
+        raise HTTPException(status_code=202, detail={"status": "processing", "message": "Dataset update in progress"})
     except Exception as e:
         logger.exception(f"flow_l1 failed for {start_event}")
         raise HTTPException(status_code=400, detail=str(e))
@@ -120,7 +131,7 @@ async def flow_l2_endpoint(
     property_values: list[str] | None = Query(None),
     include_top_k: bool = Query(True),
     limit: int = Query(3, ge=1, le=50),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     if not property_column or not property_values:
         property_values = None
@@ -144,40 +155,38 @@ async def flow_l2_endpoint(
             include_top_k,
             limit=limit,
         )
+    except duckdb.CatalogException:
+        raise HTTPException(status_code=202, detail={"status": "processing", "message": "Dataset update in progress"})
     except Exception as e:
         logger.exception("flow_l2 failed")
         raise HTTPException(status_code=400, detail=str(e))
-
-
-
 
 @router.get("/users/search")
 async def users_search_endpoint(
     query: str = Query(""),
     limit: int = Query(20),
     cohort_id: int | None = Query(None),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return search_users(conn, query=query, limit=limit, cohort_id=cohort_id)
 
-
 @router.get("/user-explorer")
 async def user_explorer_endpoint(
-    user_id: str = Query(...),
+    target_user_id: str = Query(..., alias="target_user_id"),
     page: int = Query(1),
     page_size: int = Query(50),
     event_search: str | None = Query(None),
     direction: str | None = Query(None),
     from_event_time: datetime | None = Query(None),
     jump_datetime: str | None = Query(None),
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     if direction not in {None, "next", "prev"}:
         raise HTTPException(status_code=400, detail="direction must be one of: next, prev")
 
     return get_user_explorer(
         conn,
-        user_id=user_id,
+        user_id=target_user_id,
         page=page,
         page_size=page_size,
         event_search=event_search,

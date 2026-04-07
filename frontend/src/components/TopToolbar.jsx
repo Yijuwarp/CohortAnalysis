@@ -39,6 +39,7 @@ export default function TopToolbar({
   exportBuffer = [],
   onRemoveExportItem,
   onOpenExportModal,
+  onLogout,
 }) {
   const [isHoveringExport, setIsHoveringExport] = useState(false)
   const filename = datasetMeta?.filename || 'Unknown'
@@ -135,6 +136,16 @@ export default function TopToolbar({
             />
           )}
         </div>
+
+        <button
+          type="button"
+          className="button button-secondary logout-button"
+          onClick={onLogout}
+          style={{ marginLeft: '12px' }}
+          title="Logout and clear session"
+        >
+          Logout
+        </button>
       </div>
     </div>
   )

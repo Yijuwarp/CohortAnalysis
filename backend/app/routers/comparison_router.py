@@ -7,7 +7,7 @@ import duckdb
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.db.connection import get_connection
+from app.db.connection import get_db
 from app.domains.analytics.comparison_service import compare_cohorts
 
 router = APIRouter()
@@ -31,7 +31,7 @@ class CompareCohortRequest(BaseModel):
 @router.post("/compare-cohorts")
 async def compare_cohorts_endpoint(
     payload: CompareCohortRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_connection),
+    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
     return compare_cohorts(
         conn=conn,

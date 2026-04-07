@@ -17,6 +17,7 @@ from app.routers import (
     saved_cohorts_router,
     paths_router,
     impact_router,
+    auth_router,
 )
 from app.domains.ingestion.type_detection import detect_column_type
 from app.utils.math_utils import wilson_ci
@@ -50,6 +51,7 @@ for router in (
     saved_cohorts_router.router,
     paths_router.router,
     impact_router.router,
+    auth_router.router,
 ):
     app.include_router(router)
 
