@@ -1,6 +1,5 @@
 from fastapi import APIRouter
-from app.db.connection import get_connection
-from app.utils.db_utils import get_user_lock
+from app.db.connection import run_query
 from app.models.ingestion_models import ColumnMappingRequest
 from app.domains.ingestion.mapping_service import map_columns
 
@@ -11,6 +10,4 @@ async def map_columns_endpoint(
     user_id: str,
     request: ColumnMappingRequest,
 ):
-    with get_user_lock(user_id):
-        with get_connection(user_id) as conn:
-            return map_columns(conn, request)
+    return run_query(user_id, lambda conn: map_columns(conn, request))

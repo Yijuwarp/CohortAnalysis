@@ -1,9 +1,13 @@
-"""
-Short summary: creates the FastAPI application and registers routers.
-"""
+import os
+import sys
+import logging
 from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load environment variables from .env file
+load_dotenv()
 
 from app.routers import (
     analytics_router,
@@ -31,6 +35,33 @@ def get_connection():
     return app_get_connection()
 
 app = FastAPI(title="Behavioral Cohort Analysis API")
+
+@app.on_event("startup")
+async def startup_event():
+    # 1. Enforce single worker on Windows
+    if os.name == "nt":
+        if os.environ.get("DUCKDB_SINGLE_WORKER") != "true":
+            print("\n" + "="*60)
+            print("CRITICAL ERROR: DuckDB requires a single worker on Windows.")
+            print("Please set the environment variable DUCKDB_SINGLE_WORKER=true")
+            print("and ensure you are running with --workers 1.")
+            print("="*60 + "\n")
+            # We don't exit(1) immediately to allow the user to see the message in some console environments,
+            # but we could raise a RuntimeError.
+            raise RuntimeError("DUCKDB_SINGLE_WORKER=true must be set on Windows")
+    
+    # 2. Verify path integrity
+    from app.db.connection import BASE_USERS_PATH
+    try:
+        BASE_USERS_PATH.mkdir(parents=True, exist_ok=True)
+        # Test write permission
+        test_file = BASE_USERS_PATH / ".startup_test"
+        test_file.touch()
+        test_file.unlink()
+    except Exception as e:
+        print(f"CRITICAL ERROR: Cannot write to {BASE_USERS_PATH}: {e}")
+        sys.exit(1)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

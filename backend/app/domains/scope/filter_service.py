@@ -162,12 +162,10 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
 
     end_timer = time_block("scope_rebuild")
 
-    # Recreate filtered VIEW instead of table
-    connection.execute("DROP VIEW IF EXISTS events_scoped")
-
+    # Recreate filtered VIEW instead of table (Atomic replace)
     connection.execute(
         f"""
-        CREATE VIEW events_scoped AS
+        CREATE OR REPLACE VIEW events_scoped AS
         SELECT *
         FROM events_normalized
         {where_clause}

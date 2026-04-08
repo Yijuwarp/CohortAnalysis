@@ -1,6 +1,5 @@
-from fastapi import APIRouter, Depends
-import duckdb
-from app.db.connection import get_db
+from fastapi import APIRouter
+from app.db.connection import run_query
 from app.domains.scope.scope_metadata import (
     get_scope,
     get_columns,
@@ -11,27 +10,21 @@ from app.domains.scope.scope_metadata import (
 router = APIRouter()
 
 @router.get("/scope")
-async def get_scope_endpoint(
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
-):
-    return get_scope(conn)
+async def get_scope_endpoint(user_id: str):
+    return run_query(user_id, get_scope)
 
 @router.get("/columns")
-async def get_columns_endpoint(
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
-):
-    return get_columns(conn)
+async def get_columns_endpoint(user_id: str):
+    return run_query(user_id, get_columns)
 
 @router.get("/column-values")
 async def get_column_values_endpoint(
+    user_id: str,
     column: str,
     event_name: str | None = None,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
-    return get_column_values(conn, column, event_name)
+    return run_query(user_id, lambda conn: get_column_values(conn, column, event_name))
 
 @router.get("/date-range")
-async def get_date_range_endpoint(
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
-):
-    return get_date_range(conn)
+async def get_date_range_endpoint(user_id: str):
+    return run_query(user_id, get_date_range)
