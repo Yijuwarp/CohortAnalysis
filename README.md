@@ -37,7 +37,8 @@ For detailed information, please refer to:
 2. `python -m venv venv`
 3. `source venv/bin/activate` (or `venv\Scripts\activate` on Windows)
 4. `pip install -r requirements.txt`
-5. `uvicorn app.main:app --reload`
+5. **Windows Only**: Create a `.env` file in the `backend/` directory with `DUCKDB_SINGLE_WORKER=true`.
+6. `uvicorn app.main:app --reload`
 
 ### Frontend
 1. `cd frontend`
@@ -61,6 +62,7 @@ cd backend
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
+# Windows Only: Add DUCKDB_SINGLE_WORKER=true to .env file
 uvicorn app.main:app --reload
 ```
 
