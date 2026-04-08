@@ -1,8 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException
-import duckdb
+from fastapi import APIRouter, HTTPException
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from app.db.connection import get_db
+from app.db.connection import run_query
 from app.domains.analytics.impact_service import run_impact_analysis, IMPACT_RUN_CACHE
 
 router = APIRouter()
@@ -32,13 +31,13 @@ class ImpactStatsRequest(BaseModel):
 
 @router.post("/impact/run")
 async def impact_run_endpoint(
+    user_id: str,
     payload: ImpactRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
 ):
     if not payload.retention_event:
         raise HTTPException(status_code=400, detail="retention_event is required")
     try:
-        return run_impact_analysis(
+        return run_query(user_id, lambda conn: run_impact_analysis(
             connection=conn,
             baseline_cohort_id=payload.baseline_cohort_id,
             variant_cohort_ids=payload.variant_cohort_ids,
@@ -49,14 +48,14 @@ async def impact_run_endpoint(
             impact_events=payload.impact_events or [],
             monetization_events=payload.monetization_events or [],
             retention_event=payload.retention_event
-        )
+        ))
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @router.post("/impact/stats")
 async def impact_stats_endpoint(
+    user_id: str,
     payload: ImpactStatsRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db)
 ):
     """Lazy statistical significance computation using cached run data."""
     cached = IMPACT_RUN_CACHE.get(payload.run_id)
@@ -64,8 +63,11 @@ async def impact_stats_endpoint(
         raise HTTPException(status_code=404, detail="Run expired or invalid")
 
     try:
-        from app.domains.analytics.impact_stats_service import compute_all_stats
-        stats = compute_all_stats(conn, cached)
+        def _run(conn):
+            from app.domains.analytics.impact_stats_service import compute_all_stats
+            return compute_all_stats(conn, cached)
+        
+        stats = run_query(user_id, _run)
         return {"stats": stats}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

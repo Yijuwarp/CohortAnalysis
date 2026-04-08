@@ -1,17 +1,10 @@
-"""
-Short summary: router for the POST /compare-cohorts endpoint.
-"""
 from __future__ import annotations
-
-import duckdb
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter
 from pydantic import BaseModel
-
-from app.db.connection import get_db
+from app.db.connection import run_query
 from app.domains.analytics.comparison_service import compare_cohorts
 
 router = APIRouter()
-
 
 class CompareCohortRequest(BaseModel):
     cohort_a: int
@@ -27,13 +20,12 @@ class CompareCohortRequest(BaseModel):
     operator: str = "="
     value: str | None = None
 
-
 @router.post("/compare-cohorts")
 async def compare_cohorts_endpoint(
+    user_id: str,
     payload: CompareCohortRequest,
-    conn: duckdb.DuckDBPyConnection = Depends(get_db),
 ):
-    return compare_cohorts(
+    return run_query(user_id, lambda conn: compare_cohorts(
         conn=conn,
         cohort_a=payload.cohort_a,
         cohort_b=payload.cohort_b,
@@ -47,4 +39,4 @@ async def compare_cohorts_endpoint(
         property=payload.property,
         operator=payload.operator,
         value=payload.value,
-    )
+    ))
