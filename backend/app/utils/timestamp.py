@@ -119,6 +119,8 @@ def validate_timestamp_payload(operator: str, value: Any) -> dict[str, str]:
     start_t = _parse_time(value.get("startTime"), field_name="startTime")
 
     end_time_raw = value.get("endTime")
+    if isinstance(end_time_raw, str) and end_time_raw.strip() == "":
+        end_time_raw = None
     end_t = _parse_time(end_time_raw, field_name="endTime") if end_time_raw is not None else None
     if end_t is None:
         end_dt = datetime.combine(end_d + timedelta(days=1), time(0, 0, 0))
