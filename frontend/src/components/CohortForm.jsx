@@ -8,7 +8,7 @@ const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
   NUMERIC: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
-  TIMESTAMP: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
+  TIMESTAMP: ['before', 'after', 'on', 'between'],
   BOOLEAN: ['=', '!='],
 }
 
@@ -29,6 +29,7 @@ const createEmptyCondition = (defaultEvent = '') => ({
 })
 
 const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
+const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
 
 const formatCohortSize = (size) => {
   const numeric = Number(size || 0)
@@ -71,13 +72,15 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       return initialData.definition.conditions.map((condition) => {
         const pf = condition.property_filter || null
         const hasValues = Array.isArray(pf?.values) ? pf.values.length > 0 : pf?.values !== null && pf?.values !== undefined && pf?.values !== ''
+        const operator = pf?.operator || ''
+        const isTsOp = isTimestampOperator(operator)
         return {
           ...condition,
           is_negated: condition.is_negated ?? false,
-          property_filter: pf,
+          property_filter: pf ? { ...pf, operator: isTsOp ? String(operator).toLowerCase() : operator } : null,
           property_filter_expanded: !!pf && hasValues,
           property_column: pf?.column || '',
-          property_operator: pf?.operator || '',
+          property_operator: isTsOp ? String(operator).toLowerCase() : (pf?.operator || ''),
           property_values: Array.isArray(pf?.values) ? pf.values : (pf?.values ? [pf.values] : []),
         }
       })
@@ -158,6 +161,11 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   }
 
   const getDefaultValuesForOperator = (operator, columnType) => {
+    if (columnType === 'TIMESTAMP' && isTimestampOperator(operator)) {
+      if (operator === 'between') return { startDate: '', endDate: '', startTime: '', endTime: '' }
+      if (operator === 'on') return { date: '' }
+      return { date: '', time: '' }
+    }
     if (isMultiOperator(operator)) return []
     if (columnType === 'BOOLEAN') return true
     return ''
@@ -636,19 +644,112 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                             }}
                           />
                         ) : columnType === 'TIMESTAMP' ? (
-                          <input
-                            disabled={isValueSelectionDisabled}
-                            type="datetime-local"
-                            value={String(propertyFilter.values || '')}
-                            onChange={(e) => {
-                              const updated = [...conditions]
-                              updated[index].property_filter = {
-                                ...updated[index].property_filter,
-                                values: e.target.value,
-                              }
-                              setConditions(updated)
-                            }}
-                          />
+                          <div className="grid">
+                            {(propertyFilter.operator === 'before' || propertyFilter.operator === 'after') && (
+                              <>
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="date"
+                                  value={propertyFilter.values?.date || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), date: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="time"
+                                  step="1"
+                                  value={propertyFilter.values?.time || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), time: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                              </>
+                            )}
+                            {propertyFilter.operator === 'on' && (
+                              <input
+                                disabled={isValueSelectionDisabled}
+                                type="date"
+                                value={propertyFilter.values?.date || ''}
+                                onChange={(e) => {
+                                  const updated = [...conditions]
+                                  updated[index].property_filter = {
+                                    ...updated[index].property_filter,
+                                    values: { date: e.target.value },
+                                  }
+                                  setConditions(updated)
+                                }}
+                              />
+                            )}
+                            {propertyFilter.operator === 'between' && (
+                              <>
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="date"
+                                  value={propertyFilter.values?.startDate || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), startDate: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="time"
+                                  step="1"
+                                  value={propertyFilter.values?.startTime || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), startTime: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="date"
+                                  value={propertyFilter.values?.endDate || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), endDate: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                                <input
+                                  disabled={isValueSelectionDisabled}
+                                  type="time"
+                                  step="1"
+                                  value={propertyFilter.values?.endTime || ''}
+                                  onChange={(e) => {
+                                    const updated = [...conditions]
+                                    updated[index].property_filter = {
+                                      ...updated[index].property_filter,
+                                      values: { ...(propertyFilter.values || {}), endTime: e.target.value },
+                                    }
+                                    setConditions(updated)
+                                  }}
+                                />
+                              </>
+                            )}
+                          </div>
                         ) : (
                           <SearchableSelect
                             options={availableValues}

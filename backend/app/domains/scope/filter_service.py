@@ -9,8 +9,9 @@ from app.utils.sql import sql_quote_value, quote_identifier, get_column_kind
 from app.models.filter_models import ApplyFiltersRequest
 from app.domains.scope.scope_metadata import upsert_dataset_scope
 from app.utils.db_utils import to_dicts
+from app.utils import timestamp
 
-def build_where_clause(payload: ApplyFiltersRequest) -> str:
+def build_where_clause(payload: ApplyFiltersRequest, column_types: dict[str, str]) -> str:
     clauses: list[str] = []
 
     if payload.date_range:
@@ -21,10 +22,17 @@ def build_where_clause(payload: ApplyFiltersRequest) -> str:
     supported = {"=", "!=", "<", ">", "<=", ">=", "IN", "NOT IN"}
     for filter_row in payload.filters:
         operator = filter_row.operator.upper()
+        raw_type = column_types.get(filter_row.column, "TEXT")
+        column_kind = get_column_kind(raw_type)
+        column = quote_identifier(filter_row.column)
+        if column_kind == "TIMESTAMP":
+            clause, _ = timestamp.build_sql_clause(column, operator, filter_row.value, parameterized=False)
+            clauses.append(clause)
+            continue
+
         if operator not in supported:
             raise HTTPException(status_code=400, detail=f"Unsupported operator: {filter_row.operator}")
 
-        column = quote_identifier(filter_row.column)
         if operator in {"IN", "NOT IN"}:
             if not isinstance(filter_row.value, list) or not filter_row.value:
                 raise HTTPException(status_code=400, detail=f"Operator {operator} requires a non-empty array value")
@@ -130,7 +138,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
 
     text_allowed = {"=", "!=", "IN", "NOT IN"}
     numeric_allowed = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
-    timestamp_allowed = {"=", "!=", ">", "<", ">=", "<="}
+    timestamp_allowed = timestamp.TIMESTAMP_OPERATORS
 
     for filter_row in payload.filters:
         if filter_row.column not in known_columns:
@@ -143,6 +151,10 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         raw_type = column_types.get(filter_row.column, "TEXT")
 
         if "TIMESTAMP" in raw_type or raw_type == "DATE":
+            migrated_operator, migrated_value = timestamp.migrate_legacy_timestamp_filter(operator, filter_row.value)
+            filter_row.operator = migrated_operator
+            filter_row.value = migrated_value
+            operator = migrated_operator
             allowed_ops = timestamp_allowed
         elif raw_type in numeric_types or raw_type.startswith("DECIMAL"):
             allowed_ops = numeric_allowed
@@ -158,7 +170,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
 
     # ---------------- BUILD FILTER SQL ----------------
 
-    where_clause = build_where_clause(payload)
+    where_clause = build_where_clause(payload, column_types)
 
     end_timer = time_block("scope_rebuild")
 

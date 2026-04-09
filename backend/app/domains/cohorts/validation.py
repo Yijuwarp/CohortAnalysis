@@ -4,7 +4,7 @@ Short summary: validates cohort logic and filters before execution.
 import duckdb
 from fastapi import HTTPException
 from app.utils.sql import get_column_type_map, get_column_kind, get_allowed_operators
-from app.utils.timestamp import normalize_timestamp_filter_value
+from app.utils.timestamp import TIMESTAMP_OPERATORS, normalize_timestamp_filter_value, validate_timestamp_payload, migrate_legacy_timestamp_filter
 from app.models.cohort_models import CohortCondition, CohortPropertyFilter
 
 def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter, column_kind: str) -> None:
@@ -35,16 +35,19 @@ def validate_cohort_property_filter_value(property_filter: CohortPropertyFilter,
 
         property_filter.values = normalized_values if isinstance(values, list) else normalized_values[0]
     elif column_kind == "TIMESTAMP":
-        normalized_values: list[str] = []
-        for value in scalar_values:
-            if not isinstance(value, str):
-                raise HTTPException(status_code=400, detail="Timestamp filters require string values")
-            normalized = normalize_timestamp_filter_value(value)
-            if not normalized:
-                raise HTTPException(status_code=400, detail="Timestamp filters require non-empty string values")
-            normalized_values.append(normalized)
+        if operator in TIMESTAMP_OPERATORS:
+            property_filter.values = validate_timestamp_payload(operator, values)
+        else:
+            normalized_values: list[str] = []
+            for value in scalar_values:
+                if not isinstance(value, str):
+                    raise HTTPException(status_code=400, detail="Timestamp filters require string values")
+                normalized = normalize_timestamp_filter_value(value)
+                if not normalized:
+                    raise HTTPException(status_code=400, detail="Timestamp filters require non-empty string values")
+                normalized_values.append(normalized)
 
-        property_filter.values = normalized_values if isinstance(values, list) else normalized_values[0]
+            property_filter.values = normalized_values if isinstance(values, list) else normalized_values[0]
     elif column_kind == "BOOLEAN":
         if operator in {"IN", "NOT IN"}:
             raise HTTPException(status_code=400, detail=f"Operator '{operator}' not allowed for column type BOOLEAN")
@@ -72,7 +75,12 @@ def validate_cohort_conditions(
 
         operator = property_filter.operator.upper()
         column_kind = get_column_kind(column_types[property_filter.column])
-        allowed_ops = get_allowed_operators(column_kind)
+        if column_kind == "TIMESTAMP":
+            migrated_operator, migrated_value = migrate_legacy_timestamp_filter(operator, property_filter.values)
+            property_filter.operator = migrated_operator
+            property_filter.values = migrated_value
+            operator = migrated_operator
+        allowed_ops = TIMESTAMP_OPERATORS if column_kind == "TIMESTAMP" else get_allowed_operators(column_kind)
         if operator not in allowed_ops:
             raise HTTPException(
                 status_code=400,

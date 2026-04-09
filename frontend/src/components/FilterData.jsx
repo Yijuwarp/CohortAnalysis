@@ -8,7 +8,7 @@ const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
   NUMERIC: ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<='],
-  TIMESTAMP: ['=', '!=', '>', '>=', '<', '<='],
+  TIMESTAMP: ['before', 'after', 'on', 'between'],
 }
 
 const defaultFilter = {
@@ -17,6 +17,7 @@ const defaultFilter = {
   value: [],
   enabled: true,
 }
+const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
 
 const normalizeColumnType = (dataType = '') => {
   const upper = String(dataType).toUpperCase()
@@ -26,6 +27,24 @@ const normalizeColumnType = (dataType = '') => {
 }
 
 const normalizeRowValue = (operator, value) => {
+  const op = String(operator || '').toLowerCase()
+  if (isTimestampOperator(op)) {
+    if (op === 'between') {
+      const source = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
+      return {
+        startDate: source.startDate || '',
+        endDate: source.endDate || '',
+        startTime: source.startTime || '',
+        endTime: source.endTime || '',
+      }
+    }
+    if (op === 'on') {
+      const source = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
+      return { date: source.date || '' }
+    }
+    const source = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
+    return { date: source.date || '', time: source.time || '' }
+  }
   const requiresMulti = operator === 'IN' || operator === 'NOT IN'
   if (requiresMulti) {
     if (Array.isArray(value)) return value.map((item) => String(item))
@@ -97,7 +116,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       const mappedFilters = payload.filters?.length
         ? payload.filters.map((row) => {
           const allowed = getAllowedOperators(row.column, loadedColumnMap)
-          const nextOperator = allowed.includes(row.operator) ? row.operator : allowed[0]
+          const rowOperator = normalizeColumnType(loadedColumnMap[row.column]?.data_type) === 'TIMESTAMP' ? String(row.operator || '').toLowerCase() : row.operator
+          const nextOperator = allowed.includes(rowOperator) ? rowOperator : allowed[0]
           return { ...row, operator: nextOperator, enabled: row.enabled ?? true, value: normalizeRowValue(nextOperator, row.value) }
         })
         : [defaultFilter]
@@ -165,7 +185,20 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
 
   const toPayload = () => ({
     date_range: dateRange.start && dateRange.end ? dateRange : null,
-    filters: filters.filter((row) => row.enabled).filter((row) => row.column && (Array.isArray(row.value) ? row.value.length > 0 : row.value !== '')).map((row) => (Array.isArray(row.value) ? { ...row, value: row.value.map((item) => String(item)) } : { ...row, value: row.value === '' ? '' : String(row.value) })),
+    filters: filters
+      .filter((row) => row.enabled)
+      .filter((row) => {
+        if (!row.column) return false
+        if (isTimestampOperator(row.operator)) {
+          if (row.operator === 'between') return Boolean(row.value?.startDate && row.value?.endDate)
+          return Boolean(row.value?.date)
+        }
+        return Array.isArray(row.value) ? row.value.length > 0 : row.value !== ''
+      })
+      .map((row) => {
+        if (isTimestampOperator(row.operator)) return { ...row, value: row.value }
+        return Array.isArray(row.value) ? { ...row, value: row.value.map((item) => String(item)) } : { ...row, value: row.value === '' ? '' : String(row.value) }
+      }),
   })
 
   const handleApply = async () => {
@@ -223,6 +256,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
 
       {filters.map((row, index) => {
         const fetchedValues = (valueCache[row.column]?.values || []).map((value) => String(value))
+        const isTimestamp = normalizeColumnType(columnByName[row.column]?.data_type) === 'TIMESTAMP'
         const selectedValues = Array.isArray(row.value) ? row.value.map((value) => String(value)) : row.value ? [String(row.value)] : []
         const mergedValues = Array.from(new Set([...fetchedValues, ...selectedValues]))
         const availableValues = mergedValues.filter((value) => !selectedValues.includes(value))
@@ -253,21 +287,45 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
             </div>
 
             <p className="tertiary-label">Values:</p>
-            <div className="filter-values">
-              {selectedValues.map((value) => (
-                <span className="filter-chip" key={`${row.column}-${value}`}>{value}<button className="chip-remove" type="button" onClick={() => removeFilterValue(index, value)}>×</button></span>
-              ))}
-            </div>
+            {isTimestamp && isTimestampOperator(row.operator) ? (
+              <div className="grid">
+                {(row.operator === 'before' || row.operator === 'after') && (
+                  <>
+                    <input type="date" value={row.value?.date || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), date: e.target.value })} />
+                    <input type="time" step="1" value={row.value?.time || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), time: e.target.value })} />
+                  </>
+                )}
+                {row.operator === 'on' && (
+                  <input type="date" value={row.value?.date || ''} onChange={(e) => updateFilter(index, 'value', { date: e.target.value })} />
+                )}
+                {row.operator === 'between' && (
+                  <>
+                    <input type="date" value={row.value?.startDate || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), startDate: e.target.value })} />
+                    <input type="time" step="1" value={row.value?.startTime || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), startTime: e.target.value })} />
+                    <input type="date" value={row.value?.endDate || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), endDate: e.target.value })} />
+                    <input type="time" step="1" value={row.value?.endTime || ''} onChange={(e) => updateFilter(index, 'value', { ...(row.value || {}), endTime: e.target.value })} />
+                  </>
+                )}
+              </div>
+            ) : (
+              <>
+                <div className="filter-values">
+                  {selectedValues.map((value) => (
+                    <span className="filter-chip" key={`${row.column}-${value}`}>{value}<button className="chip-remove" type="button" onClick={() => removeFilterValue(index, value)}>×</button></span>
+                  ))}
+                </div>
 
-            <div className="filter-selector-spacing">
-              <SearchableSelect
-                options={availableValues}
-                value=""
-                onChange={(selectedValue) => addFilterValue(index, selectedValue)}
-                placeholder={row.column ? 'Search values to add' : 'Select a column first'}
-                disabled={!row.column}
-              />
-            </div>
+                <div className="filter-selector-spacing">
+                  <SearchableSelect
+                    options={availableValues}
+                    value=""
+                    onChange={(selectedValue) => addFilterValue(index, selectedValue)}
+                    placeholder={row.column ? 'Search values to add' : 'Select a column first'}
+                    disabled={!row.column}
+                  />
+                </div>
+              </>
+            )}
           </div>
         )
       })}

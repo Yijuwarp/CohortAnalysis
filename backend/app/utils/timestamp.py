@@ -1,8 +1,9 @@
 """
-Short summary: contains timestamp parsing and normalization helpers.
+Short summary: contains timestamp parsing, migration, and SQL helpers.
 """
 import re
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
+from typing import Any
 from fastapi import HTTPException
 
 TIMESTAMP_INPUT_FORMATS: tuple[str, ...] = (
@@ -13,7 +14,15 @@ TIMESTAMP_INPUT_FORMATS: tuple[str, ...] = (
     "%Y-%m-%d %H:%M:%S.%f",
 )
 
+_TIMESTAMP_TIME_FORMATS: tuple[str, ...] = (
+    "%H",
+    "%H:%M",
+    "%H:%M:%S",
+)
+
 _TZ_OFFSET_RE = re.compile(r"[+-]\d{2}:?\d{2}$")
+
+TIMESTAMP_OPERATORS = {"BEFORE", "AFTER", "ON", "BETWEEN"}
 
 
 def normalize_timestamp_filter_value(value: str) -> str:
@@ -60,3 +69,119 @@ def normalize_event_timestamp_value(value: object, *, allow_empty: bool) -> date
             continue
 
     raise HTTPException(status_code=400, detail=f"Invalid timestamp format: {raw!r}")
+
+
+def _parse_date(raw: Any, *, field_name: str) -> date:
+    if not isinstance(raw, str) or not raw.strip():
+        raise HTTPException(status_code=400, detail=f"{field_name} is required")
+    try:
+        return date.fromisoformat(raw.strip())
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid {field_name} format") from exc
+
+
+def _parse_time(raw: Any, *, field_name: str) -> time:
+    if raw is None:
+        return time(0, 0, 0)
+    if not isinstance(raw, str) or not raw.strip():
+        return time(0, 0, 0)
+    candidate = raw.strip()
+    for fmt in _TIMESTAMP_TIME_FORMATS:
+        try:
+            parsed = datetime.strptime(candidate, fmt)
+            return time(parsed.hour, parsed.minute, parsed.second)
+        except ValueError:
+            continue
+    raise HTTPException(status_code=400, detail=f"Invalid {field_name} format")
+
+
+def validate_timestamp_payload(operator: str, value: Any) -> dict[str, str]:
+    op = str(operator or "").upper()
+    if op not in TIMESTAMP_OPERATORS:
+        raise HTTPException(status_code=400, detail=f"Unsupported timestamp operator: {operator}")
+    if hasattr(value, "model_dump"):
+        value = value.model_dump()
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="Timestamp filter requires a structured object value")
+
+    if op in {"BEFORE", "AFTER"}:
+        d = _parse_date(value.get("date"), field_name="date")
+        t = _parse_time(value.get("time"), field_name="time")
+        return {"date": d.isoformat(), "time": t.strftime("%H:%M:%S")}
+
+    if op == "ON":
+        d = _parse_date(value.get("date"), field_name="date")
+        return {"date": d.isoformat()}
+
+    # BETWEEN
+    start_d = _parse_date(value.get("startDate"), field_name="startDate")
+    end_d = _parse_date(value.get("endDate"), field_name="endDate")
+    start_t = _parse_time(value.get("startTime"), field_name="startTime")
+
+    end_time_raw = value.get("endTime")
+    end_t = _parse_time(end_time_raw, field_name="endTime") if end_time_raw is not None else None
+    if end_t is None:
+        end_dt = datetime.combine(end_d + timedelta(days=1), time(0, 0, 0))
+    else:
+        end_dt = datetime.combine(end_d, end_t)
+
+    start_dt = datetime.combine(start_d, start_t)
+    if end_dt <= start_dt:
+        raise HTTPException(status_code=400, detail="Timestamp BETWEEN range must satisfy end > start")
+
+    payload: dict[str, str] = {
+        "startDate": start_d.isoformat(),
+        "endDate": end_d.isoformat(),
+        "startTime": start_t.strftime("%H:%M:%S"),
+    }
+    if end_time_raw is not None:
+        payload["endTime"] = end_t.strftime("%H:%M:%S") if end_t is not None else "00:00:00"
+    return payload
+
+
+def migrate_legacy_timestamp_filter(operator: str, value: Any) -> tuple[str, Any]:
+    op = str(operator or "").upper()
+    if op == "=" and isinstance(value, str):
+        parsed = normalize_event_timestamp_value(value, allow_empty=False)
+        assert parsed is not None
+        return "ON", {"date": parsed.date().isoformat()}
+    return op, value
+
+
+def _combine_date_time(d: str, t: str) -> datetime:
+    return datetime.combine(date.fromisoformat(d), time.fromisoformat(t))
+
+
+def build_sql_clause(column_sql: str, operator: str, value: Any, *, parameterized: bool) -> tuple[str, list[object]]:
+    payload = validate_timestamp_payload(operator, value)
+
+    params: list[object] = []
+
+    def emit_param(ts: datetime) -> str:
+        rendered = ts.strftime("%Y-%m-%d %H:%M:%S")
+        if parameterized:
+            params.append(rendered)
+            return "?"
+        return f"TIMESTAMP '{rendered}'"
+
+    op = str(operator or "").upper()
+    if op == "BEFORE":
+        threshold = _combine_date_time(payload["date"], payload["time"])
+        return f"{column_sql} < {emit_param(threshold)}", params
+
+    if op == "AFTER":
+        threshold = _combine_date_time(payload["date"], payload["time"])
+        return f"{column_sql} >= {emit_param(threshold)}", params
+
+    if op == "ON":
+        start = datetime.combine(date.fromisoformat(payload["date"]), time(0, 0, 0))
+        end = start + timedelta(days=1)
+        return f"({column_sql} >= {emit_param(start)} AND {column_sql} < {emit_param(end)})", params
+
+    start = _combine_date_time(payload["startDate"], payload["startTime"])
+    if "endTime" in payload:
+        end = _combine_date_time(payload["endDate"], payload["endTime"])
+    else:
+        end = datetime.combine(date.fromisoformat(payload["endDate"]) + timedelta(days=1), time(0, 0, 0))
+
+    return f"({column_sql} >= {emit_param(start)} AND {column_sql} < {emit_param(end)})", params
