@@ -5,7 +5,8 @@ import duckdb
 from fastapi import HTTPException
 from app.models.cohort_models import SavedCohortCreate, SavedCohortResponse
 from app.domains.cohorts.cohort_service import ensure_cohort_tables, update_cohort
-from app.utils.sql import get_column_type_map
+from app.utils.sql import get_column_type_map, get_column_kind, quote_identifier
+from app.utils import timestamp
 
 def get_source_table(connection: duckdb.DuckDBPyConnection) -> str:
     scoped_exists = connection.execute(
@@ -154,15 +155,8 @@ def update_saved_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: str, p
     ).fetchall()
     
     from app.models.cohort_models import CreateCohortRequest
-    from app.domains.cohorts.cohort_service import normalize_values
     for (act_id,) in affected_cohorts:
         def_dict = payload.model_dump()
-        # Normalize property values in definition
-        for condition in def_dict.get("conditions", []):
-            if condition.get("property_filter"):
-                vals = condition["property_filter"].get("values")
-                condition["property_filter"]["values"] = normalize_values(vals)
-                
         c_req = CreateCohortRequest(**def_dict)
         c_req.source_saved_id = cohort_id
         update_cohort(connection, int(act_id), c_req)
@@ -180,7 +174,6 @@ def delete_saved_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: str) -
 
 def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCohortCreate) -> dict:
     from app.domains.cohorts.validation import validate_cohort_conditions
-    from app.utils.sql import quote_identifier
     
     source_table = get_source_table(connection)
     table_exists = connection.execute(
@@ -191,6 +184,7 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
         return {"estimated_users": 0, "percentage_of_total": 0.0}
 
     validate_cohort_conditions(connection, source_table, definition.conditions)
+    column_types = get_column_type_map(connection, source_table)
     
     conditions = definition.conditions
     logic_operator = (definition.condition_logic or definition.logic_operator or "AND").upper()
@@ -223,7 +217,18 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
                 property_values = cond.property_filter.values
                 
                 normalized_operator = str(property_operator).upper()
-                if normalized_operator in {"IN", "NOT IN"}:
+                column_kind = get_column_kind(column_types.get(property_column, "TEXT"))
+                if column_kind == "TIMESTAMP":
+                    migrated_operator, migrated_value = timestamp.migrate_legacy_timestamp_filter(normalized_operator, property_values)
+                    clause, ts_params = timestamp.build_sql_clause(
+                        quote_identifier(str(property_column)),
+                        migrated_operator,
+                        migrated_value,
+                        parameterized=True,
+                    )
+                    event_conditions.append(clause)
+                    event_params.extend(ts_params)
+                elif normalized_operator in {"IN", "NOT IN"}:
                     parsed_values = property_values if isinstance(property_values, list) else [property_values]
                     placeholders = ", ".join(["?"] * len(parsed_values))
                     event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
@@ -313,4 +318,3 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
         "estimated_users": int(estimated_users),
         "percentage_of_total": float(percentage)
     }
-

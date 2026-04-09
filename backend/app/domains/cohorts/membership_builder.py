@@ -5,7 +5,8 @@ import json
 import duckdb
 from fastapi import HTTPException
 from app.utils.perf import time_block
-from app.utils.sql import quote_identifier
+from app.utils.sql import quote_identifier, get_column_type_map, get_column_kind
+from app.utils import timestamp
 
 def build_cohort_membership(
     connection: duckdb.DuckDBPyConnection,
@@ -42,6 +43,8 @@ def build_cohort_membership(
     )
     from app.utils.db_utils import to_dicts
     conditions = to_dicts(cursor, cursor.fetchall())
+
+    column_types = get_column_type_map(connection, source_table)
 
     if not conditions:
         connection.execute(
@@ -81,7 +84,19 @@ def build_cohort_membership(
                 from app.domains.cohorts.cohort_service import normalize_values
                 parsed_values = normalize_values(property_values)
                 normalized_operator = str(property_operator).upper()
-                if normalized_operator in {"IN", "NOT IN"}:
+                column_kind = get_column_kind(column_types.get(str(property_column), "TEXT"))
+                if column_kind == "TIMESTAMP":
+                    timestamp_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                    normalized_operator, timestamp_value = timestamp.migrate_legacy_timestamp_filter(normalized_operator, timestamp_value)
+                    clause, params = timestamp.build_sql_clause(
+                        quote_identifier(str(property_column)),
+                        normalized_operator,
+                        timestamp_value,
+                        parameterized=True,
+                    )
+                    event_conditions.append(clause)
+                    event_params.extend(params)
+                elif normalized_operator in {"IN", "NOT IN"}:
                     placeholders = ", ".join(["?"] * len(parsed_values))
                     event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
                     event_params.extend(parsed_values)

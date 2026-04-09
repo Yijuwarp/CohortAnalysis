@@ -9,10 +9,26 @@ class DateRange(BaseModel):
     start: str
     end: str
 
+class TimestampBeforeAfter(BaseModel):
+    date: str
+    time: str | None = None
+
+
+class TimestampOn(BaseModel):
+    date: str
+
+
+class TimestampBetween(BaseModel):
+    startDate: str
+    endDate: str
+    startTime: str | None = None
+    endTime: str | None = None
+
+
 class ScopeFilter(BaseModel):
     column: str
     operator: str
-    value: str | float | int | list[str] | list[float] | list[int]
+    value: str | float | int | list[str] | list[float] | list[int] | TimestampBeforeAfter | TimestampOn | TimestampBetween
 
     @model_validator(mode="before")
     @classmethod

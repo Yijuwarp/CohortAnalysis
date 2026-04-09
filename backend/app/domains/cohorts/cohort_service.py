@@ -10,6 +10,8 @@ from app.domains.cohorts.validation import validate_cohort_conditions
 from app.domains.cohorts.membership_builder import build_cohort_membership
 from app.domains.cohorts.activity_service import refresh_cohort_activity
 from app.utils.db_utils import to_dict, to_dicts
+from app.utils.sql import get_column_type_map, get_column_kind
+from app.utils.timestamp import migrate_legacy_timestamp_filter, validate_timestamp_payload
 
 def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
@@ -191,15 +193,17 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
         if condition.property_filter:
             property_column = condition.property_filter.column
             property_operator = condition.property_filter.operator.upper()
-            
-            # Normalize to list (handles scalar, list, and stringified JSON)
-            values = normalize_values(condition.property_filter.values)
-            property_values = json.dumps(values)
+            if property_operator in {"BEFORE", "AFTER", "ON", "BETWEEN"}:
+                property_values = json.dumps(condition.property_filter.values)
+            else:
+                # Normalize to list (handles scalar, list, and stringified JSON)
+                values = normalize_values(condition.property_filter.values)
+                property_values = json.dumps(values)
 
         if property_values is not None:
             try:
                 parsed = json.loads(property_values)
-                if not isinstance(parsed, list):
+                if property_operator not in {"BEFORE", "AFTER", "ON", "BETWEEN"} and not isinstance(parsed, list):
                     raise ValueError
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid property_values format")
@@ -243,6 +247,8 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
 
 def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[str, object]]]:
     ensure_cohort_tables(connection)
+    source_table = get_events_source_table(connection)
+    source_column_types = get_column_type_map(connection, source_table)
     cursor = connection.execute(
         """
         SELECT
@@ -287,10 +293,19 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
         cid = int(crow["cohort_id"])
         property_filter = None
         if crow["property_column"] and crow["property_operator"] and crow["property_values"] is not None:
+            parsed_values = json.loads(str(crow["property_values"]))
+            operator = str(crow["property_operator"]).upper()
+            column_name = str(crow["property_column"])
+            values: object = parsed_values
+            if get_column_kind(source_column_types.get(column_name, "TEXT")) == "TIMESTAMP":
+                legacy_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                migrated_operator, migrated_value = migrate_legacy_timestamp_filter(operator, legacy_value)
+                operator = migrated_operator
+                values = validate_timestamp_payload(migrated_operator, migrated_value)
             property_filter = {
-                "column": str(crow["property_column"]),
-                "operator": str(crow["property_operator"]),
-                "values": json.loads(str(crow["property_values"])),
+                "column": column_name,
+                "operator": operator,
+                "values": values,
             }
         conditions_by_cohort.setdefault(cid, []).append({
             "event_name": str(crow["event_name"]),
@@ -357,15 +372,17 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
         if condition.property_filter:
             property_column = condition.property_filter.column
             property_operator = condition.property_filter.operator.upper()
-            
-            # Normalize to list (handles scalar, list, and stringified JSON)
-            values = normalize_values(condition.property_filter.values)
-            property_values = json.dumps(values)
+            if property_operator in {"BEFORE", "AFTER", "ON", "BETWEEN"}:
+                property_values = json.dumps(condition.property_filter.values)
+            else:
+                # Normalize to list (handles scalar, list, and stringified JSON)
+                values = normalize_values(condition.property_filter.values)
+                property_values = json.dumps(values)
 
         if property_values is not None:
             try:
                 parsed = json.loads(property_values)
-                if not isinstance(parsed, list):
+                if property_operator not in {"BEFORE", "AFTER", "ON", "BETWEEN"} and not isinstance(parsed, list):
                     raise ValueError
             except Exception:
                 raise HTTPException(status_code=400, detail="Invalid property_values format")

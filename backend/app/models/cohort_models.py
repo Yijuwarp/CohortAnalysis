@@ -5,10 +5,26 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator, model_validator
 from app.utils.filter_normalization import normalize_filter_value
 
+class TimestampBeforeAfter(BaseModel):
+    date: str
+    time: str | None = None
+
+
+class TimestampOn(BaseModel):
+    date: str
+
+
+class TimestampBetween(BaseModel):
+    startDate: str
+    endDate: str
+    startTime: str | None = None
+    endTime: str | None = None
+
+
 class CohortPropertyFilter(BaseModel):
     column: str
     operator: str
-    values: str | float | int | bool | list[str] | list[float] | list[int] | list[bool]
+    values: str | float | int | bool | list[str] | list[float] | list[int] | list[bool] | TimestampBeforeAfter | TimestampOn | TimestampBetween
 
     @model_validator(mode="before")
     @classmethod

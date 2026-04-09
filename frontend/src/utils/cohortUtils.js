@@ -1,11 +1,33 @@
 const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
+const isTimestampOperator = (operator) => ['BEFORE', 'AFTER', 'ON', 'BETWEEN'].includes(String(operator || '').toUpperCase())
+
+const formatTimestampValues = (operator, values) => {
+  const payload = Array.isArray(values) ? values[0] : values
+  if (!payload || typeof payload !== 'object') return String(values ?? '')
+
+  const op = String(operator || '').toUpperCase()
+  if (op === 'ON') {
+    return payload.date || ''
+  }
+  if (op === 'BEFORE' || op === 'AFTER') {
+    return payload.time ? `${payload.date || ''} ${payload.time}`.trim() : (payload.date || '')
+  }
+  if (op === 'BETWEEN') {
+    const start = payload.startTime ? `${payload.startDate || ''} ${payload.startTime}`.trim() : (payload.startDate || '')
+    const end = payload.endTime ? `${payload.endDate || ''} ${payload.endTime}`.trim() : (payload.endDate || '')
+    return `${start} → ${end}`.trim()
+  }
+  return JSON.stringify(payload)
+}
 
 const formatPropertyFilter = (propertyFilter) => {
   if (!propertyFilter) {
     return ''
   }
 
-  const formattedValues = Array.isArray(propertyFilter.values)
+  const formattedValues = isTimestampOperator(propertyFilter.operator)
+    ? formatTimestampValues(propertyFilter.operator, propertyFilter.values)
+    : Array.isArray(propertyFilter.values)
     ? propertyFilter.values.join(', ')
     : propertyFilter.values
 

@@ -1,6 +1,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from tests.test_cohorts import _prepare_normalized_events
+import io
 
 def test_create_saved_cohort(client, db_connection):
     _prepare_normalized_events(client)
@@ -169,3 +170,59 @@ def test_delete_saved_cohort_does_not_affect_active(client, db_connection):
     # 4. Check active cohort is still there
     list_resp = client.get("/cohorts").json()
     assert any(c["source_saved_id"] == s_id for c in list_resp["cohorts"])
+
+
+def test_update_saved_cohort_with_structured_timestamp_filter(client, db_connection):
+    csv_text = (
+        "user_id,event_name,event_time,channel\n"
+        "u1,purchase,2024-01-01 09:00:00,ads\n"
+        "u1,purchase,2024-01-03 09:00:00,email\n"
+        "u2,purchase,2024-01-02 09:00:00,ads\n"
+    )
+    upload = client.post(
+        "/upload?user_id=abcdef12",
+        files={"file": ("events.csv", io.BytesIO(csv_text.encode("utf-8")), "text/csv")},
+    )
+    assert upload.status_code == 200, upload.text
+    mapped = client.post(
+        "/map-columns?user_id=abcdef12",
+        json={
+            "user_id_column": "user_id",
+            "event_name_column": "event_name",
+            "event_time_column": "event_time",
+        },
+    )
+    assert mapped.status_code == 200, mapped.text
+
+    saved_payload = {
+        "name": "Timestamp Saved Cohort",
+        "logic_operator": "AND",
+        "conditions": [
+            {
+                "event_name": "purchase",
+                "min_event_count": 1,
+                "property_filter": {
+                    "column": "event_time",
+                    "operator": "before",
+                    "values": {"date": "2026-04-01", "time": "00:00:00"},
+                },
+            }
+        ],
+    }
+    saved = client.post("/saved-cohorts?user_id=abcdef12", json=saved_payload)
+    assert saved.status_code == 200, saved.text
+    saved_id = saved.json()["id"]
+
+    create_active = client.post(
+        "/cohorts?user_id=abcdef12",
+        json={**saved.json()["definition"], "source_saved_id": saved_id},
+    )
+    assert create_active.status_code == 200, create_active.text
+
+    update_payload = {
+        **saved_payload,
+        "name": "Timestamp Saved Cohort Updated",
+    }
+    updated = client.put(f"/saved-cohorts/{saved_id}?user_id=abcdef12", json=update_payload)
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["name"] == "Timestamp Saved Cohort Updated"
