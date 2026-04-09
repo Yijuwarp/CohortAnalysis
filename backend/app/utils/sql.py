@@ -21,7 +21,20 @@ NUMERIC_TYPES = {
 
 TEXT_ALLOWED_OPERATORS = {"=", "!=", "IN", "NOT IN"}
 NUMERIC_ALLOWED_OPERATORS = {"=", "!=", ">", "<", ">=", "<=", "IN", "NOT IN"}
-TIMESTAMP_ALLOWED_OPERATORS = {"BEFORE", "AFTER", "ON", "BETWEEN"}
+TIMESTAMP_ALLOWED_OPERATORS = {
+    "=",
+    "!=",
+    ">",
+    "<",
+    ">=",
+    "<=",
+    "IN",
+    "NOT IN",
+    "BEFORE",
+    "AFTER",
+    "ON",
+    "BETWEEN",
+}
 BOOLEAN_ALLOWED_OPERATORS = {"=", "!="}
 
 CANONICAL_COLUMNS = {"user_id", "event_name", "event_time"}
