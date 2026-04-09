@@ -92,6 +92,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   const [columns, setColumns] = useState([])
   const [valueCache, setValueCache] = useState({})
   const valueCacheRef = useRef(valueCache)
+  const [loadingKeys, setLoadingKeys] = useState(new Set())
   const inFlightRequests = useRef(new Set())
 
   useEffect(() => {
@@ -162,7 +163,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     return ''
   }
 
-  const getValueCacheKey = useCallback((eventName, columnName) => `${eventName || ''}__${columnName || ''}`, [])
+  const getValueCacheKey = useCallback((eventName, columnName) => `${eventName || ''}::${columnName || ''}`, [])
 
   const ensureColumnValuesLoaded = useCallback(async (columnName, eventName) => {
     if (!columnName || !eventName) return
@@ -170,6 +171,12 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     if (valueCacheRef.current[cacheKey] || inFlightRequests.current.has(cacheKey)) return
 
     inFlightRequests.current.add(cacheKey)
+    setLoadingKeys((prev) => {
+      const next = new Set(prev)
+      next.add(cacheKey)
+      return next
+    })
+
     try {
       const response = await getColumnValues(columnName, eventName)
       setValueCache((prev) => ({
@@ -180,12 +187,26 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       setValueCache((prev) => ({ ...prev, [cacheKey]: { values: [] } }))
     } finally {
       inFlightRequests.current.delete(cacheKey)
+      setLoadingKeys((prev) => {
+        const next = new Set(prev)
+        next.add(cacheKey) // Force a re-render even if we just removing, though we usually add to cache above
+        next.delete(cacheKey)
+        return next
+      })
     }
   }, [getValueCacheKey])
 
 
 
   const useEffectFn = isTest ? useLayoutEffect : useEffect
+
+  useEffect(() => {
+    // Invalidate cache on scope change
+    setValueCache({})
+    valueCacheRef.current = {}
+    inFlightRequests.current.clear()
+    setLoadingKeys(new Set())
+  }, [refreshToken])
 
   useEffectFn(() => {
     const load = async () => {
@@ -211,6 +232,19 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     }
     load()
   }, [refreshToken, initialData])
+
+  useEffect(() => {
+    // Reactive hydration for property filters
+    if (events.length === 0 || columns.length === 0) return
+
+    conditions.forEach((condition) => {
+      const eventName = condition.event_name
+      const columnName = condition.property_filter?.column
+      if (eventName && columnName) {
+        ensureColumnValuesLoaded(columnName, eventName)
+      }
+    })
+  }, [conditions, events, columns, ensureColumnValuesLoaded])
 
   const lastPayloadRef = useRef(null)
 
@@ -547,8 +581,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                           >
                             <option value="true">True</option>
                             <option value="false">False</option>
-                          </select>
-                        ) : isMultiOperator(propertyFilter.operator) ? (
+                          </select>                         ) : isMultiOperator(propertyFilter.operator) ? (
                           <div className="cohort-multi-values">
                             <SearchableSelect
                               options={availableValues}
@@ -564,8 +597,9 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                                 }
                                 setConditions(updated)
                               }}
-                              placeholder="Select values"
+                              placeholder={loadingKeys.has(valueCacheKey) ? "Loading options..." : "Select values"}
                             />
+
                             <div className="cohort-pills">
                               {(propertyFilter.values || []).map((value) => (
                                 <span className="cohort-pill" key={value}>
@@ -591,7 +625,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                           <input
                             disabled={isValueSelectionDisabled}
                             type="number"
-                            value={propertyFilter.values}
+                            value={Array.isArray(propertyFilter.values) ? propertyFilter.values[0] ?? '' : propertyFilter.values}
                             onChange={(e) => {
                               const updated = [...conditions]
                               updated[index].property_filter = {
@@ -618,7 +652,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                         ) : (
                           <SearchableSelect
                             options={availableValues}
-                            value={String(propertyFilter.values || '')}
+                            value={String((Array.isArray(propertyFilter.values) ? propertyFilter.values[0] : propertyFilter.values) || '')}
                             disabled={isValueSelectionDisabled}
                             onChange={(nextValue) => {
                               const updated = [...conditions]
@@ -628,7 +662,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                               }
                               setConditions(updated)
                             }}
-                            placeholder="Select value"
+                            placeholder={loadingKeys.has(valueCacheKey) ? "Loading options..." : "Select value"}
                           />
                         )}
                       </div>
