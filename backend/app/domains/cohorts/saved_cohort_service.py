@@ -229,9 +229,8 @@ def estimate_cohort(connection: duckdb.DuckDBPyConnection, definition: SavedCoho
                     event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
                     event_params.extend(parsed_values)
                 else:
-                    scalar_value = property_values[0] if isinstance(property_values, list) else property_values
                     event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ?")
-                    event_params.append(scalar_value)
+                    event_params.append(property_values)
 
             where_clause = " AND ".join(event_conditions)
 

@@ -1,12 +1,23 @@
 """
 Short summary: defines cohort request and configuration models, including split operation models.
 """
-from pydantic import BaseModel, Field, field_validator
+from typing import Any
+from pydantic import BaseModel, Field, field_validator, model_validator
+from app.utils.filter_normalization import normalize_filter_value
 
 class CohortPropertyFilter(BaseModel):
     column: str
     operator: str
     values: str | float | int | bool | list[str] | list[float] | list[int] | list[bool]
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_and_validate(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            op = data.get("operator")
+            val = data.get("values")
+            data["values"] = normalize_filter_value(val, op)
+        return data
 
 class CohortCondition(BaseModel):
     event_name: str
