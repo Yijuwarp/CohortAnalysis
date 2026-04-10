@@ -22,8 +22,12 @@ async def get_column_values_endpoint(
     user_id: str,
     column: str,
     event_name: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
 ):
-    return run_query(user_id, lambda conn: get_column_values(conn, column, event_name))
+    # Strict limit enforcement
+    safe_limit = min(limit, 100)
+    return run_query(user_id, lambda conn: get_column_values(conn, column, event_name, search, safe_limit))
 
 @router.get("/date-range")
 async def get_date_range_endpoint(user_id: str):

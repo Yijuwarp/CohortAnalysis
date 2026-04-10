@@ -459,6 +459,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                         })
                       }}
                       placeholder="Select event"
+                      column="event_name"
                     />
                   </div>
                   <div className="cohort-condition-row">
@@ -596,8 +597,9 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                               value=""
                               disabled={isValueSelectionDisabled}
                               onChange={(selected) => {
+                                if (!selected || selected === '[object Object]') return
                                 const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
-                                if (existing.includes(selected) || existing.length >= 100) return
+                                if (existing.includes(selected)) return
                                 const updated = [...conditions]
                                 updated[index].property_filter = {
                                   ...updated[index].property_filter,
@@ -606,6 +608,8 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                                 setConditions(updated)
                               }}
                               placeholder={loadingKeys.has(valueCacheKey) ? "Loading options..." : "Select values"}
+                              column={propertyFilter.column}
+                              eventName={condition.event_name}
                             />
 
                             <div className="cohort-pills">
@@ -764,6 +768,8 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                               setConditions(updated)
                             }}
                             placeholder={loadingKeys.has(valueCacheKey) ? "Loading options..." : "Select value"}
+                            column={propertyFilter.column}
+                            eventName={condition.event_name}
                           />
                         )}
                       </div>

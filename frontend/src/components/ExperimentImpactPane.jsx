@@ -354,6 +354,7 @@ export default function ExperimentImpactPane({
                 value=""
                 onChange={(val) => val && updateConfig(curr => ({ exposure_events: [...(curr.exposure_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select exposure events..."
+                column="event_name"
               />
               {renderTags(config.exposure_events, 'exposure_events')}
             </div>
@@ -365,6 +366,7 @@ export default function ExperimentImpactPane({
                 value=""
                 onChange={(val) => val && updateConfig(curr => ({ interaction_events: [...(curr.interaction_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select interaction events..."
+                column="event_name"
               />
               {renderTags(config.interaction_events, 'interaction_events')}
             </div>
@@ -376,6 +378,7 @@ export default function ExperimentImpactPane({
                 value=""
                 onChange={(val) => val && updateConfig(curr => ({ impact_events: [...(curr.impact_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select impact events..."
+                column="event_name"
               />
               {renderTags(config.impact_events, 'impact_events')}
             </div>
@@ -387,6 +390,7 @@ export default function ExperimentImpactPane({
                 value=""
                 onChange={(val) => val && updateConfig(curr => ({ monetization_events: [...(curr.monetization_events || []), { id: crypto.randomUUID(), event_name: val, filters: [] }] }))}
                 placeholder="Select monetization events..."
+                column="event_name"
               />
               {renderTags(config.monetization_events, 'monetization_events')}
             </div>

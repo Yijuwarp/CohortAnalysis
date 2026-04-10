@@ -147,7 +147,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       if (key === 'column') {
         const allowed = getAllowedOperators(value)
         updated.operator = allowed.includes(updated.operator) ? updated.operator : allowed[0]
-        updated.value = normalizeRowValue(updated.operator, updated.value)
+        // Reset value when column changes to prevent cross-property leakage
+        updated.value = normalizeRowValue(updated.operator, null)
       }
       if (key === 'operator') updated.value = normalizeRowValue(value, updated.value)
       next[index] = updated
@@ -156,7 +157,9 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
   }
 
   const addFilterValue = (index, valueToAdd) => {
-    const normalizedValue = String(valueToAdd)
+    if (!valueToAdd) return
+    const normalizedValue = typeof valueToAdd === 'object' ? String(valueToAdd?.value ?? '') : String(valueToAdd)
+    if (!normalizedValue || normalizedValue === '[object Object]') return
     setFilters((prev) => {
       const next = [...prev]
       const current = next[index]
@@ -322,6 +325,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                     onChange={(selectedValue) => addFilterValue(index, selectedValue)}
                     placeholder={row.column ? 'Search values to add' : 'Select a column first'}
                     disabled={!row.column}
+                    column={row.column}
                   />
                 </div>
               </>

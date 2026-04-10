@@ -372,25 +372,37 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
       <div className="inline-controls" style={{ marginBottom: 16 }}>
         <label>
           Event
-          <SearchableSelect options={events} value={flowQuery.event} onChange={onEventChange} placeholder="Select event" />
+          <SearchableSelect 
+            options={events} 
+            value={flowQuery.event} 
+            onChange={onEventChange} 
+            placeholder="Select event" 
+            column="event_name"
+          />
         </label>
         <label>
           Property
-          <select
+          <SearchableSelect
+            options={properties.map(p => ({ label: p, value: p }))}
             value={flowQuery.property || ''}
             disabled={!flowQuery.event}
-            onChange={(e) => onPropertyChange(e.target.value)}
-          >
-            <option value="">None</option>
-            {properties.map(p => <option key={p} value={p}>{p}</option>)}
-          </select>
+            onChange={(val) => onPropertyChange(val)}
+            placeholder="None"
+            onClear={() => onPropertyChange(null)}
+          />
         </label>
         <label>
           Property Value
-          <select value={flowQuery.value} disabled={!flowQuery.property} onChange={(e) => onValueChange(e.target.value)}>
-            <option value="">All</option>
-            {propertyValues.map(v => <option key={v} value={v}>{v}</option>)}
-          </select>
+          <SearchableSelect
+            options={propertyValues.map(v => ({ label: String(v), value: String(v) }))}
+            value={flowQuery.value}
+            disabled={!flowQuery.property}
+            onChange={(val) => onValueChange(val)}
+            placeholder="All"
+            onClear={() => onValueChange('')}
+            column={flowQuery.property}
+            eventName={flowQuery.event}
+          />
         </label>
         <label>
           Direction

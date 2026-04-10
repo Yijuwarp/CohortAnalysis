@@ -136,13 +136,19 @@ export async function getColumns() {
   return request('/columns', { method: 'GET' })
 }
 
-export async function getColumnValues(column, eventName) {
+export async function getColumnValues(column, eventName, search, limit, signal) {
   let path = `/column-values?column=${encodeURIComponent(column)}`
   if (eventName) {
     path += `&event_name=${encodeURIComponent(eventName)}`
   }
+  if (search !== undefined && search !== null) {
+    path += `&search=${encodeURIComponent(search)}`
+  }
+  if (limit) {
+    path += `&limit=${encodeURIComponent(limit)}`
+  }
 
-  return request(path, { method: 'GET' })
+  return request(path, { method: 'GET', signal })
 }
 
 export async function getDateRange() {

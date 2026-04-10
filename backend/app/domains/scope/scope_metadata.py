@@ -126,6 +126,8 @@ def get_column_values(
     connection: duckdb.DuckDBPyConnection,
     column: str,
     event_name: str | None = None,
+    search: str | None = None,
+    limit: int = 100,
 ) -> dict[str, list[str] | int]:
     normalized_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_normalized' AND table_schema = 'main'"
@@ -133,68 +135,91 @@ def get_column_values(
     if not normalized_exists:
         return {"values": [], "total_distinct": 0}
 
-    table_name = "events_scoped" if event_name is not None else "events_normalized"
-    known_columns = {
-        row[0]
+    # High cardinality columns bypass GROUP BY/SUM for performance
+    HIGH_CARDINALITY_COLUMNS = ["user_id", "device_id", "anonymous_id", "session_id"]
+    is_high_cardinality = column.lower() in HIGH_CARDINALITY_COLUMNS
+
+    # Ensure table/column is known
+    # We strictly use events_scoped as it reflects the current filtering state
+    # Ensure table/column is known and get its type
+    column_metadata = {
+        row[0]: row[1].upper()
         for row in connection.execute(
             """
-            SELECT column_name
+            SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = ?
-            """,
-            [table_name],
+            WHERE table_name = 'events_scoped'
+            """
         ).fetchall()
     }
-    if column not in known_columns:
+    if column not in column_metadata:
         raise HTTPException(status_code=400, detail=f"Unknown column: {column}")
 
+    column_type = column_metadata[column]
     column_ref = quote_identifier(column)
+    where_clauses = [f"{column_ref} IS NOT NULL"]
+    
+    # Only filter out empty strings for string-like columns (fixes Conversion Error for numerics)
+    if any(t in column_type for t in ["VARCHAR", "TEXT", "STRING"]):
+        where_clauses.append(f"{column_ref} != ''")
+    query_params = []
 
-    if event_name is not None:
-        event_exists = connection.execute(
-            "SELECT COUNT(*) FROM events_scoped WHERE event_name = ?",
-            [event_name],
-        ).fetchone()[0]
-        if not event_exists:
-            raise HTTPException(status_code=400, detail=f"Unknown event_name: {event_name}")
+    # Scoping conflict guard: if searching 'event_name', ignore the event_name parameter
+    if event_name and column != "event_name":
+        where_clauses.append("event_name = ?")
+        query_params.append(event_name)
 
+    if search:
+        # Hybrid search: prefix for short terms, substring for longer ones
+        if len(search) <= 2:
+            where_clauses.append(f"{column_ref} ILIKE ?")
+            query_params.append(f"{search}%")
+        else:
+            where_clauses.append(f"{column_ref} ILIKE ?")
+            query_params.append(f"%{search}%")
+
+    where_sql = f"WHERE {' AND '.join(where_clauses)}"
+
+    if is_high_cardinality:
+        # Simple distinct for fast performance on massive cardinalities
         rows = connection.execute(
             f"""
             SELECT DISTINCT {column_ref}
             FROM events_scoped
-            WHERE {column_ref} IS NOT NULL AND event_name = ?
-            ORDER BY 1
-            LIMIT 100
+            {where_sql}
+            LIMIT ?
             """,
-            [event_name],
+            query_params + [limit]
         ).fetchall()
-        total_distinct = int(
-            connection.execute(
-                f"""
-                SELECT COUNT(DISTINCT {column_ref})
-                FROM events_scoped
-                WHERE {column_ref} IS NOT NULL AND event_name = ?
-                """,
-                [event_name],
-            ).fetchone()[0]
-        )
     else:
+        # Quality-weighted results for standard columns
         rows = connection.execute(
             f"""
-            SELECT DISTINCT {column_ref}
-            FROM events_normalized
-            WHERE {column_ref} IS NOT NULL
-            ORDER BY 1
-            LIMIT 100
-            """
+            SELECT {column_ref}, SUM(event_count) as freq
+            FROM events_scoped
+            {where_sql}
+            GROUP BY 1
+            ORDER BY freq DESC, {column_ref} ASC
+            LIMIT ?
+            """,
+            query_params + [limit]
         ).fetchall()
-        total_distinct = int(
-            connection.execute(
-                f"SELECT COUNT(DISTINCT {column_ref}) FROM events_normalized WHERE {column_ref} IS NOT NULL"
-            ).fetchone()[0]
-        )
+
+    # Calculate total distinct for UX (optional but kept for alignment with existing interface)
+    # Note: total_distinct also respects the search/filter parameters
+    total_distinct = int(
+        connection.execute(
+            f"""
+            SELECT COUNT(DISTINCT {column_ref})
+            FROM events_scoped
+            {where_sql}
+            """,
+            query_params
+        ).fetchone()[0]
+    )
+
     return {
-        "values": [str(value) for (value,) in rows],
+        "values": [str(value) for (value, *_) in rows],
         "total_distinct": total_distinct,
     }
 

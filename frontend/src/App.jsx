@@ -627,11 +627,12 @@ function AppWorkspace({ userId, onLogout }) {
                           <div className="card ui-card">
                             <h4>Retention Event</h4>
                             <div className="settings-control-body">
-                              <SearchableSelect
+                               <SearchableSelect
                                 options={[{ label: 'Any Event', value: 'any' }, ...events]}
                                 value={selectedRetentionEvent}
                                 onChange={setSelectedRetentionEvent}
                                 placeholder="Select retention event"
+                                column="event_name"
                               />
                             </div>
                           </div>
