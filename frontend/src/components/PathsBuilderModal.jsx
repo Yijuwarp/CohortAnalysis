@@ -359,6 +359,7 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
                                     value={step.event_name}
                                     onChange={val => updateStep(idx, 'event_name', val)}
                                     placeholder="— select event —"
+                                    column="event_name"
                                 />
                             </div>
 
@@ -386,6 +387,8 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
                                   value={f.property_value}
                                   onChange={val => updateFilter(idx, fIdx, 'property_value', val)}
                                   placeholder="value"
+                                  column={f.property_key}
+                                  eventName={step.event_name}
                                 />
                               </div>
 

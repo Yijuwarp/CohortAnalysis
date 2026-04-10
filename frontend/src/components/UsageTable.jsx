@@ -613,6 +613,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
             onChange={handleEventChange}
             placeholder="Select an event"
             className="searchable-select-prominent"
+            column="event_name"
           />
         </label>
         <label>
@@ -705,6 +706,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
               onChange={setPropertyValue}
               placeholder="Select value"
               disabled={!eventProperty}
+              column={eventProperty}
+              eventName={event}
             />
             <button type="button" className="filter-remove" onClick={clearPropertyFilter} title="Clear property filter">✕</button>
           </div>

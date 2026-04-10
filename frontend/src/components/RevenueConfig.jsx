@@ -158,6 +158,7 @@ export default function RevenueConfig({ refreshToken, onUpdated }) {
               onChange={setEventToAdd}
               placeholder="Select Revenue Event"
               onClear={() => setEventToAdd('')}
+              column="event_name"
             />
           </div>
           <button

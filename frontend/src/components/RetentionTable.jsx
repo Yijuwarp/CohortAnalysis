@@ -368,6 +368,7 @@ export default function RetentionTable({
               value={retentionEvent}
               onChange={onRetentionEventChange}
               placeholder="Select retention event"
+              column="event_name"
             />
           </label>
         </div>

@@ -153,6 +153,8 @@ function FilterRow({ filter, eventName, properties, propertyValuesCache, setProp
         onChange={(val) => onChange({ value: val })}
         placeholder="Value"
         className="filter-val-select"
+        column={filter.property}
+        eventName={eventName}
       />
       <button className="remove-filter-btn" onClick={onRemove} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#999' }}>×</button>
     </div>

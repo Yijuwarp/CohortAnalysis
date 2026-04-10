@@ -89,7 +89,7 @@ export default function FlowTable({
                       e.stopPropagation();
                       onExpandOther(row.path.slice(0, -1));
                     }}
-                    disabled={row.values?.[cohorts[0]]?.user_count === 0}
+                    disabled={!cohorts.some(cid => (row.values?.[cid]?.user_count || 0) > 0)}
                   >
                     ▼ Show more ({(row.meta?.total_event_types || 0)} total)
                   </button>
