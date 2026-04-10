@@ -288,7 +288,7 @@ export async function compareCohorts(payload) {
 // Flow Analytics
 // ---------------------------------------------------------------------------
 
-export async function getFlowL1(startEvent, direction = 'forward', depth = 20, propertyFilter = null, limit = 3) {
+export async function getFlowL1(startEvent, direction = 'forward', depth = 20, propertyFilter = null, limit = 3, options = {}) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
@@ -304,10 +304,10 @@ export async function getFlowL1(startEvent, direction = 'forward', depth = 20, p
       query.append('property_values', String(v))
     })
   }
-  return request(`/flow/l1?${query.toString()}`, { method: 'GET' })
+  return request(`/flow/l1?${query.toString()}`, { method: 'GET', ...options })
 }
 
-export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 20, propertyFilter = null, limit = 3) {
+export async function getFlowL2(startEvent, parentPath, direction = 'forward', depth = 20, propertyFilter = null, limit = 3, options = {}) {
   const query = new URLSearchParams({
     start_event: startEvent,
     direction,
@@ -324,7 +324,7 @@ export async function getFlowL2(startEvent, parentPath, direction = 'forward', d
       query.append('property_values', String(v))
     })
   }
-  return request(`/flow/l2?${query.toString()}`, { method: 'GET' })
+  return request(`/flow/l2?${query.toString()}`, { method: 'GET', ...options })
 }
 
 

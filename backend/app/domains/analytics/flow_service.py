@@ -94,12 +94,18 @@ def _validate_depth(depth: int) -> int:
     return max(1, min(depth, TABLE_MAX_DEPTH))
 
 
+def _is_empty_filter(values: list[str] | None) -> bool:
+    if not values:
+        return True
+    return not any(v is not None and str(v).strip() != "" for v in values)
+
+
 def _build_property_filter_clause(
     property_column: str | None,
     property_operator: str | None,
     property_values: list[str] | None,
 ) -> tuple[str, list[object]]:
-    if not property_column:
+    if not property_column or _is_empty_filter(property_values):
         return "", []
 
     operator = (property_operator or "=").upper()
@@ -107,9 +113,6 @@ def _build_property_filter_clause(
         raise HTTPException(status_code=400, detail="Unsupported property_operator")
 
     values = property_values or []
-    if property_column and not values:
-        raise HTTPException(status_code=400, detail="property_values required")
-
     if not values:
         return "", []
 
@@ -330,13 +333,16 @@ def _run_level_query(
 ) -> tuple[list[tuple], int, int]:
     parent_depth = len(parent_path)
     if parent_depth < 1 or parent_depth >= depth:
-        return [], parent_depth
+        return [], parent_depth, 0
     if "No further action" in parent_path or "Other" in parent_path:
-        return [], parent_depth
+        return [], parent_depth, 0
     if len(parent_path) != len(set(parent_path)):
-        return [], parent_depth
+        return [], parent_depth, 0
     if parent_path[0] != start_event:
         raise HTTPException(status_code=400, detail="parent_path must start with start_event")
+
+    if _is_empty_filter(property_values):
+        property_column = None
 
     property_clause, property_params = _build_property_filter_clause(property_column, property_operator, property_values)
     sql, params = _build_level_sql(direction, parent_path, property_column, property_clause, property_params, cohort_id=cohort_id, limit=limit)
