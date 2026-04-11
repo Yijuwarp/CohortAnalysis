@@ -232,10 +232,49 @@ function AppWorkspace({ userId, onLogout }) {
   const [tabRefreshTokens, setTabRefreshTokens] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: 0 }), {}))
   const [tabReloading, setTabReloading] = useState(() => TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
 
+  // ---------------------------------------------------------------------------
+  // Action Icons
+  // ---------------------------------------------------------------------------
+
+  const SearchIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="11" cy="11" r="8"></circle>
+      <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+    </svg>
+  );
+
+  const SettingsIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3"></circle>
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+    </svg>
+  );
+
+  const UsersIcon = () => (
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+      <circle cx="9" cy="7" r="4"></circle>
+      <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+      <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+    </svg>
+  );
+
+  const ChevronLeft = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6"></polyline>
+    </svg>
+  );
+
+  const ChevronRight = () => (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 18 15 12 9 6"></polyline>
+    </svg>
+  );
+
   const leftPaneTabs = useMemo(() => [
-    { key: 'filters', icon: '🔎', label: 'Filters' },
-    { key: 'settings', icon: '⚙', label: 'Analytics Settings' },
-    { key: 'cohorts', icon: '👥', label: 'Cohorts' },
+    { key: 'filters', icon: <SearchIcon />, label: 'Filters' },
+    { key: 'settings', icon: <SettingsIcon />, label: 'Analytics Settings' },
+    { key: 'cohorts', icon: <UsersIcon />, label: 'Cohorts' },
   ], [])
 
   const markTabsStale = useCallback((tabsObj) => {
@@ -571,6 +610,49 @@ function AppWorkspace({ userId, onLogout }) {
             <aside className={`left-pane ${isLeftPaneCollapsed ? 'collapsed' : ''}`} style={{ width: isLeftPaneCollapsed ? 58 : LEFT_PANE_WIDTH }}>
               <div className="left-pane-header">
                 {!isLeftPaneCollapsed && (
+                  <div className="left-pane-header-expanded">
+                    <div className="left-pane-title-row">
+                      <div className="left-pane-header-left">
+                        <div className="primary-section-icon" title={leftPaneTabs.find(t => t.key === leftPaneTab)?.label}>
+                          {leftPaneTabs.find(t => t.key === leftPaneTab)?.icon}
+                        </div>
+                        <span className="left-pane-section-label">
+                          {leftPaneTabs.find(t => t.key === leftPaneTab)?.label}
+                        </span>
+                      </div>
+                      <button 
+                        className="left-pane-header-action" 
+                        onClick={() => setIsLeftPaneCollapsed(true)}
+                        title="Collapse sidebar"
+                      >
+                        <ChevronLeft />
+                      </button>
+                    </div>
+                  </div>
+                )}
+                
+                {isLeftPaneCollapsed && (
+                  <button className="toggle-circle collapsed" onClick={() => setIsLeftPaneCollapsed(false)} title="Expand sidebar">
+                    <ChevronRight />
+                  </button>
+                )}
+              </div>
+
+              {isLeftPaneCollapsed ? (
+                <div className="icon-rail">
+                  {leftPaneTabs.map((tab) => (
+                    <button 
+                      key={tab.key} 
+                      className={`icon-rail-button ${leftPaneTab === tab.key ? 'active' : ''}`}
+                      onClick={() => openPaneSection(tab.key)} 
+                      title={tab.label}
+                    >
+                      {tab.icon}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <>
                   <div className="left-pane-tabbar">
                     {leftPaneTabs.map((tab) => (
                       <button
@@ -583,24 +665,10 @@ function AppWorkspace({ userId, onLogout }) {
                         onClick={() => setLeftPaneTab(tab.key)}
                         title={tab.label}
                       >
-                        <span>{tab.icon}</span>
+                        {tab.icon}
                       </button>
                     ))}
                   </div>
-                )}
-                <button className={`toggle-circle ${isLeftPaneCollapsed ? 'collapsed' : ''}`} onClick={() => setIsLeftPaneCollapsed((prev) => !prev)}>
-                  <span className="triangle-icon">◂</span>
-                </button>
-              </div>
-
-              {isLeftPaneCollapsed ? (
-                <div className="icon-rail">
-                  {leftPaneTabs.map((tab) => (
-                    <button key={tab.key} onClick={() => openPaneSection(tab.key)} title={tab.label}>{tab.icon}</button>
-                  ))}
-                </div>
-              ) : (
-                <>
                   {leftPaneTab === 'filters' && (
                     <section className="pane-section pane-section-expanded">
                       <p className="pane-section-hint">Date range • Property filters</p>
