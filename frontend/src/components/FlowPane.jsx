@@ -3,6 +3,27 @@ import { getEventProperties, getEventPropertyValues, getFlowL1, getFlowL2, listC
 import SearchableSelect from './SearchableSelect'
 import FlowTable, { nodeKey } from './FlowTable'
 
+// ---------------------------------------------------------------------------
+// Action Icons
+// ---------------------------------------------------------------------------
+
+function FunnelIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 5H17L11 11V15L9 14V11L3 5Z" />
+    </svg>
+  )
+}
+
+function ExportIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+      <circle cx="12" cy="13" r="4"></circle>
+    </svg>
+  )
+}
+
 const TABLE_MAX_DEPTH = 5
 const QUERY_VERSION = 2
 const DEFAULT_QUERY = {
@@ -57,6 +78,7 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
   const [flowQuery, setFlowQuery] = useState(() => validateQuery(state?.flowQuery))
   const [propertyValues, setPropertyValues] = useState([])
   const [properties, setProperties] = useState([])
+  const [showPropertyFilter, setShowPropertyFilter] = useState(Boolean(flowQuery.property))
   const [error, setError] = useState(null)
 
   const [cohortMap, setCohortMap] = useState({})
@@ -361,66 +383,124 @@ export default function FlowPane({ refreshToken, state, setState, appliedFilters
   }
 
   const onEventChange = (event) => setFlowQuery(prev => ({ ...prev, event, property: null, value: '' }))
-  const onPropertyChange = (property) => setFlowQuery(prev => ({ ...prev, property: property || null, value: '' }))
+  const onPropertyChange = (property) => {
+    setFlowQuery(prev => ({ ...prev, property: property || null, value: '' }))
+  }
   const onValueChange = (value) => setFlowQuery(prev => ({ ...prev, value }))
   const onDirectionToggle = (direction) => setFlowQuery(prev => ({ ...prev, direction }))
 
+  const clearPropertyFilter = () => {
+    onPropertyChange(null)
+    setShowPropertyFilter(false)
+  }
+
 
   return (
-    <section className="card" style={{ position: 'relative' }}>
-      <h2>Flow Explorer</h2>
-      <div className="inline-controls" style={{ marginBottom: 16 }}>
-        <label>
-          Event
-          <SearchableSelect 
-            options={events} 
-            value={flowQuery.event} 
-            onChange={onEventChange} 
-            placeholder="Select event" 
-            column="event_name"
-          />
-        </label>
-        <label>
-          Property
-          <SearchableSelect
-            options={properties.map(p => ({ label: p, value: p }))}
-            value={flowQuery.property || ''}
-            disabled={!flowQuery.event}
-            onChange={(val) => onPropertyChange(val)}
-            placeholder="None"
-            onClear={() => onPropertyChange(null)}
-          />
-        </label>
-        <label>
-          Property Value
-          <SearchableSelect
-            options={propertyValues.map(v => ({ label: String(v), value: String(v) }))}
-            value={flowQuery.value}
-            disabled={!flowQuery.property}
-            onChange={(val) => onValueChange(val)}
-            placeholder="All"
-            onClear={() => onValueChange('')}
-            column={flowQuery.property}
-            eventName={flowQuery.event}
-          />
-        </label>
-        <label>
-          Direction
-          <div className="view-toggle" style={{ marginTop: 4 }}>
-            <button type="button" className={`view-button ${flowQuery.direction === 'forward' ? 'active' : ''}`} onClick={() => onDirectionToggle('forward')}>Forward</button>
-            <button type="button" className={`view-button ${flowQuery.direction === 'reverse' ? 'active' : ''}`} onClick={() => onDirectionToggle('reverse')}>Reverse</button>
+    <section className="card flow-analytics-card" style={{ position: 'relative' }}>
+      <div className="usage-query-container">
+        {/* Row 1: Primary Controls */}
+        <div className="usage-query-row">
+          <div className="query-main">
+            <span className="query-label">Event</span>
+            <SearchableSelect
+              options={events}
+              value={flowQuery.event}
+              onChange={onEventChange}
+              placeholder="Select event"
+              column="event_name"
+              style={{ width: '240px' }}
+            />
+
+            <button
+              type="button"
+              className={`action-icon-button funnel-toggle ${flowQuery.property ? 'active' : ''} ${showPropertyFilter ? 'row-open' : ''}`}
+              onClick={() => {
+                if (flowQuery.property) {
+                  clearPropertyFilter()
+                } else {
+                  setShowPropertyFilter(prev => !prev)
+                }
+              }}
+              title={flowQuery.property ? "Edit filter" : "Add filter"}
+              disabled={!flowQuery.event}
+              style={{ marginLeft: '4px', marginRight: '8px' }}
+            >
+              <FunnelIcon />
+            </button>
+            
+            <div className="view-toggle">
+              <button
+                type="button"
+                className={`view-toggle-button ${flowQuery.direction === 'forward' ? 'active' : ''}`}
+                onClick={() => onDirectionToggle('forward')}
+              >
+                Forward
+              </button>
+              <button
+                type="button"
+                className={`view-toggle-button ${flowQuery.direction === 'reverse' ? 'active' : ''}`}
+                onClick={() => onDirectionToggle('reverse')}
+              >
+                Reverse
+              </button>
+            </div>
           </div>
-        </label>
-        <button
-          type="button"
-          className="button button-secondary"
-          onClick={handleAddToExport}
-          disabled={loadingRoot || flowTree.length === 0}
-          title="Add edge list of expanded nodes to global export buffer"
-          style={{ height: 36, marginTop: 'auto' }}
-        >
-          📸 Add to Export
-        </button>
+
+          <div className="query-actions">
+            <button
+              type="button"
+              className="action-icon-button"
+              onClick={handleAddToExport}
+              disabled={loadingRoot || flowTree.length === 0}
+              title="Snapshot (Add to Export)"
+            >
+              <ExportIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Filters (Conditional) */}
+        <div className={`usage-filter-row-wrapper ${showPropertyFilter ? 'open' : ''}`}>
+          <div className="usage-filter-row">
+            <span className="filter-label">where</span>
+            <div className="filter-triplet">
+              <SearchableSelect
+                options={properties.map(p => ({ label: p, value: p }))}
+                value={flowQuery.property || ''}
+                disabled={!flowQuery.event}
+                onChange={(val) => onPropertyChange(val)}
+                placeholder="Property"
+                style={{ width: '180px' }}
+              />
+              <select className="operator-select" disabled value="=">
+                <option value="=">=</option>
+              </select>
+              <SearchableSelect
+                options={propertyValues.map(v => ({ label: String(v), value: String(v) }))}
+                value={flowQuery.value}
+                disabled={!flowQuery.property}
+                onChange={(val) => onValueChange(val)}
+                placeholder="Value"
+                style={{ width: '180px' }}
+                column={flowQuery.property}
+                eventName={flowQuery.event}
+                onClear={() => onValueChange('')}
+              />
+              <button
+                type="button"
+                className="filter-remove-btn"
+                onClick={clearPropertyFilter}
+                title="Remove filter"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="table-header-scoped">
+        <h3 className="section-header-inline">Flows</h3>
       </div>
 
       {error && (
