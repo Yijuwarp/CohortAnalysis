@@ -1,7 +1,7 @@
 """
 Short summary: Pydantic models for Paths (Sequence Analysis) request/response payloads.
 """
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 from pydantic import BaseModel, Field
 
 MIN_PATHS_STEPS = 2
@@ -11,10 +11,13 @@ class PathStepFilter(BaseModel):
     property_key: str
     property_value: Union[str, int, float]
 
-class PathStep(BaseModel):
-    step_order: int
+class PathStepGroup(BaseModel):
     event_name: str
     filters: List[PathStepFilter] = Field(default_factory=list)
+
+class PathStep(BaseModel):
+    step_order: int
+    groups: List[PathStepGroup] = Field(default_factory=list)
 
 class CreatePathRequest(BaseModel):
     name: str
@@ -66,6 +69,7 @@ class PathsStepResult(BaseModel):
     mean_time: Optional[float] = None
     p20: Optional[float] = None
     p80: Optional[float] = None
+    group_breakdown: Optional[Dict[str, float]] = None
 
 class PathsCohortResult(BaseModel):
     cohort_id: int
@@ -75,6 +79,7 @@ class PathsCohortResult(BaseModel):
     insights: List[str] = Field(default_factory=list)
 
 class PathsResponse(BaseModel):
+    path_name: Optional[str] = None
     steps: List[str]
     max_step_gap_minutes: Optional[int] = None
     results: List[PathsCohortResult]

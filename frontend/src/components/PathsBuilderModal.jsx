@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import React, { useState, useEffect, useCallback, useRef, Fragment } from 'react'
 import { createPath, updatePath, getEventProperties, getEventPropertyValues } from '../api'
 import SearchableSelect from './SearchableSelect'
 import { DndContext, PointerSensor, useSensor, useSensors, closestCenter, DragOverlay } from '@dnd-kit/core'
@@ -29,11 +29,13 @@ function SortableStep({ id, isDragOver, children }) {
 
 const MAX_PATH_STEPS = 10
 const MIN_PATH_STEPS = 2
+const MAX_GROUPS_PER_STEP = 3
 
-const EMPTY_STEP = (id) => ({ id, event_name: '', filters: [] })
+const EMPTY_GROUP = () => ({ event_name: '', filters: [] })
+const EMPTY_STEP = (id) => ({ id, groups: [EMPTY_GROUP()] })
 const EMPTY_FILTER = () => ({ property_key: '', property_value: '' })
 
-export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, editingPath }) {
+export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, editingPath, mode = 'create' }) {
   const safeEvents = Array.isArray(events) ? events : []
 
   const [name, setName] = useState('')
@@ -120,17 +122,19 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
         const newProps = {}
         const newValues = {}
         for (const s of hSteps) {
-          if (!s.event_name) continue
-          try {
-            const pData = await getEventProperties(s.event_name)
-            newProps[s.event_name] = pData.properties || []
-            for (const f of s.filters) {
-              if (!f.property_key) continue
-              const ck = `${s.event_name}::${f.property_key}`
-              const vData = await getEventPropertyValues(s.event_name, f.property_key, 50)
-              newValues[ck] = vData.values || []
-            }
-          } catch {}
+          for (const g of s.groups) {
+            if (!g.event_name) continue
+            try {
+              const pData = await getEventProperties(g.event_name)
+              newProps[g.event_name] = pData.properties || []
+              for (const f of g.filters) {
+                if (!f.property_key) continue
+                const ck = `${g.event_name}::${f.property_key}`
+                const vData = await getEventPropertyValues(g.event_name, f.property_key, 50)
+                newValues[ck] = vData.values || []
+              }
+            } catch {}
+          }
         }
         setPropsByEvent(prev => ({ ...prev, ...newProps }))
         setValuesByProp(prev => ({ ...prev, ...newValues }))
@@ -151,11 +155,29 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
 
   if (!isOpen) return null
 
-  const updateStep = (idx, field, value) => {
-    setSteps(prev => prev.map((s, i) => i === idx ? { ...s, [field]: value, filters: field === 'event_name' ? [] : s.filters } : s))
-    if (field === 'event_name' && value) {
-      loadProps(value)
-    }
+  const updateGroupEvent = (stepIdx, groupIdx, value) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (i !== stepIdx) return s
+      const newGroups = s.groups.map((g, gi) => 
+        gi === groupIdx ? { ...g, event_name: value, filters: [] } : g
+      )
+      return { ...s, groups: newGroups }
+    }))
+    if (value) loadProps(value)
+  }
+
+  const addGroup = (stepIdx) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (i !== stepIdx || s.groups.length >= MAX_GROUPS_PER_STEP) return s
+      return { ...s, groups: [...s.groups, EMPTY_GROUP()] }
+    }))
+  }
+
+  const removeGroup = (stepIdx, groupIdx) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (i !== stepIdx || s.groups.length <= 1) return s
+      return { ...s, groups: s.groups.filter((_, gi) => gi !== groupIdx) }
+    }))
   }
 
   const addStep = () => {
@@ -180,28 +202,40 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
     })
   }
 
-  const addFilter = (stepIdx) => {
-    setSteps(prev => prev.map((s, i) =>
-      i === stepIdx ? { ...s, filters: [...s.filters, EMPTY_FILTER()] } : s
-    ))
-  }
-
-  const removeFilter = (stepIdx, filterIdx) => {
-    setSteps(prev => prev.map((s, i) =>
-      i === stepIdx ? { ...s, filters: s.filters.filter((_, fi) => fi !== filterIdx) } : s
-    ))
-  }
-
-  const updateFilter = (stepIdx, filterIdx, field, value) => {
+  const addFilter = (stepIdx, groupIdx) => {
     setSteps(prev => prev.map((s, i) => {
       if (i !== stepIdx) return s
-      const newFilters = s.filters.map((f, fi) =>
-        fi !== filterIdx ? f : { ...f, [field]: value, ...(field === 'property_key' ? { property_value: '' } : {}) }
+      const newGroups = s.groups.map((g, gi) => 
+        gi === groupIdx ? { ...g, filters: [...g.filters, EMPTY_FILTER()] } : g
       )
-      if (field === 'property_key' && value) {
-        loadValues(s.event_name, value)
-      }
-      return { ...s, filters: newFilters }
+      return { ...s, groups: newGroups }
+    }))
+  }
+
+  const removeFilter = (stepIdx, groupIdx, filterIdx) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (i !== stepIdx) return s
+      const newGroups = s.groups.map((g, gi) => 
+        gi === groupIdx ? { ...g, filters: g.filters.filter((_, fi) => fi !== filterIdx) } : g
+      )
+      return { ...s, groups: newGroups }
+    }))
+  }
+
+  const updateFilter = (stepIdx, groupIdx, filterIdx, field, value) => {
+    setSteps(prev => prev.map((s, i) => {
+      if (i !== stepIdx) return s
+      const newGroups = s.groups.map((g, gi) => {
+        if (gi !== groupIdx) return g
+        const newFilters = g.filters.map((f, fi) =>
+          fi !== filterIdx ? f : { ...f, [field]: value, ...(field === 'property_key' ? { property_value: '' } : {}) }
+        )
+        if (field === 'property_key' && value) {
+          loadValues(g.event_name, value)
+        }
+        return { ...g, filters: newFilters }
+      })
+      return { ...s, groups: newGroups }
     }))
   }
 
@@ -212,7 +246,11 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
     if (steps.length < MIN_PATH_STEPS) { setError(`At least ${MIN_PATH_STEPS} steps required`); return }
     
     for (let i = 0; i < steps.length; i++) {
-        if (!steps[i].event_name) { setError(`Step ${i+1}: Event is required`); return }
+        const step = steps[i]
+        if (step.groups.length === 0) { setError(`Step ${i+1} must have at least one event`); return }
+        for (let j = 0; j < step.groups.length; j++) {
+            if (!step.groups[j].event_name) { setError(`Step ${i+1}, Alternative ${j+1}: Event is required`); return }
+        }
     }
 
     setSaving(true)
@@ -223,35 +261,33 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
         if (customGapUnit === 'days') finalGap *= 1440
       }
       if (useCustomGap && (isNaN(finalGap) || finalGap <= 0)) {
-        setError('Please enter a valid custom time gap')
-        setSaving(false)
-        return
+        setError('Please enter a valid custom time gap'); setSaving(false); return
       }
 
       const payload = {
         name: trimmedName,
         max_step_gap_minutes: finalGap,
         steps: steps.map((s, idx) => ({
-          event_name: s.event_name,
           step_order: idx,
-          filters: s.filters.filter(f => f.property_key && f.property_value).map(f => {
-            // Check if value is numeric for the backend (optional, backend can also handle Union)
-            let val = f.property_value
-            if (val !== '' && !isNaN(val)) {
-                val = val.includes('.') ? parseFloat(val) : parseInt(val, 10)
-            }
-            return { property_key: f.property_key, property_value: val }
-          })
+          groups: s.groups.map(g => ({
+            event_name: g.event_name,
+            filters: g.filters.filter(f => f.property_key && f.property_value).map(f => {
+                let val = f.property_value
+                if (val !== '' && !isNaN(val)) {
+                    val = val.includes('.') ? parseFloat(val) : parseInt(val, 10)
+                }
+                return { property_key: f.property_key, property_value: val }
+            })
+          }))
         }))
       }
       let result
-      if (editingPath?.id) {
+      if (mode === 'edit' && editingPath?.id) {
         result = await updatePath(editingPath.id, payload)
       } else {
         result = await createPath(payload)
       }
-      onSaved(result)
-      onClose()
+      onSaved(result); onClose()
     } catch (err) {
       setError(err.message || 'Failed to save path')
     } finally {
@@ -263,38 +299,32 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
     <div className="funnel-modal-overlay" role="dialog" aria-modal="true">
       <div className="funnel-modal modal-paths">
         <div className="funnel-modal-header">
-          <h2>{editingPath ? 'Edit Path' : 'Create New Path'}</h2>
+          <h2>{mode === 'edit' ? "Edit Path" : "Create New Path"}</h2>
           <button className="funnel-modal-close" onClick={onClose}>✕</button>
         </div>
 
         <div className="funnel-modal-body">
-          <div className="funnel-name-field">
-            <label>Path Name</label>
-            <input
-              type="text"
-              value={name}
-              onChange={e => setName(e.target.value)}
-              placeholder="e.g. Purchase Sequence"
-              maxLength={120}
-            />
-          </div>
-
-          <div className="funnel-name-field">
-            <label>Max time between steps</label>
-            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          <div className="funnel-header-settings">
+            <div className="funnel-name-field" style={{ flex: 1 }}>
+              <label>Path Name</label>
+              <input
+                type="text"
+                value={name}
+                onChange={e => setName(e.target.value)}
+                placeholder="e.g. Purchase Sequence"
+                maxLength={120}
+              />
+            </div>
+            <div className="funnel-name-field" style={{ width: "240px" }}>
+              <label>Max time between steps</label>
               <select
-                value={useCustomGap ? 'custom' : (maxStepGapMinutes === null ? 'null' : String(maxStepGapMinutes))}
+                value={useCustomGap ? "custom" : (maxStepGapMinutes === null ? "null" : String(maxStepGapMinutes))}
                 onChange={e => {
                   const val = e.target.value
-                  if (val === 'custom') {
-                    setUseCustomGap(true)
-                  } else {
-                    setUseCustomGap(false)
-                    setMaxStepGapMinutes(val === 'null' ? null : parseInt(val, 10))
-                  }
+                  if (val === "custom") { setUseCustomGap(true) } 
+                  else { setUseCustomGap(false); setMaxStepGapMinutes(val === "null" ? null : parseInt(val, 10)) }
                 }}
                 className="funnel-select"
-                style={{ width: useCustomGap ? '120px' : '100%' }}
               >
                 <option value="null">Unlimited</option>
                 <option value="10">10 minutes</option>
@@ -302,36 +332,36 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
                 <option value="1440">1 day</option>
                 <option value="custom">Custom...</option>
               </select>
-
-              {useCustomGap && (
-                <>
-                  <input
+            </div>
+          </div>
+          {useCustomGap && (
+            <div style={{ display: "flex", gap: "8px", marginBottom: "16px", justifyContent: "flex-end" }}>
+                <input
                     type="number"
                     value={customGapValue}
                     onChange={e => setCustomGapValue(e.target.value)}
                     placeholder="Value"
-                    style={{ width: '80px', padding: '6px' }}
+                    style={{ width: "80px", padding: "6px" }}
                     min="1"
-                  />
-                  <select
+                />
+                <select
                     value={customGapUnit}
                     onChange={e => setCustomGapUnit(e.target.value)}
                     className="funnel-select"
-                    style={{ width: '100px' }}
-                  >
+                    style={{ width: "100px" }}
+                >
                     <option value="minutes">minutes</option>
                     <option value="hours">hours</option>
                     <option value="days">days</option>
-                  </select>
-                </>
-              )}
+                </select>
             </div>
-            <p className="pane-section-hint">Each step must occur within this window of the previous step.</p>
-          </div>
+          )}
 
           <div className="funnel-steps-section">
             <p className="funnel-dnd-help">Drag steps to reorder sequence</p>
-            <p className="funnel-steps-label">Steps (2–10 required)</p>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                <p className="funnel-steps-label" style={{ margin: 0 }}>Steps ({MIN_PATH_STEPS}–{MAX_PATH_STEPS} required)</p>
+            </div>
 
             <div className="funnel-steps-scroll">
               <DndContext
@@ -346,62 +376,107 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
                     <SortableStep key={step.id} id={step.id} isDragOver={overId === step.id}>
                       {({ attributes, listeners, isDragging }) => (
                         <div 
-                          className={`funnel-step-block${isDragging ? ' is-dragging' : ''}`} 
+                          className={`funnel-step-block${isDragging ? " is-dragging" : ""}${step.groups.length > 1 ? " is-or-mode" : ""}`} 
                           key={`step-${step.id}`}
                         >
                           <div className="funnel-step-header" onPointerDown={e => e.stopPropagation()}>
-                            <span className="funnel-step-number">{idx + 1}</span>
-                            <button className="funnel-drag-handle" {...attributes} {...listeners}>⋮⋮</button>
+                            <div className="step-badge">
+                                <span className="funnel-step-number">{idx + 1}</span>
+                            </div>
+                            <button className="funnel-drag-handle" {...attributes} {...listeners} title="Drag to reorder">⋮⋮</button>
                             
-                            <div style={{ flex: 1, minWidth: '160px' }}>
-                                <SearchableSelect
-                                    options={safeEvents}
-                                    value={step.event_name}
-                                    onChange={val => updateStep(idx, 'event_name', val)}
-                                    placeholder="— select event —"
-                                    column="event_name"
-                                />
+                            <div className="step-title-row" style={{ flex: 1 }}>
+                                {step.groups.length === 1 ? (
+                                    <div style={{ flex: 1 }}>
+                                        <SearchableSelect
+                                            options={safeEvents}
+                                            value={step.groups[0].event_name}
+                                            onChange={val => updateGroupEvent(idx, 0, val)}
+                                            placeholder="— select event —"
+                                            column="event_name"
+                                        />
+                                    </div>
+                                ) : (
+                                    <span className="or-mode-label">Multi-Event Step (Any of these)</span>
+                                )}
                             </div>
 
-                            {steps.length > MIN_PATH_STEPS && (
-                              <button className="funnel-remove-step" onClick={() => removeStep(idx)}>Remove</button>
-                            )}
+                            <div className="step-actions">
+                                {step.groups.length < MAX_GROUPS_PER_STEP && (
+                                    <button 
+                                        className="btn-add-or" 
+                                        onClick={() => addGroup(idx)}
+                                        title="Add alternative event (OR logic)"
+                                    >+ OR</button>
+                                )}
+                                {steps.length > MIN_PATH_STEPS && (
+                                    <button className="funnel-remove-step" onClick={() => removeStep(idx)} title="Remove entire step">✕</button>
+                                )}
+                            </div>
                           </div>
 
-                          {step.filters.map((f, fIdx) => (
-                            <div key={`filter-${idx}-${fIdx}`} className="funnel-filter-row">
-                              <span className="funnel-filter-where">where</span>
-                              <div style={{ width: '220px' }}>
-                                <SearchableSelect
-                                  options={propsByEvent[step.event_name] || []}
-                                  value={f.property_key}
-                                  onChange={val => updateFilter(idx, fIdx, 'property_key', val)}
-                                  placeholder="— property —"
-                                />
-                              </div>
-                              <span className="funnel-filter-equals">＝</span>
-                              
-                              <div style={{ flex: 1, minWidth: '140px' }}>
-                                <SearchableSelect
-                                  options={valuesByProp[`${step.event_name}::${f.property_key}`] || []}
-                                  value={f.property_value}
-                                  onChange={val => updateFilter(idx, fIdx, 'property_value', val)}
-                                  placeholder="value"
-                                  column={f.property_key}
-                                  eventName={step.event_name}
-                                />
-                              </div>
+                          <div className="step-content" onPointerDown={e => e.stopPropagation()}>
+                            {step.groups.map((group, gIdx) => (
+                                <Fragment key={`step-${idx}-group-${gIdx}`}>
+                                    <div className={`group-block ${step.groups.length > 1 ? "group-or" : ""}`}>
+                                        {step.groups.length > 1 && (
+                                            <div className="group-header">
+                                                <div className="group-title">
+                                                    <SearchableSelect
+                                                        options={safeEvents}
+                                                        value={group.event_name}
+                                                        onChange={val => updateGroupEvent(idx, gIdx, val)}
+                                                        placeholder="— select alternative —"
+                                                        column="event_name"
+                                                    />
+                                                </div>
+                                                <button className="btn-remove-group" onClick={() => removeGroup(idx, gIdx)}>✕</button>
+                                            </div>
+                                        )}
 
-                              <button className="funnel-remove-filter" onClick={() => removeFilter(idx, fIdx)}>✕</button>
-                            </div>
-                          ))}
+                                        {group.filters.map((f, fIdx) => (
+                                            <div key={`filter-${idx}-${gIdx}-${fIdx}`} className="funnel-filter-stack">
+                                                <div className="filter-line">
+                                                    <span className="funnel-filter-label">where</span>
+                                                    <SearchableSelect
+                                                        options={propsByEvent[group.event_name] || []}
+                                                        value={f.property_key}
+                                                        onChange={val => updateFilter(idx, gIdx, fIdx, "property_key", val)}
+                                                        placeholder="— property —"
+                                                        width="100%"
+                                                    />
+                                                </div>
+                                                <div className="filter-line">
+                                                    <span className="funnel-filter-label">＝</span>
+                                                    <SearchableSelect
+                                                        options={valuesByProp[`${group.event_name}::${f.property_key}`] || []}
+                                                        value={f.property_value}
+                                                        onChange={val => updateFilter(idx, gIdx, fIdx, "property_value", val)}
+                                                        placeholder="value"
+                                                        column={f.property_key}
+                                                        eventName={group.event_name}
+                                                        width="100%"
+                                                    />
+                                                    <button className="funnel-remove-filter" onClick={() => removeFilter(idx, gIdx, fIdx)}>✕</button>
+                                                </div>
+                                            </div>
+                                        ))}
 
-                          <div onPointerDown={e => e.stopPropagation()} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                            <button
-                              className="funnel-add-filter-btn"
-                              onClick={() => addFilter(idx)}
-                              disabled={!step.event_name}
-                            >+ Add filter</button>
+                                        <div style={{ marginTop: "8px" }}>
+                                            <button
+                                                className="funnel-add-filter-btn"
+                                                onClick={() => addFilter(idx, gIdx)}
+                                                disabled={!group.event_name}
+                                            >+ Add filter</button>
+                                        </div>
+                                    </div>
+                                    {gIdx < step.groups.length - 1 && (
+                                        <div className="or-divider">
+                                            <span className="or-chip">OR</span>
+                                        </div>
+                                    )}
+                                </Fragment>
+                            ))}
                           </div>
                         </div>
                       )}
@@ -411,14 +486,14 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
                 <DragOverlay>
                     {activeId ? (
                         <div className="drag-overlay">
-                            {steps.find(s => s.id === activeId)?.event_name || 'Step'}
+                            {steps.find(s => s.id === activeId)?.groups[0]?.event_name || "Step"}
                         </div>
                     ) : null}
                 </DragOverlay>
               </DndContext>
               
               {steps.length < MAX_PATH_STEPS && (
-                <button className="funnel-add-step-btn" onClick={addStep} style={{ marginTop: '12px' }}>+ Add Step</button>
+                <button className="funnel-add-step-btn" onClick={addStep} style={{ marginTop: "12px" }}>+ Add Step</button>
               )}
             </div>
           </div>
@@ -433,27 +508,54 @@ export default function PathsBuilderModal({ events, isOpen, onClose, onSaved, ed
             onClick={handleSave}
             disabled={saving || steps.length < MIN_PATH_STEPS}
           >
-            {saving ? 'Saving…' : 'Save Path'}
+            {saving ? "Saving…" : "Save Path"}
           </button>
         </div>
       </div>
       <style>{`
-        .modal-paths .funnel-modal { max-width: 800px; }
-        .funnel-filter-row { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
+        .modal-paths .funnel-modal { max-width: 950px; }
+        .funnel-header-settings { display: flex; gap: 24px; margin-bottom: 12px; align-items: flex-start; }
         
-        /* Ensure dropdowns are not clipped and stay above everything */
-        .funnel-steps-scroll { padding-bottom: 240px !important; overflow-y: auto !important; overflow-x: visible !important; position: relative; }
-        .funnel-step-block { position: relative; transition: all 0.2s ease; background: #fafafa; }
-        .funnel-step-block.is-dragging { 
-          z-index: 1000 !important; 
-          transform: scale(1.02); 
-          box-shadow: 0 10px 25px rgba(0,0,0,0.15);
-          cursor: grabbing;
-        }
-        .funnel-step-block:focus-within { z-index: 100 !important; }
-        .searchable-select-dropdown { z-index: 10002 !important; transform: translateZ(0); }
-        .funnel-modal-footer { z-index: 5; position: relative; background: #f9fafb; }
-        .funnel-select { padding: 8px; border: 1px solid #ddd; border-radius: 4px; background: white; font-size: 14px; }
+        .funnel-step-block { position: relative; margin-bottom: 24px; border: 1px solid #e0e0e0; border-radius: 8px; background: white; overflow: hidden; }
+        .is-or-mode { border-color: #6366f1; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.1); }
+        
+        .funnel-step-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; background: #f8fafc; border-bottom: 1px solid #e0e0e0; }
+        .is-or-mode .funnel-step-header { background: #f5f3ff; border-bottom-color: #ddd6fe; }
+        
+        .step-badge { width: 28px; height: 28px; background: #64748b; color: #ffffff !important; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .is-or-mode .step-badge { background: #6366f1; color: #ffffff !important; }
+        .funnel-step-number { color: #ffffff !important; }
+        
+        .funnel-drag-handle { background: none; border: none; font-size: 18px; color: #94a3b8; cursor: grab; padding: 4px; }
+        .or-mode-label { font-weight: 600; color: #4338ca; }
+        
+        .step-actions { display: flex; gap: 8px; }
+        .btn-add-or { background: #6366f1; color: white; border: none; padding: 4px 10px; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+        .btn-add-or:hover { background: #4f46e5; transform: translateY(-1px); }
+        
+        .step-content { padding: 16px; }
+        .group-block { position: relative; transition: all 0.3s ease; }
+        .group-or { background: #fff; border: 1px solid #e2e8f0; padding: 16px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
+        .group-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px dashed #e2e8f0; }
+        .group-title { flex: 1; max-width: 320px; }
+        .btn-remove-group { background: #fee2e2; border: none; color: #ef4444; cursor: pointer; padding: 4px 8px; border-radius: 4px; font-size: 14px; transition: all 0.2s; }
+        .btn-remove-group:hover { background: #fecaca; }
+
+        .or-divider { position: relative; margin: 16px 0; text-align: center; }
+        .or-divider::before { content: ''; position: absolute; left: 0; top: 50%; width: 100%; height: 1px; background: #e2e8f0; }
+        .or-chip { position: relative; background: #6366f1; color: white; padding: 2px 14px; border-radius: 12px; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1px; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
+
+        .funnel-filter-stack { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; padding: 12px; background: #f8fafc; border-radius: 6px; border: 1px solid #f1f5f9; }
+        .filter-line { display: flex; align-items: center; gap: 8px; }
+        .funnel-filter-label { font-size: 11px; color: #64748b; font-weight: 700; text-transform: uppercase; min-width: 44px; text-align: right; }
+        .funnel-remove-filter { background: #fee2e2; border: none; color: #ef4444; border-radius: 4px; padding: 4px 8px; cursor: pointer; font-size: 12px; transition: all 0.2s; }
+        .funnel-remove-filter:hover { background: #fecaca; }
+
+        .funnel-add-filter-btn { background: none; border: none; color: #6366f1; font-size: 12px; font-weight: 600; cursor: pointer; padding: 8px 0; display: inline-flex; align-items: center; gap: 4px; }
+        .funnel-add-filter-btn:hover:not(:disabled) { color: #4f46e5; text-decoration: underline; }
+        
+        .funnel-steps-scroll { padding-bottom: 100px !important; overflow-y: auto !important; position: relative; min-height: 400px; }
+        .funnel-step-block.is-dragging { z-index: 1000 !important; transform: scale(1.02); box-shadow: 0 10px 25px rgba(0,0,0,0.15); }
       `}</style>
     </div>
   )
