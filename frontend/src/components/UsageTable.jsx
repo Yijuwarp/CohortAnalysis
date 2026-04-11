@@ -20,6 +20,76 @@ function computeCumulative(values) {
   return result
 }
 
+// ---------------------------------------------------------------------------
+// Action Icons
+// ---------------------------------------------------------------------------
+
+function PlayIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3"></polygon>
+    </svg>
+  )
+}
+
+function ReloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <polyline points="21 3 21 8 16 8" />
+    </svg>
+  )
+}
+
+function MicroscopeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 18h8" />
+      <path d="M3 22h18" />
+      <path d="M14 22a7 7 0 1 0 0-14h-1" />
+      <path d="M9 14l2 2" />
+      <path d="M9 12a2 2 0 1 1-2-2V6h6v4a2 2 0 1 1-2 2z" />
+      <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" />
+    </svg>
+  )
+}
+
+function ExportIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+      <circle cx="12" cy="13" r="4"></circle>
+    </svg>
+  )
+}
+
+function FunnelIcon() {
+  return (
+    <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 5H17L11 11V15L9 14V11L3 5Z" />
+    </svg>
+  )
+}
+
+function PinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+    </svg>
+  )
+}
+
+function PinOffIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  )
+}
+
 function formatRatioValue(value) {
   return Number(value).toFixed(2)
 }
@@ -32,10 +102,10 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [event, setEvent] = useState(state?.event || '')
   const [effectiveMaxDayVolume, setEffectiveMaxDayVolume] = useState(() => Number(state?.effectiveMaxDayVolume || maxDay))
   const [effectiveMaxDayUsers, setEffectiveMaxDayUsers] = useState(() => Number(state?.effectiveMaxDayUsers || maxDay))
-  const [isPinned, setIsPinned] = useState(state?.isPinned ?? true)
+  const [isPinnedVolume, setIsPinnedVolume] = useState(state?.isPinnedVolume ?? true)
+  const [isPinnedUsers, setIsPinnedUsers] = useState(state?.isPinnedUsers ?? true)
   const [modeUsers, setModeUsers] = useState(state?.modeUsers || 'count')
   const [metricType, setMetricType] = useState(state?.metricType || 'count')
-  const [cumulativeMode, setCumulativeMode] = useState(state?.cumulativeMode ?? false)
   const [columnWidths, setColumnWidths] = useState(state?.columnWidths || {
     cohort: 160,
     split: 160,
@@ -93,16 +163,17 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [propertyValue, setPropertyValue] = useState(state?.propertyValue || '')
   const [propertyLoading, setPropertyLoading] = useState(false)
   const [showPropertyFilter, setShowPropertyFilter] = useState(state?.showPropertyFilter ?? false)
+  const filterRowRef = useRef(null)
 
   useEffect(() => {
     const nextState = {
       event,
       effectiveMaxDayVolume,
       effectiveMaxDayUsers,
-      isPinned,
+      isPinnedVolume,
+      isPinnedUsers,
       modeUsers,
       metricType,
-      cumulativeMode,
       eventProperty,
       propertyOperator,
       propertyValue,
@@ -110,7 +181,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       columnWidths
     }
     setState(nextState)
-  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinned, modeUsers, metricType, cumulativeMode, eventProperty, propertyOperator, propertyValue, showPropertyFilter, columnWidths])
+  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinnedVolume, isPinnedUsers, modeUsers, metricType, eventProperty, propertyOperator, propertyValue, showPropertyFilter, columnWidths])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
@@ -396,18 +467,20 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     const usersByCohort = new Map(userRows.map((row) => [row.cohort_id, row.values || {}]))
     const retainedByCohort = new Map(retainedRows.map((row) => [row.cohort_id, row.values || {}]))
 
+    const isCumulative = metricType === 'cumulative_count' || metricType === 'cumulative_per_installed_user'
+
     return volumeRows.map((row) => {
       const converted = {}
       const usersByDay = usersByCohort.get(row.cohort_id) || {}
       const retainedByDay = retainedByCohort.get(row.cohort_id) || {}
-      const eventValues = cumulativeMode ? computeCumulative(row.values || {}) : row.values || {}
+      const eventValues = isCumulative ? computeCumulative(row.values || {}) : row.values || {}
 
       for (const day of dayColumns) {
         const totalEvents = Number(eventValues[String(day)] ?? 0)
         const distinctUsers = Number(usersByDay[String(day)] ?? 0)
         const retainedUsers = Number(retainedByDay[String(day)] ?? 0)
 
-        if (metricType === 'count') {
+        if (metricType === 'count' || metricType === 'cumulative_count') {
           converted[String(day)] = totalEvents
           continue
         }
@@ -417,7 +490,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           continue
         }
 
-        if (metricType === 'per_installed_user') {
+        if (metricType === 'per_installed_user' || metricType === 'cumulative_per_installed_user') {
           converted[String(day)] = formatRatioValue(row.size > 0 ? totalEvents / row.size : 0)
           continue
         }
@@ -432,7 +505,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
 
       return { ...row, values: converted }
     })
-  }, [cumulativeMode, dayColumns, metricType, retainedRows, userRows, volumeRows])
+  }, [dayColumns, metricType, retainedRows, userRows, volumeRows])
 
   const showSplit = useMemo(() => {
     return (cohorts || []).some(c => c.split_type != null)
@@ -441,19 +514,15 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const sortedVolumeRows = useMemo(() => sortRows(volumeDisplayRows, sortConfigVolume), [volumeDisplayRows, sortConfigVolume, cohorts])
   const sortedUserRows = useMemo(() => sortRows(userDisplayRows, sortConfigUsers), [userDisplayRows, sortConfigUsers, cohorts])
 
-  const cumulativeSupported = metricType === 'count' || metricType === 'per_installed_user'
-
-  useEffect(() => {
-    if (!cumulativeSupported) {
-      setCumulativeMode(false)
-    }
-  }, [cumulativeSupported])
-
   const volumeLabel =
     metricType === 'count'
       ? 'Event Count'
+      : metricType === 'cumulative_count'
+        ? 'Cumulative Event Count'
       : metricType === 'per_installed_user'
         ? 'Events per Installed User'
+      : metricType === 'cumulative_per_installed_user'
+        ? 'Cumulative Events per Installed User'
       : metricType === 'per_event_firer'
         ? 'Events per Event Firer'
         : 'Events per Retained User'
@@ -484,7 +553,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const handleAddToExport = () => {
     // 1. Volume Table
     const volumeTable = {
-      title: `Event Volume (${volumeLabel}${cumulativeMode ? ' - Cumulative' : ''})`,
+      title: `Event Volume (${volumeLabel})`,
       columns: [
         { key: 'cohort', label: 'Cohort', type: 'string' },
         { key: 'split', label: 'Split', type: 'string' },
@@ -591,8 +660,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
         cohorts: cohorts.filter(c => volumeRows.some(row => row.cohort_id === c.cohort_id)),
         settings: {
           'Event': event,
-          'Metric': metricType,
-          'Cumulative': cumulativeMode ? 'Enabled' : 'Disabled',
+          'Metric': volumeLabel,
           'Max Day': maxDay,
           'Property Filter': eventProperty ? `${eventProperty} ${propertyOperator} ${propertyValue}` : 'None'
         }
@@ -602,149 +670,160 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   }
 
   return (
-    <section className="card">
-      <h2>Usage Analytics</h2>
-      <div className="inline-controls">
-        <label>
-          Usage Event
-          <SearchableSelect
-            options={events}
-            value={event}
-            onChange={handleEventChange}
-            placeholder="Select an event"
-            className="searchable-select-prominent"
-            column="event_name"
-          />
-        </label>
-        <label>
-          Unique Users
-          <select value={modeUsers} onChange={(e) => setModeUsers(e.target.value)}>
-            <option value="count">Daily Users (Count)</option>
-            <option value="percent">Daily Users (%)</option>
-            <option value="adoption_count">Cumulative Adoption (Count)</option>
-            <option value="adoption_percent">Cumulative Adoption (%)</option>
-          </select>
-        </label>
-        <label>
-          Metric
-          <select value={metricType} onChange={(e) => setMetricType(e.target.value)}>
-            <option value="count">Count</option>
-            <option value="per_active_user">Per Retained User</option>
-            <option value="per_installed_user">Per Installed User</option>
-            <option value="per_event_firer">Per Event Firer</option>
-          </select>
-        </label>
-        <button
-          className={`view-button ${isPinned ? 'active' : ''}`}
-          onClick={() => setIsPinned((prev) => !prev)}
-          title="Pin Cohort Columns"
-        >
-          {isPinned ? "📌" : "📍"}
-        </button>
-        <button className="button button-primary" onClick={() => loadUsage()} disabled={loading || !event || propertyFilterRequiresValue || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}>
-          {loading ? 'Loading...' : 'Load Usage'}
-        </button>
-        <button
-          type="button"
-          className={`compare-open-button ${isComparePaneOpen ? 'active' : ''}`}
-          onClick={() => setIsComparePaneOpen(prev => !prev)}
-          title="Compare two cohorts statistically"
-          data-testid="open-compare-pane"
-          disabled={!event}
-        >
-          🔬 Compare
-        </button>
-
-        <button
-          type="button"
-          className="button button-secondary"
-          onClick={handleAddToExport}
-          title="Add current view to global export buffer"
-          disabled={!event || volumeRows.length === 0}
-        >
-          📸 Add to Export
-        </button>
-      </div>
-
-      <div className="usage-property-filter">
-        <div className="usage-property-filter-header">
-          <span className="usage-property-filter-label">Where</span>
-          {!showPropertyFilter && (
+    <section className="card usage-analytics-card">
+      <div className="usage-query-container">
+        {/* Row 1: Primary Query & Global Actions */}
+        <div className="usage-query-row">
+          <div className="query-main">
+            <span className="query-label">Event</span>
+            <SearchableSelect
+              options={events}
+              value={event}
+              onChange={handleEventChange}
+              placeholder="Select an event"
+              style={{ width: '240px' }}
+              column="event_name"
+            />
             <button
               type="button"
-              className="button button-secondary button-small"
-              onClick={() => setShowPropertyFilter(true)}
-              disabled={propertyLoading || eventProperties.length === 0}
-            >
-              + Add Property
-            </button>
-          )}
-        </div>
-        {propertyLoading ? (
-          <small className="secondary-text">Loading event properties...</small>
-        ) : eventProperties.length === 0 ? (
-          <small className="secondary-text">(No event properties available)</small>
-        ) : showPropertyFilter ? (
-          <div className="inline-controls">
-            <SearchableSelect
-              options={eventProperties}
-              value={eventProperty}
-              onChange={(value) => {
-                setEventProperty(value)
-                setPropertyValue('')
-                setShowPropertyFilter(true)
+              className={`action-icon-button funnel-toggle ${eventProperty ? 'active' : ''} ${showPropertyFilter ? 'row-open' : ''}`}
+              onClick={() => {
+                if (eventProperty) {
+                  clearPropertyFilter()
+                } else {
+                  setShowPropertyFilter(prev => !prev)
+                }
               }}
-              placeholder="Select property"
-            />
-            <select value={propertyOperator} onChange={(e) => setPropertyOperator(e.target.value)} disabled={!eventProperty}>
-              <option value="=">=</option>
-              <option value="!=">!=</option>
-            </select>
-            <SearchableSelect
-              options={propertyValues}
-              value={propertyValue}
-              onChange={setPropertyValue}
-              placeholder="Select value"
-              disabled={!eventProperty}
-              column={eventProperty}
-              eventName={event}
-            />
-            <button type="button" className="filter-remove" onClick={clearPropertyFilter} title="Clear property filter">✕</button>
+              title={eventProperty ? "Edit filter" : "Add filter"}
+              aria-label="Toggle filter"
+              disabled={!event}
+            >
+              <FunnelIcon />
+            </button>
           </div>
-        ) : null}
+          
+          <div className="query-actions">
+            <button
+               type="button"
+               className={`action-icon-button ${loading ? 'loading' : ''}`}
+               onClick={() => loadUsage()}
+               disabled={loading || !event || propertyFilterRequiresValue || retentionEvent === undefined || retentionEvent === null || retentionEvent === ""}
+               title="Reload analysis"
+               aria-label="Reload analysis"
+            >
+              <ReloadIcon />
+            </button>
+
+            <button
+              type="button"
+              className={`action-icon-button ${isComparePaneOpen ? 'compare-toggle-active' : ''}`}
+              onClick={() => setIsComparePaneOpen(prev => !prev)}
+              title="Statistical analysis"
+              aria-label="Statistical analysis"
+              data-testid="open-compare-pane"
+              disabled={!event}
+            >
+              <MicroscopeIcon />
+            </button>
+
+            <button
+              type="button"
+              className="action-icon-button"
+              onClick={handleAddToExport}
+              title="Snapshot (Add to Export)"
+              aria-label="Snapshot"
+              disabled={!event || volumeRows.length === 0}
+            >
+              <ExportIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Filters (Animated Wrapper) */}
+        <div className={`usage-filter-row-wrapper ${showPropertyFilter ? 'open' : ''}`}>
+          <div className="usage-filter-row" ref={filterRowRef}>
+            <span className="filter-label">where</span>
+            {propertyLoading ? (
+              <small className="secondary-text">Loading properties...</small>
+            ) : (
+              <div className="filter-triplet">
+                <SearchableSelect
+                  options={eventProperties}
+                  value={eventProperty}
+                  onChange={(value) => {
+                    setEventProperty(value)
+                    setPropertyValue('')
+                  }}
+                  placeholder="Property"
+                  style={{ width: '180px' }}
+                />
+                <select 
+                  className="operator-select"
+                  value={propertyOperator} 
+                  onChange={(e) => setPropertyOperator(e.target.value)} 
+                  disabled={!eventProperty}
+                >
+                  <option value="=">=</option>
+                  <option value="!=">!=</option>
+                </select>
+                <SearchableSelect
+                  options={propertyValues}
+                  value={propertyValue}
+                  onChange={setPropertyValue}
+                  placeholder="Value"
+                  disabled={!eventProperty}
+                  column={eventProperty}
+                  eventName={event}
+                  style={{ width: '180px' }}
+                />
+                <button 
+                  type="button" 
+                  className="filter-remove-btn" 
+                  onClick={clearPropertyFilter} 
+                  title="Remove filter"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
       </div>
-
-      {metricType === 'per_active_user' && (
-        <p>Retained users are calculated using the selected retention event.</p>
-      )}
-
-      {error && <p className="error">{error}</p>}
-
-      <h3 className="section-header-inline">
-        Event Volume ({volumeLabel})
-        {cumulativeSupported && (
-          <label className="checkbox-inline">
-            <input
-              type="checkbox"
-              checked={cumulativeMode}
-              onChange={(e) => setCumulativeMode(e.target.checked)}
-            />
-            Cumulative
-          </label>
-        )}
-      </h3>
+      <div className="table-header-scoped">
+        <h3 className="section-header-inline">
+          Event Volume (
+          <select value={metricType} onChange={(e) => setMetricType(e.target.value)} className="inline-header-select">
+            <option value="count">Event Count</option>
+            <option value="cumulative_count">Cumulative Event Count</option>
+            <option value="per_active_user">Events per Retained User</option>
+            <option value="per_installed_user">Events per Installed User</option>
+            <option value="cumulative_per_installed_user">Cumulative Events per Installed User</option>
+            <option value="per_event_firer">Events per Event Firer</option>
+          </select>
+          )
+          <button
+            type="button"
+            className={`view-button table-pin ${isPinnedVolume ? 'active' : ''}`}
+            onClick={() => setIsPinnedVolume(prev => !prev)}
+            title={isPinnedVolume ? "Unpin this table" : "Pin this table"}
+            style={{ marginLeft: '12px' }}
+          >
+            {isPinnedVolume ? <PinIcon /> : <PinOffIcon />}
+          </button>
+        </h3>
+      </div>
       {volumeDisplayRows.length > 0 && (
         <div className={`analytics-table table-responsive ${showSplit ? 'has-split' : ''}`}>
           <table>
             <thead>
               <tr>
                 <th
-                  className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                  className={`${isPinnedVolume ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
                   style={{ 
                     width: columnWidths.cohort,
                     minWidth: columnWidths.cohort,
                     maxWidth: columnWidths.cohort,
-                    left: isPinned ? getStickyLeft("cohort") : undefined
+                    left: isPinnedVolume ? getStickyLeft("cohort") : undefined
                   }}
                   onClick={() => {
                     if (isResizingRef.current) return
@@ -756,12 +835,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 </th>
                 {showSplit && (
                   <th
-                    className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                    className={`${isPinnedVolume ? 'sticky-col sticky-col-split' : ''} sortable-header`}
                     style={{ 
                       width: columnWidths.split, 
                       minWidth: columnWidths.split,
                       maxWidth: columnWidths.split,
-                      left: isPinned ? getStickyLeft("split") : undefined 
+                      left: isPinnedVolume ? getStickyLeft("split") : undefined 
                     }}
                     onClick={() => {
                       if (isResizingRef.current) return
@@ -773,12 +852,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </th>
                 )}
                 <th
-                  className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  className={`${isPinnedVolume ? 'sticky-col sticky-col-size' : ''} sortable-header`}
                   style={{ 
                     width: columnWidths.size, 
                     minWidth: columnWidths.size,
                     maxWidth: columnWidths.size,
-                    left: isPinned ? getStickyLeft("size") : undefined 
+                    left: isPinnedVolume ? getStickyLeft("size") : undefined 
                   }}
                   onClick={() => {
                     if (isResizingRef.current) return
@@ -806,12 +885,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
               {sortedVolumeRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    className={isPinnedVolume ? 'sticky-col sticky-col-cohort' : ''}
                     style={{ 
                       width: columnWidths.cohort,
                       minWidth: columnWidths.cohort,
                       maxWidth: columnWidths.cohort,
-                      left: isPinned ? getStickyLeft("cohort") : undefined
+                      left: isPinnedVolume ? getStickyLeft("cohort") : undefined
                     }}
                     title={row.cohort_name}
                   >
@@ -819,24 +898,24 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </td>
                   {showSplit && (
                     <td 
-                      className={isPinned ? 'sticky-col sticky-col-split' : ''}
+                      className={isPinnedVolume ? 'sticky-col sticky-col-split' : ''}
                       style={{ 
                         width: columnWidths.split, 
                         minWidth: columnWidths.split,
                         maxWidth: columnWidths.split,
-                        left: isPinned ? getStickyLeft("split") : undefined 
+                        left: isPinnedVolume ? getStickyLeft("split") : undefined 
                       }}
                     >
                       {getSplitLabel(row)}
                     </td>
                   )}
                   <td 
-                    className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                    className={isPinnedVolume ? 'sticky-col sticky-col-size' : ''}
                     style={{ 
                       width: columnWidths.size, 
                       minWidth: columnWidths.size,
                       maxWidth: columnWidths.size,
-                      left: isPinned ? getStickyLeft("size") : undefined 
+                      left: isPinnedVolume ? getStickyLeft("size") : undefined 
                     }}
                   >
                     {formatCountValue(row.size)}
@@ -844,7 +923,8 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   {dayColumnsVolume.map((day) => {
                     const rawValue = row.values?.[String(day)] ?? null
                     const hasValue = rawValue !== null && rawValue !== undefined
-                    const value = hasValue ? (metricType === 'count' ? formatCountValue(rawValue) : rawValue) : null
+                    const isCount = metricType === 'count' || metricType === 'cumulative_count'
+                    const value = hasValue ? (isCount ? formatCountValue(rawValue) : rawValue) : null
 
                     const availability = row.availability?.[String(day)] || {}
                     const {
@@ -875,19 +955,39 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
         </div>
       )}
 
-      <h3>Unique Users ({uniqueUsersLabel})</h3>
+      <div className="table-header-scoped" style={{ marginTop: '32px' }}>
+        <h3 className="section-header-inline">
+          Unique Users (
+          <select value={modeUsers} onChange={(e) => setModeUsers(e.target.value)} className="inline-header-select">
+            <option value="count">Daily Users (Count)</option>
+            <option value="percent">Daily Users (%)</option>
+            <option value="adoption_count">Cumulative Adoption (Count)</option>
+            <option value="adoption_percent">Cumulative Adoption (%)</option>
+          </select>
+          )
+          <button
+            type="button"
+            className={`view-button table-pin ${isPinnedUsers ? 'active' : ''}`}
+            onClick={() => setIsPinnedUsers(prev => !prev)}
+            title={isPinnedUsers ? "Unpin this table" : "Pin this table"}
+            style={{ marginLeft: '12px' }}
+          >
+            {isPinnedUsers ? <PinIcon /> : <PinOffIcon />}
+          </button>
+        </h3>
+      </div>
       {userDisplayRows.length > 0 && (
         <div className={`analytics-table table-responsive ${showSplit ? 'has-split' : ''}`}>
           <table>
             <thead>
               <tr>
                 <th 
-                  className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`} 
+                  className={`${isPinnedUsers ? 'sticky-col sticky-col-cohort' : ''} sortable-header`} 
                   style={{ 
                     width: columnWidths.cohort,
                     minWidth: columnWidths.cohort,
                     maxWidth: columnWidths.cohort,
-                    left: isPinned ? getStickyLeft("cohort") : undefined
+                    left: isPinnedUsers ? getStickyLeft("cohort") : undefined
                   }}
                   onClick={() => {
                     if (isResizingRef.current) return
@@ -899,12 +999,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 </th>
                 {showSplit && (
                   <th 
-                    className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`} 
+                    className={`${isPinnedUsers ? 'sticky-col sticky-col-split' : ''} sortable-header`} 
                     style={{ 
                       width: columnWidths.split, 
                       minWidth: columnWidths.split,
                       maxWidth: columnWidths.split,
-                      left: isPinned ? getStickyLeft("split") : undefined 
+                      left: isPinnedUsers ? getStickyLeft("split") : undefined 
                     }}
                     onClick={() => {
                       if (isResizingRef.current) return
@@ -916,19 +1016,19 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </th>
                 )}
                 <th
-                  className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  className={`${isPinnedUsers ? 'sticky-col sticky-col-size' : ''} sortable-header`}
                   style={{ 
                     width: columnWidths.size, 
                     minWidth: columnWidths.size,
                     maxWidth: columnWidths.size,
-                    left: isPinned ? getStickyLeft("size") : undefined 
+                    left: isPinnedUsers ? getStickyLeft("size") : undefined 
                   }}
                   onClick={() => {
                     if (isResizingRef.current) return
                     handleSortUsers('size')
                   }}
                 >
-                  Size {sortConfigUsers.key === 'size' && (sortConfigUsers.direction === 'asc' ? '↑' : '↓')}
+                  Size {sortConfigUsers.key === 'size' ? (sortConfigUsers.direction === 'asc' ? '↑' : '↓') : ''}
                   <div className="column-resizer" onMouseDown={(e) => { e.stopPropagation(); startResize('size', e); }} />
                 </th>
                 {dayColumnsUsers.map((day) => (
@@ -949,12 +1049,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
               {sortedUserRows.map((row) => (
                 <tr key={row.cohort_id}>
                   <td
-                    className={isPinned ? 'sticky-col sticky-col-cohort' : ''}
+                    className={isPinnedUsers ? 'sticky-col sticky-col-cohort' : ''}
                     style={{ 
                       width: columnWidths.cohort,
                       minWidth: columnWidths.cohort,
                       maxWidth: columnWidths.cohort,
-                      left: isPinned ? getStickyLeft("cohort") : undefined
+                      left: isPinnedUsers ? getStickyLeft("cohort") : undefined
                     }}
                     title={row.cohort_name}
                   >
@@ -962,24 +1062,24 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </td>
                   {showSplit && (
                     <td 
-                      className={isPinned ? 'sticky-col sticky-col-split' : ''}
+                      className={isPinnedUsers ? 'sticky-col sticky-col-split' : ''}
                       style={{ 
                         width: columnWidths.split, 
                         minWidth: columnWidths.split,
                         maxWidth: columnWidths.split,
-                        left: isPinned ? getStickyLeft("split") : undefined 
+                        left: isPinnedUsers ? getStickyLeft("split") : undefined 
                       }}
                     >
                       {getSplitLabel(row)}
                     </td>
                   )}
                   <td 
-                    className={isPinned ? 'sticky-col sticky-col-size' : ''}
+                    className={isPinnedUsers ? 'sticky-col sticky-col-size' : ''}
                     style={{ 
                       width: columnWidths.size, 
                       minWidth: columnWidths.size,
                       maxWidth: columnWidths.size,
-                      left: isPinned ? getStickyLeft("size") : undefined 
+                      left: isPinnedUsers ? getStickyLeft("size") : undefined 
                     }}
                   >
                     {formatCountValue(row.size)}

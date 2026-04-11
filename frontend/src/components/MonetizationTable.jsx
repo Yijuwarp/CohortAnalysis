@@ -8,6 +8,105 @@ import MonetizationGraph from './MonetizationGraph'
 import TunePredictionPane from './TunePredictionPane'
 import ComparePane from './ComparePane'
 
+// ---------------------------------------------------------------------------
+// Action Icons
+// ---------------------------------------------------------------------------
+
+function PinIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+    </svg>
+  )
+}
+
+function PinOffIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.5 }}>
+      <line x1="12" y1="17" x2="12" y2="22" />
+      <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6a3 3 0 0 0-3-3 3 3 0 0 0-3 3v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+      <line x1="2" y1="2" x2="22" y2="22" />
+    </svg>
+  )
+}
+
+function MicroscopeIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 18h8" />
+      <path d="M3 22h18" />
+      <path d="M14 22a7 7 0 1 0 0-14h-1" />
+      <path d="M9 14l2 2" />
+      <path d="M9 12a2 2 0 1 1-2-2V6h6v4a2 2 0 1 1-2 2z" />
+      <path d="M12 6V3a1 1 0 0 0-1-1H9a1 1 0 0 0-1 1v3" />
+    </svg>
+  )
+}
+
+function ExportIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+      <circle cx="12" cy="13" r="4" />
+    </svg>
+  )
+}
+
+function ReloadIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
+      <polyline points="21 3 21 8 16 8" />
+    </svg>
+  )
+}
+
+function TableIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <line x1="3" y1="15" x2="21" y2="15" />
+      <line x1="9" y1="3" x2="9" y2="21" />
+    </svg>
+  )
+}
+
+function GraphIcon() {
+  return (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="20" x2="18" y2="10" />
+      <line x1="12" y1="20" x2="12" y2="4" />
+      <line x1="6" y1="20" x2="6" y2="14" />
+    </svg>
+  )
+}
+
+function PredictIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 16H17" />
+      <path d="M3 4V16" />
+      <path d="M4 13L8 10L11 11L13 8" />
+      <path d="M13 8L17 6" strokeDasharray="2 2" />
+    </svg>
+  )
+}
+
+function TuneIcon() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M4 6H16" />
+      <circle cx="8" cy="6" r="1.5" />
+      <path d="M4 10H16" />
+      <circle cx="12" cy="10" r="1.5" />
+      <path d="M4 14H16" />
+      <circle cx="10" cy="14" r="1.5" />
+    </svg>
+  )
+}
+
 const METRIC_OPTIONS = [
   { value: 'total_revenue', label: 'Total Revenue' },
   { value: 'cumulative_revenue', label: 'Cumulative Revenue' },
@@ -232,6 +331,12 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   )
 
   const handleProjectRevenue = () => {
+    if (predictions) {
+      setPredictions(null)
+      setPredictionBaseline(null)
+      setIsTuningPaneOpen(false)
+      return
+    }
     if (!predictionEnabled) {
       return
     }
@@ -351,101 +456,137 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
   const hasSidebarContent = (predictionSummary.length > 0 && showPredictionSummary) || isTuningPaneOpen;
 
   return (
-    <section className="card">
-      <h2>Monetization</h2>
-      <div className="monetization-layout">
-        <div className="monetization-main">
-          <div className="retention-header monetization-controls">
-              <label>
-                Metric
-                <select
-                  value={metricType}
-                  onChange={(e) => {
-                    setMetricType(e.target.value)
-                    setPredictions(null)
-                    setPredictionBaseline(null)
-                    setIsTuningPaneOpen(false)
-                  }}
-                >
-                  {METRIC_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label>
-                Horizon
-                <select value={predictionHorizon} onChange={(e) => setPredictionHorizon(Number(e.target.value))}>
-                  {[30, 60, 90, 180, 365].map((day) => <option key={day} value={day}>{day}D</option>)}
-                </select>
-              </label>
-
-              <div className="view-toggle">
-                <button
-                  type="button"
-                  className={`view-button ${viewMode === 'table' ? 'active ui-toggle-active' : ''}`}
-                  onClick={() => setViewMode('table')}
-                >
-                  Table
-                </button>
-                <button
-                  type="button"
-                  className={`view-button ${viewMode === 'graph' ? 'active ui-toggle-active' : ''}`}
-                  onClick={() => setViewMode('graph')}
-                >
-                  Graph
-                </button>
-              </div>
-
-                <button
-                  className={`view-button ${isPinned ? 'active' : ''}`}
-                  onClick={() => setIsPinned((prev) => !prev)}
-                  title="Pin Cohort Columns"
-                >
-                  {isPinned ? "📌" : "📍"}
-                </button>
- 
-              <button className="button button-primary" onClick={loadData} disabled={loading}>
-                {loading ? 'Loading...' : 'Load'}
-              </button>
-              <button
-                className="button button-primary predict-button"
-                type="button"
-                onClick={handleProjectRevenue}
-                disabled={!predictionEnabled || displayRows.length === 0}
-                title={predictionEnabled ? '' : 'Prediction only available for cumulative metrics'}
-              >
-                Predict
-              </button>
-              {predictions && Object.keys(predictions).length > 0 && (
-                <button
-                  className="button button-secondary"
-                  type="button"
-                  onClick={() => {
-                    setPredictionBaseline(JSON.parse(JSON.stringify(predictions)))
-                    setIsTuningPaneOpen(true)
-                  }}
-                >
-                  Tune
-                </button>
-              )}
-
-              <button
-                className="button button-secondary"
-                type="button"
-                onClick={() => setIsComparePaneOpen(true)}
-              >
-                🔬 Compare
-              </button>
-
+    <section className="card monetization-refactor-card">
+      <div className="usage-query-container">
+        {/* Row 1: Primary Controls */}
+        <div className="usage-query-row">
+          <div className="query-main">
+            <span className="query-label" style={{ marginRight: '8px' }}>Metric</span>
+            <select
+              className="metric-select"
+              value={metricType}
+              onChange={(e) => {
+                setMetricType(e.target.value)
+                setPredictions(null)
+                setPredictionBaseline(null)
+                setIsTuningPaneOpen(false)
+              }}
+            >
+              {METRIC_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>{option.label}</option>
+              ))}
+            </select>
+            
+            <div className="view-toggle" style={{ marginLeft: '12px' }}>
               <button
                 type="button"
-                className="button button-secondary"
-                onClick={handleAddToExport}
-                title="Add current view to global export buffer"
-                disabled={displayRows.length === 0}
+                className={`view-toggle-button ${viewMode === 'table' ? 'active' : ''}`}
+                onClick={() => setViewMode('table')}
+                title="Table View"
               >
-                📸 Add to Export
+                <TableIcon />
               </button>
+              <button
+                type="button"
+                className={`view-toggle-button ${viewMode === 'graph' ? 'active' : ''}`}
+                onClick={() => setViewMode('graph')}
+                title="Graph View"
+              >
+                <GraphIcon />
+              </button>
+            </div>
           </div>
 
+          <div className="query-actions">
+            <button
+              type="button"
+              className={`action-icon-button ${isPinned ? 'active' : ''}`}
+              onClick={() => setIsPinned((prev) => !prev)}
+              title={isPinned ? "Unpin Cohort Columns" : "Pin Cohort Columns"}
+            >
+              {isPinned ? <PinIcon /> : <PinOffIcon />}
+            </button>
+
+            <button
+              type="button"
+              className="action-icon-button"
+              onClick={() => loadData()}
+              disabled={loading}
+              title={loading ? "Loading..." : "Reload Analysis"}
+            >
+              <ReloadIcon />
+            </button>
+
+            <button
+              type="button"
+              className={`action-icon-button ${isComparePaneOpen ? 'active' : ''}`}
+              onClick={() => setIsComparePaneOpen(true)}
+              title="Compare cohorts"
+              disabled={!displayRows.length}
+            >
+              <MicroscopeIcon />
+            </button>
+
+            <button
+              type="button"
+              className="action-icon-button"
+              onClick={handleAddToExport}
+              title="Snapshot (Add to Export)"
+              disabled={displayRows.length === 0}
+            >
+              <ExportIcon />
+            </button>
+          </div>
+        </div>
+
+        {/* Row 2: Prediction Controls */}
+        <div className="usage-query-row" style={{ borderTop: '1px solid #e2e8f0' }}>
+          <div className="query-main">
+            <button
+              className={`action-icon-button ${predictions ? 'active' : ''}`}
+              type="button"
+              onClick={handleProjectRevenue}
+              disabled={!predictionEnabled || displayRows.length === 0}
+              title={predictionEnabled ? 'Predict revenue' : 'Prediction only available for cumulative metrics'}
+            >
+              <PredictIcon />
+            </button>
+
+            <span className="query-label" style={{ marginLeft: '12px', marginRight: '8px' }}>Horizon</span>
+            <select 
+              className="metric-select"
+              value={predictionHorizon} 
+              onChange={(e) => setPredictionHorizon(Number(e.target.value))}
+            >
+              {[30, 60, 90, 180, 365].map((day) => (
+                <option key={day} value={day}>{day}D</option>
+              ))}
+            </select>
+
+            {predictions && Object.keys(predictions).length > 0 && (
+              <button
+                className={`action-icon-button ${isTuningPaneOpen ? 'active' : ''}`}
+                type="button"
+                onClick={() => {
+                  if (isTuningPaneOpen) {
+                    setIsTuningPaneOpen(false)
+                  } else {
+                    setPredictionBaseline(JSON.parse(JSON.stringify(predictions)))
+                    setIsTuningPaneOpen(true)
+                  }
+                }}
+                style={{ marginLeft: '12px' }}
+                title="Tune prediction parameters"
+              >
+                <TuneIcon />
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="monetization-layout" style={{ marginTop: '24px' }}>
+        <div className="monetization-main">
           {!loading && error && <p className="error">{error}</p>}
           {loading && <div className="loader">Loading monetization data...</div>}
           {!loading && !error && displayRows.length === 0 && (
