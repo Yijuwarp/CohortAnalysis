@@ -962,20 +962,6 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         .funnel-option-invalid { color: #999; font-style: italic; }
         
         .path-actions-group { display: flex; align-items: center; gap: 4px; }
-        .action-icon-button {
-          display: flex; align-items: center; justify-content: center;
-          width: 32px; height: 32px; border-radius: 6px; border: 1px solid #e2e8f0;
-          background: white; color: #64748b; cursor: pointer; transition: all 0.2s;
-          padding: 0;
-        }
-        .action-icon-button:hover:not(:disabled) {
-          background: #f8fafc; color: var(--primary-color); border-color: #cbd5e1;
-          transform: translateY(-1px);
-        }
-        .action-icon-button:disabled { cursor: not-allowed; opacity: 0.5; }
-        .action-icon-button.icon-delete:hover:not(:disabled) {
-          color: #ef4444; border-color: #fecaca; background: #fff1f1;
-        }
         
         button:focus-visible {
           outline: 2px solid #16a34a;
