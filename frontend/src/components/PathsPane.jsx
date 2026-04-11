@@ -129,7 +129,7 @@ function PathsFunnelChart({ result, pathLabel }) {
     const cohorts = result.results
 
     return (
-        <section className="card ui-card paths-funnel-chart-section">
+        <section className="paths-funnel-chart-section">
             <div className="funnel-header" style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="funnel-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {pathLabel && <span className="path-label-pill">{pathLabel}</span>}
@@ -206,7 +206,7 @@ function formatStepGap(minutes) {
 
 function FunnelSkeleton({ pathLabel }) {
     return (
-        <section className="card ui-card funnel-skeleton">
+        <section className="funnel-skeleton">
             <div className="funnel-header" style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div className="funnel-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                     {pathLabel && <span className="path-label-pill">{pathLabel}</span>}
@@ -227,7 +227,7 @@ function FunnelSkeleton({ pathLabel }) {
 
 function TableSkeleton() {
     return (
-        <section className="card ui-card paths-cohort-tables-card">
+        <section className="paths-cohort-tables-card">
             <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px' }}>
                 Cohort Tables
             </h3>
@@ -600,7 +600,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   const canExport = results[selectedPathId] && (!comparePathId || results[comparePathId])
 
   return (
-    <div className="paths-pane" data-testid="paths-pane">
+    <section className="card paths-pane-card" data-testid="paths-pane">
       <div className="funnel-topbar">
         <div className="main-actions">
           <button
@@ -705,13 +705,12 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         </button>
       </div>
 
+      <div className="paths-results-wrapper">
       {resultsStale && Object.keys(results).length > 0 && (
           <div className="stale-results-notice animate-fade-in">
               <span style={{ fontSize: '18px' }}>⚠️</span> Results outdated — click <PlayIcon /> to refresh (both paths)
           </div>
       )}
-
-
 
       {(Object.keys(results).length > 0 || running) && (
         <div className="paths-results animate-fade-in">
@@ -735,7 +734,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
 
           {/* Section 2: Detailed Cohort Tables */}
           {Object.keys(results).length > 0 ? (
-            <section className="card ui-card paths-cohort-tables-card">
+            <section className="paths-cohort-tables-card">
               <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '20px' }}>
                   Cohort Tables
               </h3>
@@ -839,7 +838,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
           ) : (running && <TableSkeleton />)}
 
           {(Object.values(results).some(r => r.global_insights?.length > 0 || r.results.some(c => c.insights?.length > 0))) && (
-            <section className="card ui-card paths-all-insights">
+            <section className="paths-all-insights">
               <h3 style={{ borderBottom: '1px solid #eee', paddingBottom: '12px', marginBottom: '16px' }}>Insights</h3>
               
               {Object.entries(results).map(([pid, r], rIdx) => (
@@ -884,6 +883,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
           )}
         </div>
       )}
+      </div>
 
       {error && <p className="error" style={{ marginTop: '20px' }}>{error}</p>}
 
@@ -920,7 +920,18 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
       )}
 
       <style>{`
-        .paths-pane { display: flex; flex-direction: column; gap: 20px; padding-top: 16px; padding-bottom: 40px; }
+        .paths-pane-card { display: flex; flex-direction: column; gap: 0; padding: var(--workspace-padding) !important; }
+        .paths-results-wrapper { display: flex; flex-direction: column; gap: 24px; margin-top: 24px; }
+        .paths-results { display: flex; flex-direction: column; gap: 24px; }
+        .paths-funnel-chart-section, .paths-cohort-tables-card, .paths-all-insights { 
+            padding: 16px; 
+            border-radius: 8px; 
+            background: #fafafa; 
+            margin-bottom: 0; 
+            border: none; 
+            box-shadow: none; 
+        }
+        .funnel-skeleton { padding: 16px; background: #fafafa; border-radius: 8px; border: none; box-shadow: none; }
         .paths-insight-item { padding: 8px 12px; border-radius: 4px; margin-bottom: 8px; font-size: 14px; border-left: 4px solid transparent; }
         .paths-insight-item.global { background: #f0f7ff; border-left-color: #007bff; color: #004085; }
         .paths-insight-item.cohort { background: #fff3cd; border-left-color: #ffc107; color: #856404; margin-top: 8px; }
@@ -1174,6 +1185,6 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
         </div>,
         document.body
       )}
-    </div>
+    </section>
   )
 }
