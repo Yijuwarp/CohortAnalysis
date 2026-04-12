@@ -388,7 +388,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
                 <Fragment key={cohort.cohort_id}>
                   <div className="existing-cohort-row cohort-row" title={cohort.isInvalid ? 'Invalid cohort (0 users)' : (cohort.is_active ? '' : 'No matching members under current filters')}>
                     <div className="cohort-name cohort-left">
-                      <span>{cohort.cohort_name}</span>
+                      <span title={cohort.cohort_name}>{cohort.cohort_name}</span>
                       {cohort.isInvalid && <span className="cohort-invalid-badge" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', marginLeft: '6px' }}>Invalid</span>}
                       {cohort.hidden && <span className="badge-hidden">Hidden</span>}
                       {!cohort.is_active && !cohort.isInvalid && <span className="badge-inactive">Inactive</span>}
@@ -493,7 +493,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
                       <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.isInvalid ? 'Invalid cohort (0 users)' : (child.is_active ? '' : 'No matching members under current filters')}>
                         <div className="cohort-name cohort-left">
                           <span className="child-prefix">↳</span>
-                          <span>{child.cohort_name}</span>
+                          <span title={child.cohort_name}>{child.cohort_name}</span>
                           {child.isInvalid && <span className="cohort-invalid-badge" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', marginLeft: '6px' }}>Invalid</span>}
                           {child.hidden && <span className="badge-hidden">Hidden</span>}
                           {!child.is_active && !child.isInvalid && <span className="badge-inactive">Inactive</span>}
