@@ -176,7 +176,7 @@ function PathsFunnelChart({ result, pathLabel }) {
                                                 <div 
                                                     className="ghost-bar"
                                                     style={{
-                                                        width: `${Number(Math.min(100, (cohort.steps[stepIdx - 1]?.users / cohort.steps[0]?.users) * 100 || 0).toFixed(1))}%`,
+                                                        width: `${Number(Math.min(100, cohort.steps[stepIdx - 1]?.conversion_pct || 0).toFixed(1))}%`,
                                                         background: `repeating-linear-gradient(45deg, rgba(255,255,255,0.15), rgba(255,255,255,0.15) 4px, rgba(255,255,255,0.05) 4px, rgba(255,255,255,0.05) 8px), ${getCohortColor(cohort.cohort_id, cohortIdx)}`
                                                     }}
                                                 />
@@ -282,13 +282,13 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   const [customName, setCustomName] = useState('')
 
   const runIdRef = useRef(0)
-  const [activeDropdown, setActiveDropdown] = useState(null) // { sIdx, cohort, rect }
+  const [activeDropdown, setActiveDropdown] = useState(null) // { pid, sIdx, cohort, rect }
   const closeTimerRef = useRef(null)
 
-  const handleDropdownEnter = (e, sIdx, cohort) => {
+  const handleDropdownEnter = (e, pid, sIdx, cohort) => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current)
     const rect = e.currentTarget.getBoundingClientRect()
-    setActiveDropdown({ sIdx, cohort, rect })
+    setActiveDropdown({ pid, sIdx, cohort, rect })
   }
 
   const handleDropdownLeave = () => {
@@ -554,8 +554,10 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
   }
 
   // Cohort creation helpers
-  const handleOpenNamingModal = (cohortId, stepIdx, type, eventName, cohortName) => {
-    if (!editingPath) return
+  const handleOpenNamingModal = (pid, cohortId, stepIdx, type, eventName, cohortName) => {
+    const pathResult = results[pid]
+    if (!pathResult) return
+
     let defaultName = ''
     if (type === 'reached') {
         defaultName = `${cohortName} - Reached Step ${stepIdx} (${eventName})`
@@ -568,37 +570,65 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
             defaultName = `${cohortName} - Drop off at Step ${stepIdx} (${eventName})`
         }
     }
-    setShowNamingModal({ cohortId, stepIdx, type, defaultName })
+    setShowNamingModal({ pid, cohortId, stepIdx, type, defaultName })
     setCustomName(defaultName)
   }
 
   const handleConfirmCreate = async () => {
-    if (!showNamingModal || !editingPath) return
-    const { cohortId, stepIdx, type } = showNamingModal
+    if (!showNamingModal) return
+    const { pid, cohortId, stepIdx, type } = showNamingModal
     const nameToUse = customName.trim()
     
     setCreatingCohort(`${cohortId}-${stepIdx}-${type}`)
     setShowNamingModal(null)
     
-    const effectivePathId = isUnsaved ? null : selectedPathId
+    const isMainPath = (String(pid) === String(selectedPathId))
+    const effectivePathId = (isMainPath && isUnsaved) ? null : Number(pid)
+    
+    // We need the steps and max gap for this specific path
+    const pathResult = results[pid]
+    if (!pathResult) {
+        setCreatingCohort(null)
+        return
+    }
+
+    // Reconstruction of steps if necessary (though usually the backend can fetch by path_id)
+    // However, if it's an unsaved path (null effectivePathId), we MUST send steps.
+    let stepsToPass = null
+    let gapToPass = null
+
+    if (!effectivePathId) {
+        // This is the unsaved Path A
+        stepsToPass = editingPath.steps
+        gapToPass = editingPath.max_step_gap_minutes
+    } else {
+        // It's a saved path (either Path A or Path B). 
+        // We pass the pathId and the backend will fetch the details.
+        // We can still pass steps/gap as fallback or for safety.
+        const pathObj = paths.find(p => p.id === Number(pid))
+        if (pathObj) {
+            stepsToPass = pathObj.steps
+            gapToPass = pathObj.max_step_gap_minutes
+        }
+    }
 
     try {
       if (type === 'reached') {
         await createPathsReachedCohort(
           cohortId, 
           stepIdx, 
-          editingPath.steps, 
+          stepsToPass, 
           nameToUse, 
-          editingPath.max_step_gap_minutes,
+          gapToPass,
           effectivePathId
         )
       } else {
         await createPathsDropOffCohort(
           cohortId, 
           stepIdx, 
-          editingPath.steps, 
+          stepsToPass, 
           nameToUse, 
-          editingPath.max_step_gap_minutes,
+          gapToPass,
           effectivePathId
         )
       }
@@ -832,7 +862,7 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
                                             <button 
                                               className="button button-small button-secondary dropdown-trigger"
                                               disabled={!!creatingCohort}
-                                              onMouseEnter={(e) => handleDropdownEnter(e, sIdx, cohort)}
+                                              onMouseEnter={(e) => handleDropdownEnter(e, pid, sIdx, cohort)}
                                               onMouseLeave={handleDropdownLeave}
                                             >
                                               {creatingCohort?.startsWith(`${cohort.cohort_id}-${s.step}`) ? 'Creating...' : 'Create Cohort ▼'}
@@ -1185,16 +1215,16 @@ export default function PathsPane({ refreshToken, events, state, setState, onRef
             margin: 0
           }}
         >
-          <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'reached', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+          <button onClick={() => { handleOpenNamingModal(activeDropdown.pid, activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'reached', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
             Reached Step {activeDropdown.sIdx + 1}
           </button>
           {activeDropdown.sIdx === 0 && activeDropdown.cohort.steps[activeDropdown.sIdx].conversion_pct < 100 && (
-            <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+            <button onClick={() => { handleOpenNamingModal(activeDropdown.pid, activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
               Did not start ({activeDropdown.cohort.steps[activeDropdown.sIdx].event})
             </button>
           )}
           {activeDropdown.sIdx > 0 && activeDropdown.cohort.steps[activeDropdown.sIdx].drop_off_pct > 0 && (
-            <button onClick={() => { handleOpenNamingModal(activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
+            <button onClick={() => { handleOpenNamingModal(activeDropdown.pid, activeDropdown.cohort.cohort_id, activeDropdown.sIdx + 1, 'dropoff', activeDropdown.cohort.steps[activeDropdown.sIdx].event, activeDropdown.cohort.cohort_name); setActiveDropdown(null); }}>
               Drop-off after {activeDropdown.cohort.steps[activeDropdown.sIdx-1].event}
             </button>
           )}

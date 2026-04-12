@@ -663,8 +663,8 @@ def create_paths_dropoff_cohort(
         else:
             steps = steps_raw
 
-    if step_index < 1:
-        raise HTTPException(status_code=400, detail="Invalid step index")
+    if step_index < 1 or step_index > len(steps):
+        raise HTTPException(status_code=400, detail=f"Invalid step index {step_index} for path with {len(steps)} steps")
     
     if step_index == 1:
         find_users_sql = _build_paths_base_query(steps, conn, cohort_id, 1, max_step_gap_minutes=max_step_gap_minutes) + f"""
@@ -724,8 +724,8 @@ def create_paths_reached_cohort(
         else:
             steps = steps_raw
 
-    if step_index < 1:
-        raise HTTPException(status_code=400, detail="Invalid step index")
+    if step_index < 1 or step_index > len(steps):
+        raise HTTPException(status_code=400, detail=f"Invalid step index {step_index} for path with {len(steps)} steps")
 
     find_users_sql = _build_paths_base_query(steps, conn, cohort_id, step_index, max_step_gap_minutes=max_step_gap_minutes) + f"""
         SELECT DISTINCT s.user_id, m.join_time
