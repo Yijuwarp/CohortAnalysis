@@ -1,7 +1,7 @@
 import React, { Fragment, useEffect, useMemo, useState } from 'react'
 import cloneDeep from 'lodash/cloneDeep'
-import { createCohort, deleteCohort, listCohorts, toggleCohortHide, getSavedCohorts, getCohortDetail } from '../api'
-import { formatCohortLogic, formatChildCohortTooltip } from '../utils/cohortUtils'
+import { createCohort, deleteCohort, listCohorts, toggleCohortHide, getSavedCohorts, getCohortDetail, getColumns } from '../api'
+import { formatCohortLogic, formatChildCohortTooltip, isCohortSchemaValid, computeCohortValidity } from '../utils/cohortUtils'
 import CohortForm from './CohortForm'
 import CohortSplitModal from './CohortSplitModal'
 import SavedCohortsPanel from './SavedCohortsPanel'
@@ -73,12 +73,14 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setLoading(true)
     setError('')
     try {
-      const [cohortsListRes, savedRes] = await Promise.all([
+      const [cohortsListRes, savedRes, columnsRes] = await Promise.all([
         listCohorts(),
-        getSavedCohorts()
+        getSavedCohorts(),
+        getColumns().catch(() => ({ columns: [] }))
       ])
       
       const cohortsList = cohortsListRes.cohorts || []
+      const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
       
       // Fetch full details for each cohort in the list to get conditions/definitions
       const detailedCohorts = await Promise.all(
@@ -88,10 +90,15 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
         }))
       )
       
-      const enriched = detailedCohorts.map(c => ({
-        ...c,
-        isInvalid: Number(c.size) === 0
-      }))
+      const enriched = detailedCohorts.map(c => {
+        const schemaValid = isCohortSchemaValid(c, columnsSet)
+        const isValid = schemaValid && Number(c.size) > 0
+        return {
+          ...c,
+          isInvalid: !isValid,
+          isSchemaInvalid: !schemaValid,
+        }
+      })
 
       setCohorts(enriched)
       setSavedCohorts(savedRes || [])
@@ -99,7 +106,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
       cohortStateCache = {
         schema_hash: currentSchemaHash,
         cohorts: enriched,
-        savedCohorts: savedRes || []
+        savedCohorts: savedRes || [],
+        columnsSet,
       }
     } catch (err) {
       console.error("Failed to load cohort data", err)
@@ -226,14 +234,21 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
   // Saved Cohorts Dropdown options
   const cohortOptions = useMemo(() => {
-    return savedCohorts.map((c) => {
+    const columnsSet = cohortStateCache.columnsSet || new Set()
+    const options = savedCohorts.map((c) => {
       const activeMatch = cohorts.find(ac => ac.source_saved_id === c.id || ac.cohort_name === c.name)
+      const schemaInvalid = !isCohortSchemaValid(c, columnsSet)
+      const isInvalid = c.is_valid === false || schemaInvalid || (activeMatch && activeMatch.isInvalid)
       return {
         label: c.name,
         value: c.id,
-        disabled: c.is_valid === false || (activeMatch && activeMatch.isInvalid)
+        disabled: isInvalid,
+        _isInvalid: isInvalid,
       }
     })
+    // Sort: valid first, invalid last
+    options.sort((a, b) => Number(a._isInvalid) - Number(b._isInvalid))
+    return options
   }, [savedCohorts, cohorts])
 
   const selectedSavedObj = savedCohorts.find((c) => c.id === selectedCohortId)
@@ -394,7 +409,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
               return (
                 <Fragment key={cohort.cohort_id}>
-                  <div className="existing-cohort-row cohort-row" title={cohort.isInvalid ? 'Invalid cohort (0 users)' : (cohort.is_active ? '' : 'No matching members under current filters')}>
+                  <div className="existing-cohort-row cohort-row" title={cohort.isInvalid ? (cohort.isSchemaInvalid ? 'Invalid cohort (column missing from schema)' : 'Invalid cohort (0 users)') : (cohort.is_active ? '' : 'No matching members under current filters')}>
                     <div className="cohort-name cohort-left">
                       <span title={cohort.cohort_name}>{cohort.cohort_name}</span>
                       {cohort.isInvalid && <span className="cohort-invalid-badge" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', marginLeft: '6px' }}>Invalid</span>}
@@ -498,7 +513,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
                     const isChildSystemCohort = child.cohort_name === 'All Users'
                     const childDefinitionTooltip = childDefinitionTooltips[child.cohort_id]
                     return (
-                      <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.isInvalid ? 'Invalid cohort (0 users)' : (child.is_active ? '' : 'No matching members under current filters')}>
+                      <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.isInvalid ? (child.isSchemaInvalid ? 'Invalid cohort (column missing from schema)' : 'Invalid cohort (0 users)') : (child.is_active ? '' : 'No matching members under current filters')}>
                         <div className="cohort-name cohort-left">
                           <span className="child-prefix">↳</span>
                           <span title={child.cohort_name}>{child.cohort_name}</span>
@@ -599,6 +614,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
         <SavedCohortsPanel
            savedCohorts={savedCohorts}
            cohorts={cohorts}
+           columnsSet={cohortStateCache.columnsSet}
            onClose={() => setIsPanelOpen(false)}
            onDeleted={() => {
               loadSavedCohortsOnly()

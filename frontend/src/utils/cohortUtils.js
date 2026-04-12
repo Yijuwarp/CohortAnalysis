@@ -100,3 +100,25 @@ export function getNextName(name) {
   }
   return `${name} (1)`
 }
+
+/**
+ * Checks if all columns referenced in a cohort's conditions exist in the current schema.
+ * Works for both materialized cohorts (conditions at top level) and saved cohorts (conditions inside definition).
+ */
+export const isCohortSchemaValid = (cohort, columnsSet) => {
+  const conditions = cohort?.definition?.conditions || cohort?.conditions || []
+  for (const c of conditions) {
+    const col = c?.property_filter?.column
+    if (col && !columnsSet.has(col)) return false
+  }
+  return true
+}
+
+/**
+ * Unified validity: schema valid AND size > 0.
+ * Returns true if the cohort is valid.
+ */
+export const computeCohortValidity = (cohort, columnsSet) => {
+  if (!isCohortSchemaValid(cohort, columnsSet)) return false
+  return Number(cohort.size) > 0
+}

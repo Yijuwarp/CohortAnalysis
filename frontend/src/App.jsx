@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, Component } from 'react'
-import { getRetention, getScope, listCohorts, listEvents, uploadCSV } from './api'
+import { getRetention, getScope, listCohorts, listEvents, uploadCSV, getColumns } from './api'
+import { isCohortSchemaValid } from './utils/cohortUtils'
 import Mapping from './components/Mapping'
 import FilterData from './components/FilterData'
 import RevenueConfig from './components/RevenueConfig'
@@ -297,15 +298,21 @@ function AppWorkspace({ userId, onLogout }) {
   const refreshTab = useCallback(async (tabKey) => {
     setTabReloading(prev => ({ ...prev, [tabKey]: true }))
     try {
-      const [eventsPayload, cohortsPayload] = await Promise.all([
+      const [eventsPayload, cohortsPayload, columnsRes] = await Promise.all([
         listEvents(),
-        listCohorts()
+        listCohorts(),
+        getColumns().catch(() => ({ columns: [] }))
       ])
       setEvents(eventsPayload.events || [])
-      const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => ({
-        ...c,
-        isInvalid: Number(c.size) === 0
-      }))
+      const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
+      const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => {
+        const schemaValid = isCohortSchemaValid(c, columnsSet)
+        return {
+          ...c,
+          isInvalid: !schemaValid || Number(c.size) === 0,
+          isSchemaInvalid: !schemaValid,
+        }
+      })
       setCohorts(enrichedCohorts)
       
       setStaleTabs(prev => ({ ...prev, [tabKey]: false }))
@@ -412,15 +419,21 @@ function AppWorkspace({ userId, onLogout }) {
   useEffect(() => {
     const load = async () => {
       try {
-        const [eventsPayload, cohortsPayload] = await Promise.all([
+        const [eventsPayload, cohortsPayload, columnsRes] = await Promise.all([
           listEvents(),
-          listCohorts()
+          listCohorts(),
+          getColumns().catch(() => ({ columns: [] }))
         ])
         setEvents(eventsPayload.events || [])
-        const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => ({
-          ...c,
-          isInvalid: Number(c.size) === 0
-        }))
+        const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
+        const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => {
+          const schemaValid = isCohortSchemaValid(c, columnsSet)
+          return {
+            ...c,
+            isInvalid: !schemaValid || Number(c.size) === 0,
+            isSchemaInvalid: !schemaValid,
+          }
+        })
         setCohorts(enrichedCohorts)
       } catch {
         setEvents([])

@@ -1,8 +1,8 @@
 import React, { useState } from 'react'
 import { deleteSavedCohort } from '../api'
-import { formatCohortLogic } from '../utils/cohortUtils'
+import { formatCohortLogic, isCohortSchemaValid } from '../utils/cohortUtils'
 
-export default function SavedCohortsPanel({ savedCohorts, cohorts = [], onClose, onDeleted, onEdit, onDuplicate }) {
+export default function SavedCohortsPanel({ savedCohorts, cohorts = [], columnsSet, onClose, onDeleted, onEdit, onDuplicate }) {
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const [activeTooltipId, setActiveTooltipId] = useState(null)
@@ -44,11 +44,17 @@ export default function SavedCohortsPanel({ savedCohorts, cohorts = [], onClose,
               const isEvaluatorInvalid = activeMatch && activeMatch.isInvalid;
 
               const isStructurallyValid = cohort.is_valid;
-              const isInvalidDisplay = !isStructurallyValid || isEvaluatorInvalid;
+              const cols = columnsSet || new Set()
+              const isSchemaInvalid = !isCohortSchemaValid(cohort, cols)
+              const isInvalidDisplay = !isStructurallyValid || isSchemaInvalid || isEvaluatorInvalid;
 
               let warningTooltip = '';
               if (!isStructurallyValid) {
                 warningTooltip = cohort.errors?.map(e => e.message).join('; ') || 'Invalid cohort definition';
+              } else if (isSchemaInvalid) {
+                warningTooltip = 'Column missing from current schema';
+              } else if (activeMatch?.isSchemaInvalid) {
+                warningTooltip = 'Column missing from current schema';
               } else if (isEvaluatorInvalid) {
                 warningTooltip = 'Currently evaluates to 0 users in this workspace (Invalid)';
               }
