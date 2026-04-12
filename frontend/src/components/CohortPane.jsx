@@ -50,6 +50,16 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
   const [activeTooltipId, setActiveTooltipId] = useState(null)
   const [splitModalCohort, setSplitModalCohort] = useState(null) // cohort object for split modal
 
+  const loadSavedCohortsOnly = async () => {
+    try {
+      const savedRes = await getSavedCohorts()
+      setSavedCohorts(savedRes || [])
+      cohortStateCache = { ...cohortStateCache, savedCohorts: savedRes || [] }
+    } catch (err) {
+      console.error('Failed to refresh saved cohorts', err)
+    }
+  }
+
   const loadData = async (forceOptions = {}) => {
     const currentSchemaHash = datasetMetadata?.schema_hash || datasetMetadata?.users || refreshToken;
     const lastFetchedSchemaHash = cohortStateCache?.schema_hash;
@@ -94,8 +104,6 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     } catch (err) {
       console.error("Failed to load cohort data", err)
       setError("Failed to load cohort data")
-      setCohorts([])
-      setSavedCohorts([])
     } finally {
       setLoading(false)
     }
@@ -593,8 +601,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
            cohorts={cohorts}
            onClose={() => setIsPanelOpen(false)}
            onDeleted={() => {
-              loadData({ forceDb: true })
-              onCohortsChanged()
+              loadSavedCohortsOnly()
            }}
            onEdit={handleEditSaved}
            onDuplicate={handleDuplicate}
