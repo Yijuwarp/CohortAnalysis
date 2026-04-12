@@ -17,7 +17,7 @@ The Cohort Engine is responsible for defining, materializing, and maintaining us
 > **Same-Source Consistency**: `cohort_membership` and `cohort_activity_snapshot` **MUST** always be derived from the SAME version of `events_scoped`. Any mismatch leads to critical data integrity issues like duplicated events, incorrect retention, or inflated metrics.
 
 > [!CAUTION]
-> **Materialization Trigger**: Rebuilding or applying filters to `events_scoped` (e.g., via `/apply-filters`) **MUST** trigger a full re-materialization of both memberships and activity snapshots for all active cohorts.
+> **Materialization Trigger**: Rebuilding or applying filters to `events_scoped` (updating the view) **MUST** trigger a full re-materialization of both memberships and activity snapshots for all active cohorts.
 
 ---
 
@@ -25,12 +25,12 @@ The Cohort Engine is responsible for defining, materializing, and maintaining us
 
 For each condition, the engine builds a SQL CTE that:
 1. Filters `events_scoped` by `event_name` and optional property filters.
-2. Computes cumulative `SUM(event_count)` per user, ordered by `event_time` and internal row ID (`rn`) to ensure deterministic results.
+2. Computes cumulative `SUM(event_count)` per user, ordered by `event_time` and internal row ID (`rn`, `row_id`, or `global_rn`) to ensure deterministic results.
 3. Retains users only when the cumulative count reaches `min_event_count`.
 
 ### Logical Combination
-- **`AND`**: Logic uses an `INTERSECT` of user sets across all condition CTEs.
-- **`OR`**: Logic uses a `UNION` of user sets across all condition CTEs.
+- **`AND`**: Logic uses an **`INNER JOIN`** on `user_id` across all condition CTEs. The `join_time` is the earliest timestamp where ALL conditions were met simultaneously (computed using `LEAST` on the condition timestamps).
+- **`OR`**: Logic uses a **`UNION ALL`** of all condition CTEs, grouped by `user_id` with a `MIN(event_time)` to find the earliest satisfication time.
 
 ### Join Time Calculation
 - **`condition_met`**: The earliest timestamp where the user satisfied the cohort's logic conditions.
@@ -51,7 +51,10 @@ After a cohort's membership is materialized, the engine identifies all events pe
 ## Cohort Operations
 
 - **Hide/Unhide**: Toggles visibility in analytics results without re-materializing.
-- **Random Split**: Splits a parent cohort into two random child groups ('Group A', 'Group B') with their own materialized memberships and snapshots for Comparison analysis.
+- **Unified Split**: Supports splitting a parent cohort into multiple groups based on:
+    - **Random**: Multi-group random assignment (N groups).
+    - **Property**: Distinct values of a specific event property (e.g., splitting by `country` or `platform`).
+- **Preview Split**: Predicts group sizes for a proposed split before materializing the new child cohorts.
 - **Estimate**: Predicts the cohort size using `events_scoped` to provide immediate feedback to the user without the cost of full materialization.
 
 ---

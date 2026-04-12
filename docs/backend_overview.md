@@ -1,44 +1,45 @@
 # Backend Overview
 
-The backend is a FastAPI application that provides a robust engine for cohort analysis, analytics, and data management using DuckDB as the primary analytical database.
+The backend is a high-performance analytical engine built with FastAPI and DuckDB. It manages structured behavioral data through a domain-driven architecture, ensuring sub-second analysis across large user sets.
 
 ## Architecture & Modules
 
-The backend is structured into domain-driven modules, each responsible for a specific part of the system:
+The backend is organized into specialized domain services under `backend/app/domains/`:
 
-- **Ingestion (`domains/ingestion`)**: Handles CSV file uploads, schema detection, and mapping suggestions.
-- **Normalization (`domains/ingestion`)**: Transforms raw data into `events_normalized`, handling column casting and row-level grouping.
-- **Scope (`domains/scope`)**: Manages the "Active" subset of data. Rebuilds `events_scoped` based on user-defined filters (date ranges, property filters).
-- **Cohort Engine (`domains/cohorts`)**: Handles cohort definition, membership materialization, and activity snapshots.
-- **Analytics (`domains/analytics`)**: Implements various analytical models:
-    - **Retention**: Periodic active user analysis.
-    - **Usage**: Volume and user activity per cohort.
-    - **Monetization**: Revenue analysis using inclusion toggles and value overrides.
-    - **Flows**: Event-to-event transition analysis (Sankey).
-- **Paths (`domains/paths`)**: Implements Sequence Analysis with deterministic greedy matching and property-level filtering.
-- **Revenue System (`domains/revenue`)**: Manages monetization configuration.
+- **Ingestion**: Manages CSV uploads, schema detection, and per-user database initialization.
+- **Normalization**: Transforms raw data into the persistent `events_normalized` table, performing row-level grouping to reduce volume.
+- **Scope**: Manages the "Active Scope" via a dynamic `events_scoped` **View**. Rebuilds the view definition whenever date ranges or property filters change.
+- **Cohorts**: Evaluates frequency logic against the scoped view to materialize `cohort_membership` and `cohort_activity_snapshot`.
+- **Analytics**: Domain services for Retention, Usage, Monetization, and Flows.
+- **Paths**: Deterministic sequence matching service with support for alternative event paths (`OR`) and property filters.
+- **Revenue**: Configures inclusion rules and value overrides via `revenue_event_selection`.
 
 ## Data Pipeline Invariants
 
-1.  **Normalization**: Raw CSV -> `events` -> `events_normalized`.
-2.  **Scoping**: `events_normalized` -> `events_scoped`. Rebuilt on every filter change.
-3.  **Consistency**: Any change to `events_scoped` **MUST** trigger a full re-materialization of `cohort_membership` and `cohort_activity_snapshot`.
-4.  **Analytics Source Rules**:
-    - **Retention, Flows, and Paths (Base)**: MUST use `cohort_activity_snapshot`.
-    - **Paths (Filtering)**: MUST use `cohort_activity_snapshot` as base, joining `events_scoped` for per-step property filters.
-    - **Monetization**: `cohort_activity_snapshot` JOIN `events_scoped` for `modified_revenue` attributes.
-    - **Usage**: `events_scoped` aligned with `cohort_membership` using `join_time`.
-    - **Forbidden**: Direct joins on `events_normalized` or raw `events` for analytics.
+1.  **Normalization**: Raw CSV -> `events` -> `events_normalized` (Persistent).
+2.  **Scoping**: `events_normalized` -> `events_scoped` (**Dynamic VIEW**).
+3.  **Consistency**: Any definition change to `events_scoped` **MUST** trigger a full re-materialization of `cohort_membership` and `cohort_activity_snapshot`.
+4.  **Multi-User Isolation**: Every database operation is performed within a user-specific DuckDB instance, managed by a thread-safe `run_query` wrapper.
 
-## Recomputation Cost
+## Analytics Source Rules
 
-Rebuilding the scoped dataset and re-materializing cohort data is a heavy operation. Any scope change triggers a cascading rebuild of memberships and snapshots to ensure the system remains internally consistent. This is a deliberate trade-off to ensure sub-second performance during interactive analysis.
+To ensure performance and correctness, modules follow strict data source patterns:
 
-## Database Schema
+| Module | Primary Source | Secondary / Join Source | Role |
+| :--- | :--- | :--- | :--- |
+| **Retention** | `snapshot` | `scoped` | Joins `scoped` only for per-step property filters. |
+| **Monetization** | `scoped` | `membership` | Joins `membership` to align events with cohort `join_time`. |
+| **Usage** | `scoped` | `membership` | Joins `membership` for alignment and `join_time` filtering. |
+| **Paths** | `snapshot` | `scoped` | Uses `snapshot` as stream; joins `scoped` for filtered steps. |
+| **Flows** | `snapshot` | `scoped` | `snapshot` for transitions; `EXISTS` check on `scoped` for props. |
 
-Refer to [data_model.md](data_model.md) for a detailed breakdown of tables and relationships.
+## Performance & Persistence
+- **DuckDB**: Optimized for OLAP workloads, providing columnar storage and fast aggregations.
+- **Materialization**: Heavy joins are computed once during cohort creation to allow fluid interactive exploration.
+- **Single-Worker (Windows)**: Enforces `DUCKDB_SINGLE_WORKER=true` to maintain stability in multi-threaded environments.
 
-## Development & Testing
-
-- **Database**: DuckDB is used for its exceptional performance on analytical queries and local storage capabilities.
-- **Testing**: Extensive test suite in `backend/tests/` verifies API contracts, matching logic (Paths, Scope, Cohorts), and data integrity.
+## Testing
+Comprehensive testing is enforced in `backend/tests/`, covering:
+- **Domain Logic**: Unit tests for matching algorithms and SQL generators.
+- **API Contracts**: Integration tests for all router endpoints.
+- **Data Integrity**: Verification of materialization cascades and revenue recomputation.
