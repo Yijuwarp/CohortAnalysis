@@ -16,8 +16,10 @@ const defaultFilter = {
   operator: 'IN',
   value: [],
   enabled: true,
-const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
+}
 
+const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
+const isMultiOperator = (operator) => String(operator || '').toUpperCase() === 'IN' || String(operator || '').toUpperCase() === 'NOT IN'
 const normalizeColumnType = (dataType = '') => {
   const upper = String(dataType).toUpperCase()
   if (upper.includes('TIMESTAMP') || upper === 'DATE') return 'TIMESTAMP'
