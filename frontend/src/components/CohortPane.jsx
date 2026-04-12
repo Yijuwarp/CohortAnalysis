@@ -31,6 +31,13 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
   const [savedCohorts, setSavedCohorts] = useState([])
   const [selectedCohortId, setSelectedCohortId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
+
+  useEffect(() => {
+    if (selectedCohortId && !savedCohorts.some(c => c.id === selectedCohortId)) {
+      setSelectedCohortId(null)
+    }
+  }, [savedCohorts, selectedCohortId])
+
   const [splittingId, setSplittingId] = useState(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -326,7 +333,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
           <div className="cohort-select">
             <SearchableSelect
               options={cohortOptions}
-              value={selectedCohortId}
+              value={savedCohorts.some(c => c.id === selectedCohortId) ? selectedCohortId : null}
               onChange={setSelectedCohortId}
               placeholder="Select Saved Cohort"
             />
