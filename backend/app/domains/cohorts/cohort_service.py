@@ -298,7 +298,11 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
             column_name = str(crow["property_column"])
             values: object = parsed_values
             if get_column_kind(source_column_types.get(column_name, "TEXT")) == "TIMESTAMP":
-                legacy_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                if operator in {"IN", "NOT IN"}:
+                    legacy_value = parsed_values
+                else:
+                    legacy_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                
                 migrated_operator, migrated_value = migrate_legacy_timestamp_filter(operator, legacy_value)
                 operator = migrated_operator
                 values = validate_timestamp_payload(migrated_operator, migrated_value)

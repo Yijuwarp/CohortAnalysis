@@ -211,7 +211,8 @@ export default function RetentionTable({
   useEffect(() => {
     if (!showCiDropdown) return
     const handleClickOutside = (e) => {
-      if (ciButtonRef.current && !ciButtonRef.current.contains(e.target)) {
+      const isDropdown = e.target.closest('.dropdown-menu')
+      if (ciButtonRef.current && !ciButtonRef.current.contains(e.target) && !isDropdown) {
         setShowCiDropdown(false)
       }
     }

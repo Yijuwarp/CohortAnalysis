@@ -2,7 +2,7 @@ import React, { useState } from 'react'
 import { deleteSavedCohort } from '../api'
 import { formatCohortLogic } from '../utils/cohortUtils'
 
-export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, onEdit, onDuplicate }) {
+export default function SavedCohortsPanel({ savedCohorts, cohorts = [], onClose, onDeleted, onEdit, onDuplicate }) {
   const [error, setError] = useState('')
   const [deletingId, setDeletingId] = useState(null)
   const [activeTooltipId, setActiveTooltipId] = useState(null)
@@ -40,9 +40,18 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
               <span>Actions</span>
             </div>
             {savedCohorts.map((cohort) => {
-              const warningTooltip = cohort.is_valid
-                ? ''
-                : cohort.errors?.map(e => e.message).join('; ') || 'Invalid cohort definition'
+              const activeMatch = cohorts.find(ac => ac.source_saved_id === cohort.id || ac.cohort_name === cohort.name);
+              const isEvaluatorInvalid = activeMatch && activeMatch.isInvalid;
+
+              const isStructurallyValid = cohort.is_valid;
+              const isInvalidDisplay = !isStructurallyValid || isEvaluatorInvalid;
+
+              let warningTooltip = '';
+              if (!isStructurallyValid) {
+                warningTooltip = cohort.errors?.map(e => e.message).join('; ') || 'Invalid cohort definition';
+              } else if (isEvaluatorInvalid) {
+                warningTooltip = 'Currently evaluates to 0 users in this workspace (Invalid)';
+              }
               
               return (
                 <div key={cohort.id} className="cohort-list-row cohort-row">
@@ -51,7 +60,7 @@ export default function SavedCohortsPanel({ savedCohorts, onClose, onDeleted, on
                   </div>
 
                   <span className="cohort-list-size">
-                    {cohort.is_valid ? (
+                    {!isInvalidDisplay ? (
                       <span className="badge-active" style={{ backgroundColor: '#e2f5e9', color: '#138944', padding: '4px 8px', borderRadius: '4px', fontSize: '12px' }}>Valid</span>
                     ) : (
                       <span className="badge-inactive" title={warningTooltip} style={{ backgroundColor: '#fcdcd8', color: '#c72e2e', padding: '4px 8px', borderRadius: '4px', fontSize: '12px', cursor: 'help' }}>Invalid ⚠️</span>

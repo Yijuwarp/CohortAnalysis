@@ -302,7 +302,11 @@ function AppWorkspace({ userId, onLogout }) {
         listCohorts()
       ])
       setEvents(eventsPayload.events || [])
-      setCohorts(cohortsPayload.cohorts || [])
+      const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => ({
+        ...c,
+        isInvalid: Number(c.size) === 0
+      }))
+      setCohorts(enrichedCohorts)
       
       setStaleTabs(prev => ({ ...prev, [tabKey]: false }))
       setTabRefreshTokens(prev => ({ ...prev, [tabKey]: prev[tabKey] + 1 }))
@@ -413,7 +417,11 @@ function AppWorkspace({ userId, onLogout }) {
           listCohorts()
         ])
         setEvents(eventsPayload.events || [])
-        setCohorts(cohortsPayload.cohorts || [])
+        const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => ({
+          ...c,
+          isInvalid: Number(c.size) === 0
+        }))
+        setCohorts(enrichedCohorts)
       } catch {
         setEvents([])
         setCohorts([])
@@ -718,6 +726,7 @@ function AppWorkspace({ userId, onLogout }) {
                       <CohortPane 
                         refreshToken={cohortsRefreshToken}
                         onCohortsChanged={triggerCohortRefresh} 
+                        datasetMetadata={datasetMeta}
                       />
                     </section>
                   )}
@@ -771,7 +780,7 @@ function AppWorkspace({ userId, onLogout }) {
                     showGlobalControls={false}
                     state={analyticsState.retention}
                     setState={(s) => updateAnalyticsState('retention', s)}
-                    cohorts={cohorts}
+                    cohorts={cohorts.filter(c => !c.isInvalid)}
                     appliedFilters={appliedFilters}
                     onAddToExport={addToExport}
                   />
@@ -784,7 +793,7 @@ function AppWorkspace({ userId, onLogout }) {
                      state={analyticsState.usage}
                      setState={(s) => updateAnalyticsState('usage', s)}
                      scopeVersion={scopeVersion}
-                     cohorts={cohorts}
+                     cohorts={cohorts.filter(c => !c.isInvalid)}
                      appliedFilters={appliedFilters}
                      onAddToExport={addToExport}
                    />
@@ -796,7 +805,7 @@ function AppWorkspace({ userId, onLogout }) {
                      retentionEvent={selectedRetentionEvent}
                      state={analyticsState.monetization}
                      setState={(s) => updateAnalyticsState('monetization', s)}
-                     cohorts={cohorts}
+                     cohorts={cohorts.filter(c => !c.isInvalid)}
                      appliedFilters={appliedFilters}
                      onAddToExport={addToExport}
                    />
@@ -825,7 +834,7 @@ function AppWorkspace({ userId, onLogout }) {
                  {activeTab === 'experiment-impact' && (
                     <ExperimentImpactPane
                       refreshToken={tabRefreshTokens['experiment-impact']}
-                      cohorts={cohorts}
+                      cohorts={cohorts.filter(c => !c.isInvalid)}
                       globalMaxDay={globalMaxDay}
                       appliedFilters={appliedFilters}
                       retentionEvent={selectedRetentionEvent}

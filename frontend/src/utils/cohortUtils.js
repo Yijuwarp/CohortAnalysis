@@ -7,15 +7,20 @@ const formatTimestampValues = (operator, values) => {
 
   const op = String(operator || '').toUpperCase()
   if (op === 'ON') {
-    return payload.date || ''
+    return `on ${payload.date || ''}`.trim()
   }
-  if (op === 'BEFORE' || op === 'AFTER') {
-    return payload.time ? `${payload.date || ''} ${payload.time}`.trim() : (payload.date || '')
+  if (op === 'BEFORE') {
+    const timeStr = payload.time ? ` ${payload.time}` : ''
+    return `before ${payload.date || ''}${timeStr}`.trim()
+  }
+  if (op === 'AFTER') {
+    const timeStr = payload.time ? ` ${payload.time}` : ''
+    return `after ${payload.date || ''}${timeStr}`.trim()
   }
   if (op === 'BETWEEN') {
     const start = payload.startTime ? `${payload.startDate || ''} ${payload.startTime}`.trim() : (payload.startDate || '')
     const end = payload.endTime ? `${payload.endDate || ''} ${payload.endTime}`.trim() : (payload.endDate || '')
-    return `${start} → ${end}`.trim()
+    return `${start} to ${end}`.trim()
   }
   return JSON.stringify(payload)
 }
@@ -33,6 +38,10 @@ const formatPropertyFilter = (propertyFilter) => {
 
   if (isMultiOperator(propertyFilter.operator)) {
     return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} (${formattedValues})`
+  }
+
+  if (isTimestampOperator(propertyFilter.operator)) {
+    return ` WHERE ${propertyFilter.column} ${formattedValues}`
   }
 
   return ` WHERE ${propertyFilter.column} ${propertyFilter.operator} ${formattedValues}`

@@ -89,7 +89,7 @@ describe('CohortPane Duplicate Flow', () => {
   })
 
   it('duplicates cohort and opens form with full prefilled data', async () => {
-    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
 
     // Wait for initial load
     await waitFor(() => expect(api.getSavedCohorts).toHaveBeenCalled())
@@ -153,7 +153,7 @@ describe('CohortPane Split Flow', () => {
   })
 
   it('opens split modal when clicking split on unsplit cohort', async () => {
-    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
     await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
 
     // Find and click the split button (the one with "Split cohort" title)
@@ -170,7 +170,7 @@ describe('CohortPane Split Flow', () => {
   })
 
   it('calls splitCohort API only after modal confirmation', async () => {
-    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
     await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
 
     fireEvent.click(screen.getByTitle('Split cohort'))
@@ -192,7 +192,7 @@ describe('CohortPane Split Flow', () => {
       return Promise.reject('Not found')
     })
 
-    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} />)
+    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
     await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
 
     const removeSplitBtn = screen.getByTitle('Remove split')
@@ -203,5 +203,54 @@ describe('CohortPane Split Flow', () => {
     
     // Modal should NOT be open
     expect(screen.queryByTestId('mock-split-modal')).not.toBeInTheDocument()
+  })
+})
+
+describe('CohortPane Invalid Cohorts', () => {
+  const validCohort = {
+    cohort_id: 'v1',
+    cohort_name: 'Valid Cohort',
+    size: 50,
+    is_active: true,
+    definition: { logic_operator: 'AND', conditions: [] }
+  }
+
+  const invalidCohort = {
+    cohort_id: 'i1',
+    cohort_name: 'Invalid Cohort',
+    size: 0,
+    is_active: true,
+    definition: { logic_operator: 'AND', conditions: [] }
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.getSavedCohorts.mockResolvedValue([])
+    api.listEvents.mockResolvedValue({ events: [] })
+    api.getColumns.mockResolvedValue({ columns: [] })
+  })
+
+  it('marks cohorts with size 0 as invalid and disables interactions', async () => {
+    api.listCohorts.mockResolvedValue({ cohorts: [validCohort, invalidCohort] })
+    api.getCohortDetail.mockImplementation(id => {
+      if (id === 'v1') return Promise.resolve(validCohort)
+      if (id === 'i1') return Promise.resolve(invalidCohort)
+      return Promise.reject('Not found')
+    })
+
+    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} datasetMetadata={{ schema_hash: 'hash1' }} />)
+    
+    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+    
+    // Check "Invalid" badge presence
+    expect(screen.queryByText('Invalid', { selector: '.cohort-invalid-badge' })).toBeInTheDocument()
+    
+    // Valid cohort shouldn't have one
+    const validRow = screen.getByText('Valid Cohort').closest('.cohort-row')
+    expect(validRow.querySelector('.cohort-invalid-badge')).not.toBeInTheDocument()
+
+    // Invalid cohort should have one
+    const invalidRow = screen.getByText('Invalid Cohort').closest('.cohort-row')
+    expect(invalidRow.querySelector('.cohort-invalid-badge')).toBeInTheDocument()
   })
 })

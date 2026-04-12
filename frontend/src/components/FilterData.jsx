@@ -8,7 +8,7 @@ const OPERATOR_ORDER = ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<=']
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
   NUMERIC: ['IN', 'NOT IN', '=', '!=', '>', '>=', '<', '<='],
-  TIMESTAMP: ['before', 'after', 'on', 'between'],
+  TIMESTAMP: ['before', 'after', 'on', 'between', 'in', 'not in'],
 }
 
 const defaultFilter = {
@@ -16,7 +16,6 @@ const defaultFilter = {
   operator: 'IN',
   value: [],
   enabled: true,
-}
 const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
 
 const normalizeColumnType = (dataType = '') => {
@@ -27,6 +26,19 @@ const normalizeColumnType = (dataType = '') => {
 }
 
 const normalizeRowValue = (operator, value) => {
+  const opUpper = String(operator || '').toUpperCase()
+  const requiresMulti = opUpper === 'IN' || opUpper === 'NOT IN'
+  
+  if (requiresMulti) {
+    if (Array.isArray(value)) return value.map((item) => String(item))
+    if (value === '' || value === null || value === undefined) return []
+    // Fix 4: Preserve date when switching from structured to multi-select
+    if (typeof value === 'object' && value !== null) {
+      return value.date ? [String(value.date)] : (value.startDate ? [String(value.startDate)] : [])
+    }
+    return [String(value)]
+  }
+
   const op = String(operator || '').toLowerCase()
   if (isTimestampOperator(op)) {
     if (op === 'between') {
@@ -45,12 +57,7 @@ const normalizeRowValue = (operator, value) => {
     const source = (value && typeof value === 'object' && !Array.isArray(value)) ? value : {}
     return { date: source.date || '', time: source.time || '' }
   }
-  const requiresMulti = operator === 'IN' || operator === 'NOT IN'
-  if (requiresMulti) {
-    if (Array.isArray(value)) return value.map((item) => String(item))
-    if (value === '' || value === null || value === undefined) return []
-    return [String(value)]
-  }
+
   if (Array.isArray(value)) return value.length > 0 ? String(value[0]) : ''
   if (value === '' || value === null || value === undefined) return ''
   return String(value)
@@ -164,7 +171,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       const next = [...prev]
       const current = next[index]
       if (!current) return prev
-      const isMulti = current.operator === 'IN' || current.operator === 'NOT IN'
+      const opUpper = String(current.operator || '').toUpperCase()
+      const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
       const selectedValues = Array.isArray(current.value) ? current.value.map((value) => String(value)) : current.value ? [String(current.value)] : []
       if (selectedValues.includes(normalizedValue)) return prev
       next[index] = { ...current, value: isMulti ? [...selectedValues, normalizedValue] : normalizedValue }
@@ -180,7 +188,8 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
       if (!current) return prev
       const selectedValues = Array.isArray(current.value) ? current.value.map((value) => String(value)) : current.value ? [String(current.value)] : []
       const remainingValues = selectedValues.filter((value) => value !== normalizedValue)
-      const isMulti = current.operator === 'IN' || current.operator === 'NOT IN'
+      const opUpper = String(current.operator || '').toUpperCase()
+      const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
       next[index] = { ...current, value: isMulti ? remainingValues : (remainingValues[0] || '') }
       return next
     })
@@ -191,16 +200,28 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
     filters: filters
       .filter((row) => row.enabled)
       .filter((row) => {
-        if (!row.column) return false
-        if (isTimestampOperator(row.operator)) {
-          if (row.operator === 'between') return Boolean(row.value?.startDate && row.value?.endDate)
+        if (!row.column || !row.operator) return false
+        const opUpper = String(row.operator || '').toUpperCase()
+        const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
+        if (isMulti) return Array.isArray(row.value) && row.value.length > 0
+        if (['BEFORE', 'AFTER', 'ON', 'BETWEEN'].includes(opUpper)) {
+          if (opUpper === 'BETWEEN') return Boolean(row.value?.startDate && row.value?.endDate)
           return Boolean(row.value?.date)
         }
-        return Array.isArray(row.value) ? row.value.length > 0 : row.value !== ''
+        return row.value !== '' && row.value !== undefined && row.value !== null
       })
       .map((row) => {
-        if (isTimestampOperator(row.operator)) return { ...row, value: row.value }
-        return Array.isArray(row.value) ? { ...row, value: row.value.map((item) => String(item)) } : { ...row, value: row.value === '' ? '' : String(row.value) }
+        const opUpper = String(row.operator || '').toUpperCase()
+        const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
+        const isStructuredTs = ['BEFORE', 'AFTER', 'ON', 'BETWEEN'].includes(opUpper)
+
+        return {
+          ...row,
+          operator: opUpper,
+          value: isMulti 
+            ? (Array.isArray(row.value) ? row.value.map(v => String(v)) : [String(row.value)])
+            : (isStructuredTs ? row.value : String(row.value || ''))
+        }
       }),
   })
 
@@ -290,7 +311,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
             </div>
 
             <p className="tertiary-label">Values:</p>
-            {isTimestamp && isTimestampOperator(row.operator) ? (
+            {isTimestamp && isTimestampOperator(row.operator) && !isMultiOperator(row.operator) ? (
               <div className="grid">
                 {(row.operator === 'before' || row.operator === 'after') && (
                   <>

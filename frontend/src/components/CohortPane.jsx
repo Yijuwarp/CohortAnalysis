@@ -19,9 +19,13 @@ const formatCohortSize = (size) => {
 }
 
 
+let cohortStateCache = {
+  schema_hash: null,
+  cohorts: null,
+  savedCohorts: null
+}
 
-
-export default function CohortPane({ refreshToken, onCohortsChanged }) {
+export default function CohortPane({ refreshToken, onCohortsChanged, datasetMetadata }) {
   const [cohorts, setCohorts] = useState([])
   const [pendingCohorts, setPendingCohorts] = useState([])
   const [savedCohorts, setSavedCohorts] = useState([])
@@ -39,7 +43,16 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
   const [activeTooltipId, setActiveTooltipId] = useState(null)
   const [splitModalCohort, setSplitModalCohort] = useState(null) // cohort object for split modal
 
-  const loadData = async () => {
+  const loadData = async (forceOptions = {}) => {
+    const currentSchemaHash = datasetMetadata?.schema_hash || datasetMetadata?.users || refreshToken;
+    const lastFetchedSchemaHash = cohortStateCache?.schema_hash;
+
+    if (!forceOptions.forceDb && currentSchemaHash === lastFetchedSchemaHash && cohortStateCache.cohorts) {
+      setCohorts(cohortStateCache.cohorts);
+      setSavedCohorts(cohortStateCache.savedCohorts);
+      return;
+    }
+
     setLoading(true)
     setError('')
     try {
@@ -58,8 +71,19 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
         }))
       )
       
-      setCohorts(detailedCohorts)
+      const enriched = detailedCohorts.map(c => ({
+        ...c,
+        isInvalid: Number(c.size) === 0
+      }))
+
+      setCohorts(enriched)
       setSavedCohorts(savedRes || [])
+      
+      cohortStateCache = {
+        schema_hash: currentSchemaHash,
+        cohorts: enriched,
+        savedCohorts: savedRes || []
+      }
     } catch (err) {
       console.error("Failed to load cohort data", err)
       setError("Failed to load cohort data")
@@ -82,7 +106,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     setError('')
     try {
       await toggleCohortHide(cohortId)
-      await loadData()
+      await loadData({ forceDb: true })
       onCohortsChanged()
     } catch (err) {
       setError(err.message)
@@ -115,7 +139,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
         for (const child of children) {
           await deleteCohort(child.cohort_id)
         }
-        await loadData()
+        await loadData({ forceDb: true })
         onCohortsChanged()
       } catch (err) {
         setError(err.message)
@@ -187,13 +211,15 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
   // Saved Cohorts Dropdown options
   const cohortOptions = useMemo(() => {
-    console.log("Saved cohorts:", savedCohorts)
-    return savedCohorts.map((c) => ({
-      label: c.name,
-      value: c.id,
-      disabled: c.is_valid === false
-    }))
-  }, [savedCohorts])
+    return savedCohorts.map((c) => {
+      const activeMatch = cohorts.find(ac => ac.source_saved_id === c.id || ac.cohort_name === c.name);
+      return {
+        label: c.name,
+        value: c.id,
+        disabled: c.is_valid === false || (activeMatch && activeMatch.isInvalid)
+      }
+    })
+  }, [savedCohorts, cohorts])
 
   const selectedSavedObj = savedCohorts.find((c) => c.id === selectedCohortId)
   const isSelectedInvalid = selectedSavedObj && (selectedSavedObj.is_valid === false)
@@ -226,7 +252,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
     try {
       await createCohort(payload)
-      await loadData()
+      await loadData({ forceDb: true })
       setPendingCohorts(prev => prev.filter(p => p.id !== pendingId))
       onCohortsChanged()
     } catch (err) {
@@ -238,7 +264,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
     setPendingCohorts(prev => prev.map(p => p.id === pendingItem.id ? { ...p, status: 'creating', error: null } : p))
     try {
       await createCohort(pendingItem.payload)
-      await loadData()
+      await loadData({ forceDb: true })
       setPendingCohorts(prev => prev.filter(p => p.id !== pendingItem.id))
       onCohortsChanged()
     } catch (err) {
@@ -288,7 +314,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
   const onFormSaved = () => {
     setIsFormOpen(false)
-    loadData()
+    loadData({ forceDb: true })
   }
 
   return (
@@ -353,11 +379,12 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
 
               return (
                 <Fragment key={cohort.cohort_id}>
-                  <div className="existing-cohort-row cohort-row" title={cohort.is_active ? '' : 'No matching members under current filters'}>
+                  <div className="existing-cohort-row cohort-row" title={cohort.isInvalid ? 'Invalid cohort (0 users)' : (cohort.is_active ? '' : 'No matching members under current filters')}>
                     <div className="cohort-name cohort-left">
                       <span>{cohort.cohort_name}</span>
+                      {cohort.isInvalid && <span className="cohort-invalid-badge" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', marginLeft: '6px' }}>Invalid</span>}
                       {cohort.hidden && <span className="badge-hidden">Hidden</span>}
-                      {!cohort.is_active && <span className="badge-inactive">Inactive</span>}
+                      {!cohort.is_active && !cohort.isInvalid && <span className="badge-inactive">Inactive</span>}
                     </div>
 
                     <div className="cohort-size">{formatCohortSize(cohort.size)}</div>
@@ -390,7 +417,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                         className="cohort-icon-button"
                         type="button"
                         onClick={() => handleSplitToggle(cohort)}
-                        disabled={(!minSizeForSplit && !cohort.has_splits) || splittingId === cohort.cohort_id}
+                        disabled={cohort.isInvalid || (!minSizeForSplit && !cohort.has_splits) || splittingId === cohort.cohort_id}
                         title={cohort.has_splits ? "Remove split" : "Split cohort"}
                       >
                         <span className={cohort.has_splits ? "split-active" : ""} style={{ display: 'inline-flex' }}>
@@ -421,11 +448,11 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                       <button
                         className="cohort-icon-button"
                         onClick={() => handleEditSaved(cohort.source_saved_id)}
-                        disabled={!cohort.source_saved_id}
+                        disabled={cohort.isInvalid || !cohort.source_saved_id}
                         title={
-                          cohort.source_saved_id
-                            ? "Edit saved cohort definition"
-                            : "Cannot edit (not linked to a saved cohort)"
+                          !cohort.source_saved_id
+                            ? "Cannot edit (not linked to a saved cohort)"
+                            : "Edit saved cohort definition"
                         }
                       >
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -456,12 +483,13 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
                     const isChildSystemCohort = child.cohort_name === 'All Users'
                     const childDefinitionTooltip = childDefinitionTooltips[child.cohort_id]
                     return (
-                      <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.is_active ? '' : 'No matching members under current filters'}>
+                      <div key={child.cohort_id} className="existing-cohort-row cohort-row child" title={child.isInvalid ? 'Invalid cohort (0 users)' : (child.is_active ? '' : 'No matching members under current filters')}>
                         <div className="cohort-name cohort-left">
                           <span className="child-prefix">↳</span>
                           <span>{child.cohort_name}</span>
+                          {child.isInvalid && <span className="cohort-invalid-badge" style={{ background: '#fef2f2', color: '#991b1b', border: '1px solid #f87171', padding: '2px 6px', borderRadius: '4px', fontSize: '12px', marginLeft: '6px' }}>Invalid</span>}
                           {child.hidden && <span className="badge-hidden">Hidden</span>}
-                          {!child.is_active && <span className="badge-inactive">Inactive</span>}
+                          {!child.is_active && !child.isInvalid && <span className="badge-inactive">Inactive</span>}
                         </div>
 
                         <div className="cohort-size">{formatCohortSize(child.size)}</div>
@@ -545,7 +573,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
            onCancel={() => setIsFormOpen(false)}
            onSave={(shouldClose = true) => {
              if (shouldClose) setIsFormOpen(false)
-             loadData()
+             loadData({ forceDb: true })
              onCohortsChanged()
            }}
            refreshToken={refreshToken}
@@ -555,9 +583,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
       {isPanelOpen && (
         <SavedCohortsPanel
            savedCohorts={savedCohorts}
+           cohorts={cohorts}
            onClose={() => setIsPanelOpen(false)}
            onDeleted={() => {
-              loadData()
+              loadData({ forceDb: true })
               onCohortsChanged()
            }}
            onEdit={handleEditSaved}
@@ -570,7 +599,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged }) {
           cohort={splitModalCohort}
           onClose={() => setSplitModalCohort(null)}
           onSplitDone={() => {
-            loadData()
+            loadData({ forceDb: true })
             onCohortsChanged()
           }}
         />

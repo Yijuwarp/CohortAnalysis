@@ -8,7 +8,7 @@ const OPERATOR_ORDER = ['=', '!=', '>', '>=', '<', '<=', 'IN', 'NOT IN']
 const TYPE_OPERATOR_MAP = {
   TEXT: ['IN', 'NOT IN', '=', '!='],
   NUMERIC: ['=', '!=', '>', '<', '>=', '<=', 'IN', 'NOT IN'],
-  TIMESTAMP: ['before', 'after', 'on', 'between'],
+  TIMESTAMP: ['before', 'after', 'on', 'between', 'in', 'not in'],
   BOOLEAN: ['=', '!='],
 }
 
@@ -28,7 +28,10 @@ const createEmptyCondition = (defaultEvent = '') => ({
   property_filter_expanded: false,
 })
 
-const isMultiOperator = (operator) => operator === 'IN' || operator === 'NOT IN'
+const isMultiOperator = (operator) => {
+  const op = String(operator || '').toUpperCase()
+  return op === 'IN' || op === 'NOT IN'
+}
 const isTimestampOperator = (operator) => ['before', 'after', 'on', 'between'].includes(String(operator || '').toLowerCase())
 
 const formatCohortSize = (size) => {
@@ -48,8 +51,30 @@ function generateCohortName(currentConditions, currentLogicOperator) {
 
     let base = count > 1 ? `${negated}Triggered ${event} more than ${count} times` : `${negated}Triggered ${event}`
     if (propertyFilter) {
-      const values = Array.isArray(propertyFilter.values) ? propertyFilter.values.join(', ') : propertyFilter.values
-      base += ` where ${propertyFilter.column} ${propertyFilter.operator} ${values}`
+      const op = String(propertyFilter.operator || '').toUpperCase()
+      let formattedValues = propertyFilter.values
+      if (Array.isArray(propertyFilter.values)) {
+        formattedValues = propertyFilter.values.join(', ')
+      } else if (typeof propertyFilter.values === 'object' && propertyFilter.values !== null) {
+        const val = propertyFilter.values
+        if (op === 'ON') {
+          formattedValues = val.date || ''
+        } else if (op === 'BEFORE' || op === 'AFTER') {
+          formattedValues = val.time ? `${val.date || ''} ${val.time}`.trim() : (val.date || '')
+        } else if (op === 'BETWEEN') {
+          const start = val.startTime ? `${val.startDate || ''} ${val.startTime}`.trim() : (val.startDate || '')
+          const end = val.endTime ? `${val.endDate || ''} ${val.endTime}`.trim() : (val.endDate || '')
+          formattedValues = `${start} and ${end}`
+        }
+      }
+
+      if (op === 'BETWEEN') {
+        base += ` where ${propertyFilter.column} between ${formattedValues}`
+      } else if (op === 'IN' || op === 'NOT IN') {
+        base += ` where ${propertyFilter.column} ${op} (${formattedValues})`
+      } else {
+        base += ` where ${propertyFilter.column} ${op.toLowerCase()} ${formattedValues}`
+      }
     }
     return base
   })
@@ -160,13 +185,19 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     return TYPE_OPERATOR_MAP[type] || OPERATOR_ORDER
   }
 
-  const getDefaultValuesForOperator = (operator, columnType) => {
+  const getDefaultValuesForOperator = (operator, columnType, currentValue = null) => {
     if (columnType === 'TIMESTAMP' && isTimestampOperator(operator)) {
       if (operator === 'between') return { startDate: '', endDate: '', startTime: '', endTime: '' }
       if (operator === 'on') return { date: '' }
       return { date: '', time: '' }
     }
-    if (isMultiOperator(operator)) return []
+    if (isMultiOperator(operator)) {
+      if (Array.isArray(currentValue)) return currentValue
+      if (typeof currentValue === 'object' && currentValue !== null) {
+        return currentValue.date ? [String(currentValue.date)] : (currentValue.startDate ? [String(currentValue.startDate)] : [])
+      }
+      return currentValue ? [String(currentValue)] : []
+    }
     if (columnType === 'BOOLEAN') return true
     return ''
   }
@@ -280,7 +311,39 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         return
       }
 
-      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => condition)
+      const hasEmptyInFilter = conditions.some((condition) => {
+        const pf = condition.property_filter
+        if (pf && (String(pf.operator).toUpperCase() === 'IN' || String(pf.operator).toUpperCase() === 'NOT IN')) {
+          return !Array.isArray(pf.values) || pf.values.length === 0
+        }
+        return false
+      })
+      if (hasEmptyInFilter) {
+        setEstimatedSize(null)
+        lastPayloadRef.current = null
+        return
+      }
+
+      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => {
+        const pf = condition.property_filter
+        if (pf && pf.operator) {
+          const opUpper = String(pf.operator).toUpperCase()
+          const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
+          const isStructuredTs = ['BEFORE', 'AFTER', 'ON', 'BETWEEN'].includes(opUpper)
+
+          return {
+            ...condition,
+            property_filter: {
+              ...pf,
+              operator: opUpper,
+              values: isMulti 
+                ? (Array.isArray(pf.values) ? pf.values.map(v => String(v)) : [String(pf.values)])
+                : (isStructuredTs ? pf.values : String(pf.values || ''))
+            }
+          }
+        }
+        return condition
+      })
       const currentPayload = JSON.stringify({
         name: name.trim() || generateCohortName(payloadConditions, logicOperator),
         logic_operator: logicOperator,
@@ -341,10 +404,41 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       return
     }
 
+    const hasEmptyInFilter = conditions.some((condition) => {
+      const pf = condition.property_filter
+      if (pf && (String(pf.operator).toUpperCase() === 'IN' || String(pf.operator).toUpperCase() === 'NOT IN')) {
+        return !Array.isArray(pf.values) || pf.values.length === 0
+      }
+      return false
+    })
+    if (hasEmptyInFilter) {
+      setError('IN requires at least one value')
+      return
+    }
+
     setLoading(true)
 
     try {
-      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => condition)
+      const payloadConditions = conditions.map(({ property_filter_expanded, property_column, property_operator, property_values, ...condition }) => {
+        const pf = condition.property_filter
+        if (pf && pf.operator) {
+          const opUpper = String(pf.operator).toUpperCase()
+          const isMulti = opUpper === 'IN' || opUpper === 'NOT IN'
+          const isStructuredTs = ['BEFORE', 'AFTER', 'ON', 'BETWEEN'].includes(opUpper)
+
+          return {
+            ...condition,
+            property_filter: {
+              ...pf,
+              operator: opUpper,
+              values: isMulti 
+                ? (Array.isArray(pf.values) ? pf.values.map(v => String(v)) : [String(pf.values)])
+                : (isStructuredTs ? pf.values : String(pf.values || ''))
+            }
+          }
+        }
+        return condition
+      })
       const finalName = name.trim() || generateCohortName(payloadConditions, logicOperator)
       const payload = {
         name: finalName,
@@ -558,7 +652,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                           updated[index].property_filter = {
                             ...updated[index].property_filter,
                             operator: nextOperator,
-                            values: getDefaultValuesForOperator(nextOperator, columnType),
+                            values: isMultiOperator(nextOperator) ? [] : getDefaultValuesForOperator(nextOperator, columnType),
                           }
                           setConditions(updated)
                           if (isMultiOperator(nextOperator)) {
@@ -597,13 +691,16 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                               value=""
                               disabled={isValueSelectionDisabled}
                               onChange={(selected) => {
-                                if (!selected || selected === '[object Object]') return
+                                if (!selected) return
+                                const normalizedValue = (typeof selected === 'object' && !Array.isArray(selected)) ? String(selected.value || '') : String(selected)
+                                if (!normalizedValue || normalizedValue === '[object Object]') return
+                                
                                 const existing = Array.isArray(propertyFilter.values) ? propertyFilter.values : []
-                                if (existing.includes(selected)) return
+                                if (existing.includes(normalizedValue)) return
                                 const updated = [...conditions]
                                 updated[index].property_filter = {
                                   ...updated[index].property_filter,
-                                  values: [...existing, selected],
+                                  values: [...existing, normalizedValue],
                                 }
                                 setConditions(updated)
                               }}
@@ -613,16 +710,17 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                             />
 
                             <div className="cohort-pills">
-                              {(propertyFilter.values || []).map((value) => (
+                              {(Array.isArray(propertyFilter.values) ? propertyFilter.values : []).map((value) => (
                                 <span className="cohort-pill" key={value}>
                                   {value}
                                   <button
                                     type="button"
                                     onClick={() => {
                                       const updated = [...conditions]
+                                      const currentValues = Array.isArray(updated[index].property_filter.values) ? updated[index].property_filter.values : []
                                       updated[index].property_filter = {
                                         ...updated[index].property_filter,
-                                        values: (updated[index].property_filter.values || []).filter((item) => item !== value),
+                                        values: currentValues.filter((item) => item !== value),
                                       }
                                       setConditions(updated)
                                     }}

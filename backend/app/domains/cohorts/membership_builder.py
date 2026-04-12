@@ -86,7 +86,11 @@ def build_cohort_membership(
                 normalized_operator = str(property_operator).upper()
                 column_kind = get_column_kind(column_types.get(str(property_column), "TEXT"))
                 if column_kind == "TIMESTAMP":
-                    timestamp_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                    if normalized_operator in {"IN", "NOT IN"}:
+                        timestamp_value = parsed_values
+                    else:
+                        timestamp_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                    
                     normalized_operator, timestamp_value = timestamp.migrate_legacy_timestamp_filter(normalized_operator, timestamp_value)
                     clause, params = timestamp.build_sql_clause(
                         quote_identifier(str(property_column)),

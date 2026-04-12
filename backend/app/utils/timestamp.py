@@ -22,7 +22,7 @@ _TIMESTAMP_TIME_FORMATS: tuple[str, ...] = (
 
 _TZ_OFFSET_RE = re.compile(r"[+-]\d{2}:?\d{2}$")
 
-TIMESTAMP_OPERATORS = {"BEFORE", "AFTER", "ON", "BETWEEN"}
+TIMESTAMP_OPERATORS = {"BEFORE", "AFTER", "ON", "BETWEEN", "IN", "NOT IN"}
 
 
 def normalize_timestamp_filter_value(value: str) -> str:
@@ -99,10 +99,32 @@ def validate_timestamp_payload(operator: str, value: Any) -> dict[str, str]:
     op = str(operator or "").upper()
     if op not in TIMESTAMP_OPERATORS:
         raise HTTPException(status_code=400, detail=f"Unsupported timestamp operator: {operator}")
+    if op in {"IN", "NOT IN"}:
+        if not isinstance(value, list) or len(value) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Operator {operator} requires a non-empty list value"
+            )
+        
+        validated_values = []
+        for v in value:
+            try:
+                # This also validates format via normalize_event_timestamp_value
+                dt = normalize_event_timestamp_value(v, allow_empty=False)
+                if not dt:
+                    raise ValueError
+                validated_values.append(dt.strftime("%Y-%m-%d %H:%M:%S"))
+            except Exception:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid timestamp value in {operator}: {v!r}"
+                )
+        return validated_values
+
     if hasattr(value, "model_dump"):
         value = value.model_dump()
     if not isinstance(value, dict):
-        raise HTTPException(status_code=400, detail="Timestamp filter requires a structured object value")
+        raise HTTPException(status_code=400, detail="Timestamp filter requires a structured object value or list for IN/NOT IN")
 
     if op in {"BEFORE", "AFTER"}:
         d = _parse_date(value.get("date"), field_name="date")
@@ -179,6 +201,27 @@ def build_sql_clause(column_sql: str, operator: str, value: Any, *, parameterize
         start = datetime.combine(date.fromisoformat(payload["date"]), time(0, 0, 0))
         end = start + timedelta(days=1)
         return f"({column_sql} >= {emit_param(start)} AND {column_sql} < {emit_param(end)})", params
+
+    if op in {"IN", "NOT IN"}:
+        if not payload:
+             raise HTTPException(status_code=400, detail="Empty IN list not allowed")
+             
+        quoted_values = []
+        for v in payload:
+
+            if isinstance(v, datetime):
+                quoted_values.append(emit_param(v))
+            else:
+                dt = normalize_event_timestamp_value(v, allow_empty=False)
+                if not dt:
+                     raise HTTPException(status_code=400, detail=f"Invalid timestamp: {v}")
+                quoted_values.append(emit_param(dt))
+        
+        if not quoted_values:
+             raise HTTPException(status_code=400, detail="Empty IN list not allowed")
+        
+        clause_op = "IN" if op == "IN" else "NOT IN"
+        return f"{column_sql} {clause_op} ({', '.join(quoted_values)})", params
 
     start = _combine_date_time(payload["startDate"], payload["startTime"])
     if "endTime" in payload:
