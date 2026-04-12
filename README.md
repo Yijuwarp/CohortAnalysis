@@ -1,93 +1,77 @@
-# Cohort Analysis
+# Cohort Analysis Platform
 
-High-performance, event-based cohort analysis platform with a FastAPI + DuckDB backend and a React/Vite frontend.
+A high-performance behavioral analytics platform designed for deep exploration of user retention, monetization, and transition flows. Built with a modern, domain-driven architecture using FastAPI and DuckDB.
 
-## Features
+## 🚀 Features
 
-- **CSV Ingestion**: Intelligent schema detection and mapping suggestions.
-- **Data Normalization**: Canonical event transformation with grouped aggregation.
-- **Dynamic Scoping**: Real-time dataset filtering by date ranges and properties.
-- **Cohort Engine**: Powerful frequency-based cohort creation with `AND`/`OR` logic and property filters.
-- **Retention Analytics**: Periodic user retention with optional confidence intervals and multiple algorithms (Classic, Ever-After).
-- **Usage & Frequency**: Analyze event volume, unique users, and activity frequency.
-- **Monetization**: Detailed revenue analysis with inclusion toggles and value overrides.
-- **Paths (Sequence Analysis)**: Multi-step conversion tracking with deterministic greedy matching and drop-off analysis.
-- **Event Flows**: Incremental transition analysis (L1/L2) to explore user behavior paths.
-- **User Explorer**: Deep-dive into individual user activity timelines and properties.
+*   **Fast Ingestion**: Multi-threaded CSV ingestion with automated column mapping and type detection.
+*   **Dynamic Scoping**: Real-time dataset filtering by date range and any metadata property (implemented as a dynamic View).
+*   **Complex Cohorts**: Frequency-based cohort definitions with `AND`/`OR` logic and property filters.
+*   **Deep Analytics**:
+    *   **Retention**: Relative and fixed-date retention with Wilson score confidence intervals.
+    *   **Monetization**: Revenue analysis with customizable event inclusion and value overrides.
+    *   **Flows**: Interactive Sankey-style transition analysis with multi-level expansion.
+    *   **Paths**: Deterministic greedy matching for sequential conversion tracking.
+*   **User Explorer**: Detailed chronological event timelines for individual users.
 
 ## 📚 Documentation
 
-For detailed information, please refer to:
+For detailed architecture and API reference, see:
 - [Architecture](ARCHITECTURE.md)
 - [Backend Overview](docs/backend_overview.md)
 - [Frontend Overview](docs/frontend_overview.md)
 - [Data Model](docs/data_model.md)
 - [API Reference](docs/api_reference.md)
+- [Ingestion Pipeline](backend/docs/INGESTION_PIPELINE.md)
 
-## Tech Stack
+## 🛠 Tech Stack
 
-- **Backend**: FastAPI, DuckDB, pandas, Pydantic.
-- **Frontend**: React (Hooks), Vite, Vanilla CSS.
-- **Testing**: pytest (backend), vitest (frontend).
+*   **Backend**: FastAPI, DuckDB, Pydantic.
+*   **Frontend**: React, Vite, Vanilla CSS.
+*   **State Management**: Materialized analytical tables for sub-second query performance.
 
-## Quick Start
+## ⚡ Getting Started
 
-### Backend
-1. `cd backend`
-2. `python -m venv venv`
-3. `source venv/bin/activate` (or `venv\Scripts\activate` on Windows)
-4. `pip install -r requirements.txt`
-5. **Windows Only**: Create a `.env` file in the `backend/` directory with `DUCKDB_SINGLE_WORKER=true`.
-6. `uvicorn app.main:app --reload`
+### Prerequisites
 
-### Frontend
-1. `cd frontend`
-2. `npm install`
-3. `npm run dev`
+*   Python 3.10+
+*   Node.js 18+
 
-## Key Implementation Constraints
+### Backend Setup
 
-- **Upload**: Accepts `.csv` only; requires `user_id`, `event_name`, and `event_time`.
-- **Cohorts**: Max 5 conditions per cohort; `min_event_count >= 1`.
-- **Paths**: 2-10 steps; sequential matching with property filter support.
-- **Analytics**: `max_day` defaults to 7.
-- **DuckDB**: Uses a local file `backend/cohort_analysis.duckdb` for persistence.
+1.  Navigate to the `backend` directory.
+2.  Install dependencies:
+    ```bash
+    pip install -r requirements.txt
+    ```
+3.  Set context for Windows:
+    **Windows Only**: Create a `.env` file in the `backend/` directory with `DUCKDB_SINGLE_WORKER=true`.
+4.  Run the server:
+    ```bash
+    uvicorn app.main:app --reload --workers 1
+    ```
 
-## Run locally
+> [!IMPORTANT]
+> **Windows Constraint**: DuckDB requires running with exactly **1 worker** on Windows to avoid database locking conflicts.
 
-### Backend
+### Frontend Setup
 
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-# Windows Only: Add DUCKDB_SINGLE_WORKER=true to .env file
-uvicorn app.main:app --reload
-```
+1.  Navigate to the `frontend` directory.
+2.  Install dependencies:
+    ```bash
+    npm install
+    ```
+3.  Run the development server:
+    ```bash
+    npm run dev
+    ```
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-No manual alias setup required. Flow graph uses a fallback shim for restricted environments.
-
-Default API base URL is `http://127.0.0.1:8000` unless `VITE_API_BASE_URL` is set.
-
----
-
-## License
+## ⚖️ License
 
 Copyright (c) 2026 Venkat Chaitanya Duggineni
 
 This project is licensed under the **Business Source License (BSL) 1.1**.
 
-You may copy, modify, and run this software for personal use, evaluation, research, or internal business use.
-
-Commercial use, including offering this software as a hosted or managed service, requires a commercial license from the author.
+You may copy, modify, and run this software for personal use, evaluation, research, or internal business use. Commercial use, including offering this software as a hosted or managed service, requires a commercial license from the author.
 
 On **2029-03-13**, this project will automatically convert to the **MIT License**.

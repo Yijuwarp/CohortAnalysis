@@ -8,11 +8,11 @@ To ensure consistency and performance, all analytics must adhere to the followin
 
 | Module | Base Dataset | Filtering / Metadata Layer | Notes |
 | :--- | :--- | :--- | :--- |
-| **Retention** | `cohort_activity_snapshot` | `events_scoped` | Only join for filter verification. |
-| **Flows** | `cohort_activity_snapshot` | `events_scoped` | Snapshot is the transition source. |
-| **Paths** | `cohort_activity_snapshot` | `events_scoped` | **Snapshot** is the mandatory base. Join **Scoped** for per-step filters. |
-| **Monetization** | `cohort_activity_snapshot` | `events_scoped` | Join for `modified_revenue` + `revenue_event_selection`. |
-| **Usage / Freq** | `events_scoped` | `cohort_membership` | **Scoped** as base, aligned with **Membership** using `join_time`. |
+| **Retention** | `cohort_activity_snapshot` | `events_scoped` | Only join `scoped` for property-level filtering. |
+| **Flows** | `cohort_activity_snapshot` | `events_scoped` | `snapshot` is the transition source; `scoped` for properties. |
+| **Paths** | `cohort_activity_snapshot` | `events_scoped` | Uses `snapshot` by default. Falls back to `scoped` for property filters. |
+| **Monetization** | `events_scoped` | `cohort_membership` | Mandatory join to align events with cohort `join_time` and access `modified_revenue`. |
+| **Usage / Freq** | `events_scoped` | `cohort_membership` | `scoped` as base, aligned with `membership` using `join_time`. |
 
 ### Allowed vs Forbidden Joins
 
@@ -44,7 +44,6 @@ Analyzes event volume and unique user activity.
 **Query Params**:
 - `event` (required)
 - `max_day` (default 7)
-- `retention_event` (optional)
 
 **Logic**:
 - Uses `events_scoped` directly to support property-level filtering.
@@ -60,9 +59,11 @@ Analyzes revenue generation and user value.
 - `max_day` (default 7)
 
 **Logic**:
-- Uses `cohort_activity_snapshot` joined with `events_scoped` to access `modified_revenue`.
+- Uses `events_scoped` directly (joined with `membership`).
+- Accesses `modified_revenue` fields which reflect value overrides.
 - Includes only events marked `is_included = TRUE` in `revenue_event_selection`.
 - Respects cohort `join_time` offsets and filters.
+- Uses `cohort_activity_snapshot` (via retention vectors) only for computing denominators (active users).
 
 ---
 
@@ -72,15 +73,12 @@ Triggers multi-step conversion and drop-off analysis across active cohorts.
 **Logic: Earliest Greedy Matching**
 - **Sequential**: Matching starts from step 1 and proceeds sequentially to step $N$.
 - **Greedy**: For each step, the system finds the **earliest** valid event occurrence after the previous step's match.
-- **Deterministic**: Ties in timestamps are broken using internal row identifiers (`rn`).
+- **Deterministic**: Ties in timestamps are broken using internal row identifiers (`rn`, `row_id`, or `global_rn`).
 - **Constraints**: Each step $N$ must satisfy $t_N > t_{N-1}$ (or higher row ID if $t_N = t_{N-1}$).
 
 **Source**:
-- Uses `cohort_activity_snapshot` as the mandatory base event stream.
-- Joins `events_scoped` ONLY when per-step property filters are present.
-
-**Drop-off Calculation**:
-- Users who matched step $N$ but did not match step $N+1$ (calculated via ANTI JOIN logic).
+- Uses `cohort_activity_snapshot` as the base event stream when steps have no filters.
+- Joins `events_scoped` for steps that require per-event property filtering.
 
 ---
 
@@ -91,7 +89,7 @@ Sankey-style event transition analysis.
 - **Event-anchored**: Flows are anchored to the **first occurrence** of `start_event` per user within the cohort.
 - **User-based percentages**: Counts users following a path, not total events.
 - **Top-K Grouping**: Top-3 events are named; the rest are collapsed into an "Other" row.
-- **Source**: Uses `cohort_activity_snapshot` exclusively.
+- **Source**: Uses `cohort_activity_snapshot` for transitions. Joins `events_scoped` via `EXISTS` clause for property filters.
 
 ---
 
