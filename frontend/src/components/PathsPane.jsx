@@ -165,7 +165,22 @@ function PathsFunnelChart({ result, pathLabel }) {
                                         >
                                             {cohort.cohort_name}
                                         </div>
-                                        <div className="funnel-bar-track">
+                                        <div 
+                                            className="funnel-bar-track"
+                                            title={stepIdx === 0 
+                                                ? `User Count: ${formatInteger(stepData.users)}`
+                                                : `User Count: ${formatInteger(stepData.users)}, Drop Off: ${(Number(stepData.drop_off_pct) || 0).toFixed(1)}%`
+                                            }
+                                        >
+                                            {stepIdx > 0 && (
+                                                <div 
+                                                    className="ghost-bar"
+                                                    style={{
+                                                        width: `${Number(Math.min(100, (cohort.steps[stepIdx - 1]?.users / cohort.steps[0]?.users) * 100 || 0).toFixed(1))}%`,
+                                                        background: `repeating-linear-gradient(45deg, rgba(255,255,255,0.15), rgba(255,255,255,0.15) 4px, rgba(255,255,255,0.05) 4px, rgba(255,255,255,0.05) 8px), ${getCohortColor(cohort.cohort_id, cohortIdx)}`
+                                                    }}
+                                                />
+                                            )}
                                             <div
                                                 className="funnel-bar-fill"
                                                 style={{
@@ -173,15 +188,16 @@ function PathsFunnelChart({ result, pathLabel }) {
                                                     background: getCohortColor(cohort.cohort_id, cohortIdx),
                                                     minWidth: minWidthPx,
                                                 }}
-                                            />
-                                            <div className="funnel-bar-meta">
-                                                <span className="funnel-bar-users">{formatInteger(stepData.users)}</span>
-                                                <span className="funnel-bar-pct">({(Number(stepData.conversion_pct) || 0).toFixed(1)}%)</span>
-                                                {stepIdx > 0 && (Number(stepData.drop_off_pct) || 0) > 0 && (
-                                                    <span className="funnel-bar-dropoff" title="Drop-off from previous step">
-                                                        ↓{(Number(stepData.drop_off_pct) || 0).toFixed(1)}%
-                                                    </span>
-                                                )}
+                                            >
+                                                <span 
+                                                    className="bar-label"
+                                                    style={{
+                                                        left: barWidth < 15 ? 'calc(100% + 6px)' : 'auto',
+                                                        right: barWidth < 15 ? 'auto' : '6px',
+                                                    }}
+                                                >
+                                                    {(Number(stepData.conversion_pct) || 0).toFixed(1)}%
+                                                </span>
                                             </div>
                                         </div>
                                     </div>
