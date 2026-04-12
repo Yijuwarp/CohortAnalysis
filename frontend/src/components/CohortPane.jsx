@@ -218,14 +218,17 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
   // Saved Cohorts Dropdown options
   const cohortOptions = useMemo(() => {
-    return savedCohorts.map((c) => {
-      const activeMatch = cohorts.find(ac => ac.source_saved_id === c.id || ac.cohort_name === c.name);
-      return {
+    return savedCohorts
+      .filter((c) => {
+        if (c.is_valid === false) return false
+        const activeMatch = cohorts.find(ac => ac.source_saved_id === c.id || ac.cohort_name === c.name)
+        if (activeMatch && activeMatch.isInvalid) return false
+        return true
+      })
+      .map((c) => ({
         label: c.name,
         value: c.id,
-        disabled: c.is_valid === false || (activeMatch && activeMatch.isInvalid)
-      }
-    })
+      }))
   }, [savedCohorts, cohorts])
 
   const selectedSavedObj = savedCohorts.find((c) => c.id === selectedCohortId)
