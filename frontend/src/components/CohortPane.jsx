@@ -125,10 +125,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setError('')
     try {
       await deleteCohort(cohortId)
-      setCohorts((prev) => prev.filter((cohort) => cohort.cohort_id !== cohortId))
+      await loadData({ forceDb: true })
       onCohortsChanged()
     } catch (err) {
-      setError(err.message)
+      setError(err.message || 'Failed to delete cohort')
     } finally {
       setDeletingId(null)
     }
