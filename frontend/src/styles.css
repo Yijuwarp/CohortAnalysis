@@ -3085,34 +3085,47 @@ tbody tr:hover {
 
 .funnel-bar-track {
   width: 100%;
-  height: 20px;
+  height: 24px;
   border-radius: 4px;
   background: #f3f4f6;
-  overflow: hidden;
   position: relative;
 }
 
+.ghost-bar {
+  position: absolute;
+  height: 100%;
+  border-radius: 4px;
+  pointer-events: none;
+  opacity: 0.35;
+  transition: width 0.4s cubic-bezier(.4,0,.2,1);
+  z-index: 1;
+}
+
 .funnel-bar-fill {
+  position: relative;
   height: 100%;
   border-radius: 4px;
   transition: width 0.4s cubic-bezier(.4,0,.2,1);
   min-width: 0;
+  z-index: 2;
+  overflow: visible;
 }
 
-.funnel-bar-meta {
+.bar-label {
   position: absolute;
-  right: 6px;
   top: 50%;
   transform: translateY(-50%);
-  display: flex;
-  gap: 4px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #111;
+  background: rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(2px);
+  padding: 1px 6px;
+  border-radius: 4px;
+  line-height: 1.2;
   white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  align-items: center;
-  pointer-events: none;
-  color: #111827;
 }
+
 
 .funnel-bar-users {
   font-weight: 600;
