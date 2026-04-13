@@ -5,25 +5,23 @@ import duckdb
 from app.utils.perf import time_block
 
 def recompute_modified_revenue_columns(connection: duckdb.DuckDBPyConnection, table_name: str) -> None:
-    # DuckDB 0.x - 1.x doesn't support UPDATE on VIEWs.
-    # Since events_scoped is usually a VIEW selecting from events_normalized,
-    # we only need to update the base table. Any request to update a VIEW
-    # is ignored to avoid Binder Errors.
-    
-    if table_name == "events_scoped":
-        rows = connection.execute(
-            """
-            SELECT table_type 
-            FROM information_schema.tables 
-            WHERE table_name = 'events_scoped' 
-              AND table_schema = 'main'
-            """
-        ).fetchall()
-        if rows and rows[0][0] == 'VIEW':
-            return
+    # DuckDB doesn't support UPDATE on VIEWs.
+    # We check the table type and skip if it's a view.
+    rows = connection.execute(
+        """
+        SELECT table_type 
+        FROM information_schema.tables 
+        WHERE table_name = ?
+          AND table_schema = 'main'
+        """,
+        [table_name]
+    ).fetchall()
+    if rows and rows[0][0] == 'VIEW':
+        return
 
-    if table_name not in {"events_normalized", "events_scoped"}:
+    if table_name not in {"events_normalized", "events_scoped", "events_raw", "events_scoped_raw"}:
         raise ValueError("Unsupported table for revenue recomputation")
+
 
     end_timer = time_block("revenue_recomputation")
 
