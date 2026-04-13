@@ -117,6 +117,7 @@ def get_columns(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[st
                 "category": classify_column(str(name)),
             }
             for name, data_type in rows
+            if str(name) != "row_id"
         ]
         return {"columns": payload}
     finally:
@@ -140,18 +141,27 @@ def get_column_values(
     is_high_cardinality = column.lower() in HIGH_CARDINALITY_COLUMNS
 
     # Ensure table/column is known
-    # We strictly use events_scoped as it reflects the current filtering state
-    # Ensure table/column is known and get its type
+    # Determine source table (fallback to events_normalized if events_scoped is missing)
+    source_table = "events_scoped"
+    exists_scoped = connection.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT table_name FROM information_schema.tables 
+            UNION 
+            SELECT table_name FROM information_schema.views
+        ) WHERE table_name = 'events_scoped'
+        """
+    ).fetchone()[0]
+    if not exists_scoped:
+        source_table = "events_normalized"
+
+    # Use PRAGMA table_info which is robust for both tables and views
     column_metadata = {
-        row[0]: row[1].upper()
-        for row in connection.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'events_scoped'
-            """
-        ).fetchall()
+        row[1]: row[2].upper()
+        for row in connection.execute(f"PRAGMA table_info('{source_table}')").fetchall()
     }
+
+
     if column not in column_metadata:
         raise HTTPException(status_code=400, detail=f"Unknown column: {column}")
 
@@ -184,8 +194,7 @@ def get_column_values(
         # Simple distinct for fast performance on massive cardinalities
         rows = connection.execute(
             f"""
-            SELECT DISTINCT {column_ref}
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             LIMIT ?
             """,
@@ -196,7 +205,7 @@ def get_column_values(
         rows = connection.execute(
             f"""
             SELECT {column_ref}, SUM(event_count) as freq
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             GROUP BY 1
             ORDER BY freq DESC, {column_ref} ASC
@@ -205,17 +214,19 @@ def get_column_values(
             query_params + [limit]
         ).fetchall()
 
+
     # Calculate total distinct for UX (optional but kept for alignment with existing interface)
     # Note: total_distinct also respects the search/filter parameters
     total_distinct = int(
         connection.execute(
             f"""
             SELECT COUNT(DISTINCT {column_ref})
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             """,
             query_params
         ).fetchone()[0]
+
     )
 
     return {

@@ -159,7 +159,7 @@ def _build_level_sql(
     ctes: list[str] = [
         f"""
         root_step AS (
-            SELECT e.cohort_id, e.user_id, e.event_time AS parent_time, ? AS parent_event
+            SELECT e.cohort_id, e.user_id, e.event_time AS parent_time, e.row_id AS parent_row_id, ? AS parent_event
             FROM (
                 SELECT
                     e.cohort_id,

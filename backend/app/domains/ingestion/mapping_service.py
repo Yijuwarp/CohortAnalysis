@@ -3,7 +3,7 @@ Short summary: suggests and validates CSV column mappings.
 """
 import json
 import duckdb
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import HTTPException
 from app.utils.perf import time_block
 from app.utils.sql import quote_identifier
@@ -302,20 +302,23 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             cleaned_expr = f"REPLACE(TRIM(REGEXP_REPLACE({v_col_raw}, '\\s*(UTC|Z|[+-]\\d{{2}}:?\\d{{2}})$', '', 'i')), 'T', ' ')"
             raw_time_expr = f"COALESCE(TRY_CAST({cleaned_expr} AS TIMESTAMP), TRY_CAST({cleaned_expr} || ':00:00' AS TIMESTAMP))"
 
-        p99_99_row = connection.execute(f"SELECT quantile_cont({raw_time_expr}, 0.9999) FROM events").fetchone()
-        p99_99_threshold = p99_99_row[0] if p99_99_row else None
+        max_time_row = connection.execute(f"SELECT MAX({raw_time_expr}) FROM events").fetchone()
+        max_time = max_time_row[0] if max_time_row else None
         
         now_local = datetime.now()
-        if p99_99_threshold:
-            # Handle possible conversion issues
-            if not isinstance(p99_99_threshold, datetime):
+        # Allow events up to 24h in the future to account for clock drift, but cap extreme dates
+        future_cap = now_local + timedelta(days=1)
+
+        if max_time:
+            if not isinstance(max_time, datetime):
                 try:
-                    p99_99_threshold = datetime.fromisoformat(str(p99_99_threshold))
+                    max_time = datetime.fromisoformat(str(max_time))
                 except:
-                    p99_99_threshold = now_local
-            import_upper_bound = min(p99_99_threshold, now_local)
+                    max_time = now_local
+            import_upper_bound = min(max_time, future_cap)
         else:
-            import_upper_bound = now_local
+            import_upper_bound = future_cap
+
             
         import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S')
 

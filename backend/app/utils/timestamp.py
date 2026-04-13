@@ -101,10 +101,8 @@ def validate_timestamp_payload(operator: str, value: Any) -> dict[str, str]:
         raise HTTPException(status_code=400, detail=f"Unsupported timestamp operator: {operator}")
     if op in {"IN", "NOT IN"}:
         if not isinstance(value, list) or len(value) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Operator {operator} requires a non-empty list value"
-            )
+            raise HTTPException(status_code=400, detail=f"Operator {operator} requires a non-empty array value")
+
         
         validated_values = []
         for v in value:

@@ -59,7 +59,7 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
             row_count = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
             skipped_rows = max(input_rows - row_count, 0)
             column_info = connection.execute("PRAGMA table_info('events')").fetchall()
-            column_names = [row[1] for row in column_info]
+            column_names = [row[1] for row in column_info if row[1] != "row_id"]
 
             if len(column_names) < 3:
                 end_timer(error="insufficient_columns")
