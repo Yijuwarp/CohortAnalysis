@@ -478,6 +478,7 @@ function AppWorkspace({ userId, onLogout }) {
     setDetectedMaxDay(null)
     setActiveTab('retention')
     setLeftPaneTab('filters')
+    setCohorts([])
 
     try {
       const data = await uploadCSV(file)
@@ -527,6 +528,8 @@ function AppWorkspace({ userId, onLogout }) {
 	  // Best effort
 	}
 	
+    setCohorts([])
+    triggerCohortRefresh()
     markTabsStale()
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
@@ -697,7 +700,10 @@ function AppWorkspace({ userId, onLogout }) {
                         refreshToken={tabRefreshTokens.retention} 
                         onFiltersApplied={(filters, options = {}) => {
                           setAppliedFilters(filters)
-                          if (!options.skipStale) markTabsStale()
+                          if (!options.skipStale) {
+                            markTabsStale()
+                            triggerCohortRefresh()
+                          }
                         }} 
                       />
                     </section>
