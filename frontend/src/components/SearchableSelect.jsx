@@ -26,6 +26,8 @@ export default function SearchableSelect({
   autoFocus = false, 
   defaultOpen = false, 
   onClear = null,
+  // Options that always appear at the top, regardless of search
+  pinnedOptions: pinnedOptionsProp = [],
   // Server-side search props
   column = null,
   eventName = null
@@ -45,19 +47,31 @@ export default function SearchableSelect({
   const cacheRef = useRef({}) // { [cacheKey]: values[] }
   const latestRequestRef = useRef(0)
 
+  // Normalized pinned options (always at top)
+  const normalizedPinned = useMemo(
+    () => (pinnedOptionsProp || []).map(normalizeOption),
+    [pinnedOptionsProp]
+  )
+  const pinnedValues = useMemo(
+    () => new Set(normalizedPinned.map(o => o.value)),
+    [normalizedPinned]
+  )
+
   // Combined options: merge prop options with server-side results
   const allOptions = useMemo(() => {
     const normalizedPropOptions = (propOptions || []).map(normalizeOption)
     const normalizedServerOptions = serverOptions.map(normalizeOption)
     
     // Merge strategy: unique values, prioritize server options for labels if collision
-    const seen = new Set()
+    const seen = new Set(pinnedValues) // exclude pinned from dedup — they go first
     const merged = []
     
     // Add server options first (most relevant to search)
     normalizedServerOptions.forEach(opt => {
-      seen.add(opt.value)
-      merged.push(opt)
+      if (!pinnedValues.has(opt.value)) {
+        seen.add(opt.value)
+        merged.push(opt)
+      }
     })
     
     // Add prop options (ensure current value is always visible even if not in search results)
@@ -69,28 +83,37 @@ export default function SearchableSelect({
     })
     
     return merged
-  }, [propOptions, serverOptions])
+  }, [propOptions, serverOptions, pinnedValues])
 
   const selectedOption = useMemo(
-    () => allOptions.find((option) => option.value === value),
-    [allOptions, value]
+    () => [...normalizedPinned, ...allOptions].find((option) => option.value === value),
+    [normalizedPinned, allOptions, value]
   )
 
   // Filter options: if server-side is active, we don't do client-side filtering
   // unless we have the full list fetched.
   const filteredOptions = useMemo(() => {
-    // If not using server search or if we have the full list, use client-side filtering
+    const loweredSearch = searchTerm.toLowerCase()
+
+    // Filter pinned options by search term (but always include them when no search)
+    const matchingPinned = searchTerm
+      ? normalizedPinned.filter(o => o.label.toLowerCase().includes(loweredSearch))
+      : normalizedPinned
+
+    let rest
     if (!column || isFullListFetched) {
-      const loweredSearch = searchTerm.toLowerCase()
-      return allOptions
+      rest = allOptions
         .filter((option) => option.label.toLowerCase().includes(loweredSearch))
         .slice(0, 100)
+    } else {
+      // Server-side mode: server already filtered for us
+      rest = allOptions.slice(0, 100)
     }
 
-    // Default server-side mode: the server already filtered for us.
-    // We just need to ensure the list feels stable.
-    return allOptions.slice(0, 100)
-  }, [allOptions, searchTerm, column, isFullListFetched])
+    // Prepend pinned, dedup
+    const pinnedVals = new Set(matchingPinned.map(o => o.value))
+    return [...matchingPinned, ...rest.filter(o => !pinnedVals.has(o.value))]
+  }, [normalizedPinned, allOptions, searchTerm, column, isFullListFetched])
 
   const updateCoords = () => {
     if (rootRef.current) {

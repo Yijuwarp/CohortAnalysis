@@ -717,7 +717,8 @@ function AppWorkspace({ userId, onLogout }) {
                             <h4>Retention Event</h4>
                             <div className="settings-control-body">
                                <SearchableSelect
-                                options={[{ label: 'Any Event', value: 'any' }, ...events]}
+                                options={events}
+                                pinnedOptions={[{ label: 'Any Event', value: 'any' }]}
                                 value={selectedRetentionEvent}
                                 onChange={setSelectedRetentionEvent}
                                 placeholder="Select retention event"
