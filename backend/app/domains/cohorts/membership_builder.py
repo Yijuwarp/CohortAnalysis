@@ -204,17 +204,27 @@ def build_cohort_membership(
             [cohort_id],
         )
 
+    # Fill the activity snapshot with row-level data for sequencing (Paths/Flows)
+    snapshot_table = target_table.replace('membership', 'activity_snapshot')
+    snapshot_source = source_table + "_raw" if source_table == "events_scoped" else ("events_raw" if source_table == "events_normalized" else source_table)
+    
+    # Check if the raw source actually exists
+    raw_exists = connection.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{snapshot_source}'").fetchone()[0]
+    if not raw_exists:
+        snapshot_source = source_table
+
     connection.execute(
         f"""
-        INSERT INTO {target_table.replace('membership', 'activity_snapshot')} (cohort_id, user_id, event_time, event_name, source_saved_id)
-        SELECT ?, e.user_id, e.event_time, e.event_name, ?
-        FROM {source_table} e
+        INSERT INTO {snapshot_table} (cohort_id, user_id, event_time, event_name, row_id, source_saved_id)
+        SELECT ?, e.user_id, e.event_time, e.event_name, e.row_id, ?
+        FROM {snapshot_source} e
         JOIN {target_table} cm
             ON cm.user_id = e.user_id
            AND cm.cohort_id = ?
         """,
         [cohort_id, source_saved_id, cohort_id],
     )
+
 
 
 def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> None:
@@ -249,9 +259,11 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
             user_id TEXT,
             event_time TIMESTAMP,
             event_name TEXT,
+            row_id BIGINT,
             source_saved_id UUID
         )
     """)
+
 
     try:
         end_timer = time_block("cohort_rebuild")
@@ -277,9 +289,10 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
         """)
         connection.execute("DELETE FROM cohort_activity_snapshot")
         connection.execute("""
-            INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, source_saved_id)
-            SELECT cohort_id, user_id, event_time, event_name, source_saved_id FROM cohort_activity_snapshot_staging
+            INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id, source_saved_id)
+            SELECT cohort_id, user_id, event_time, event_name, row_id, source_saved_id FROM cohort_activity_snapshot_staging
         """)
+
         connection.execute("COMMIT")
     except Exception:
         try:

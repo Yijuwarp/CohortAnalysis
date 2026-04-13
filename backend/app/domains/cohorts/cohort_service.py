@@ -59,8 +59,10 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
             cohort_id INTEGER,
             user_id TEXT,
             event_time TIMESTAMP,
-            event_name TEXT
+            event_name TEXT,
+            row_id BIGINT
         )
+
         """
     )
     res_conditions = connection.execute(

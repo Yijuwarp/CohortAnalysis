@@ -165,7 +165,8 @@ def _build_level_sql(
                     e.cohort_id,
                     e.user_id,
                     e.event_time,
-                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time ASC) AS rn
+                    e.row_id,
+                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time ASC, e.row_id ASC) AS rn
                 FROM cohort_activity_snapshot e
                 WHERE e.event_name = ?{property_exists_clause}{cohort_clause}
             ) e
@@ -180,16 +181,15 @@ def _build_level_sql(
         ctes.append(
             f"""
             {cte_name} AS (
-                SELECT s.cohort_id, s.user_id, n.event_time AS parent_time, n.event_name AS parent_event
+                SELECT s.cohort_id, s.user_id, n.event_time AS parent_time, n.row_id AS parent_row_id, n.event_name AS parent_event
                 FROM {prev_cte} s
                 JOIN LATERAL (
-                    SELECT e.event_name, e.event_time
+                    SELECT e.event_name, e.event_time, e.row_id
                     FROM cohort_activity_snapshot e
                     WHERE e.user_id = s.user_id
                       AND e.cohort_id = s.cohort_id
-                      AND e.event_time {time_op} s.parent_time
-                      AND e.event_name <> s.parent_event
-                    ORDER BY e.event_time {order_dir}
+                      AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id))
+                    ORDER BY e.event_time {order_dir}, e.row_id {order_dir}
                     LIMIT 1
                 ) n ON TRUE
                 WHERE n.event_name = ?
@@ -209,13 +209,12 @@ def _build_level_sql(
                 ABS(EXTRACT(EPOCH FROM (n.event_time - s.parent_time)))::DOUBLE AS time_diff_sec
             FROM {prev_cte} s
             JOIN LATERAL (
-                SELECT e.event_name, e.event_time
+                SELECT e.event_name, e.event_time, e.row_id
                 FROM cohort_activity_snapshot e
                 WHERE e.user_id = s.user_id
                   AND e.cohort_id = s.cohort_id
-                  AND e.event_time {time_op} s.parent_time
-                  AND e.event_name <> s.parent_event
-                ORDER BY e.event_time {order_dir}
+                  AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id))
+                ORDER BY e.event_time {order_dir}, e.row_id {order_dir}
                 LIMIT 1
             ) n ON TRUE
         ),

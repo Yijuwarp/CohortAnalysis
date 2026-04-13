@@ -120,7 +120,13 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             ORDER BY ordinal_position
             """
         )
-        existing_columns = [row["column_name"] for row in to_dicts(cursor, cursor.fetchall())]
+        existing_columns = [
+            row["column_name"]
+            for row in to_dicts(cursor, cursor.fetchall())
+            if row["column_name"] != "row_id"
+        ]
+
+
 
         requested_columns = {
             mapping.user_id_column,
@@ -313,8 +319,28 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             
         import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S')
 
+        connection.execute("DROP TABLE IF EXISTS events_raw")
         connection.execute("DROP TABLE IF EXISTS events_normalized")
 
+        # 1. Create events_raw (row-level, no aggregation)
+        # Preserve original_revenue and event_count as scalar values if mapped, or 1.0/0.0 defaults
+        raw_count_expr = f"CAST({quote_identifier(mapping.event_count_column)} AS DOUBLE)" if mapping.event_count_column else "1.0"
+        raw_rev_expr = f"COALESCE(CAST({quote_identifier(mapping.revenue_column)} AS DOUBLE), 0.0)" if mapping.revenue_column else "0.0"
+
+        raw_sql = f"""
+            CREATE TABLE events_raw AS
+            SELECT
+                {", ".join(grouped_expressions)},
+                {raw_count_expr} AS event_count,
+                {raw_rev_expr} AS original_revenue,
+                {raw_rev_expr} AS modified_revenue,
+                row_id
+            FROM events
+            WHERE {raw_time_expr} <= '{import_upper_bound_str}'::TIMESTAMP
+        """
+        connection.execute(raw_sql)
+
+        # 2. Create events_normalized (aggregated version for metrics/retention)
         sql = f"""
             CREATE TABLE events_normalized AS
             SELECT
@@ -322,6 +348,7 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
                 CAST({count_expr} AS DOUBLE) AS event_count,
                 {rev_expr} AS original_revenue,
                 {rev_expr} AS modified_revenue
+
             FROM events
             WHERE {raw_time_expr} <= '{import_upper_bound_str}'::TIMESTAMP
             GROUP BY {group_by_indices}
@@ -373,6 +400,7 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             connection.execute("DELETE FROM revenue_event_selection")
 
             initialize_revenue_event_selection(connection)
+            recompute_modified_revenue_columns(connection, "events_raw")
             recompute_modified_revenue_columns(connection, "events_normalized")
 
             revenue_timer()

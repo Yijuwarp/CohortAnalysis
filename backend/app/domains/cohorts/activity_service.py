@@ -31,21 +31,23 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
 def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection) -> None:
     from app.domains.cohorts.cohort_service import ensure_cohort_tables
     ensure_cohort_tables(connection)
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
+    scoped_raw_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped_raw' AND table_schema = 'main'"
     ).fetchone()[0]
-    source_table = "events_scoped" if scoped_exists else "events_normalized"
+    source_table = "events_scoped_raw" if scoped_raw_exists else "events_raw"
+
 
     connection.execute("DELETE FROM cohort_activity_snapshot")
     connection.execute(
         f"""
-        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-        SELECT cm.cohort_id, e.user_id, e.event_time, e.event_name
+        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id)
+        SELECT cm.cohort_id, e.user_id, e.event_time, e.event_name, e.row_id
         FROM cohort_membership cm
         JOIN {source_table} e
           ON cm.user_id = e.user_id
         """
     )
+
 
     activity_rows = connection.execute(
         """

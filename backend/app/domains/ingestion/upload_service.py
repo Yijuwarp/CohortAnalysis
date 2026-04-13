@@ -37,7 +37,7 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                 connection.execute(
                     """
                     CREATE TABLE events AS
-                    SELECT *
+                    SELECT *, row_number() OVER () AS row_id
                     FROM read_csv(
                         ?,
                         auto_detect=true,
@@ -48,6 +48,7 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                         maximum_line_size=20000000,  -- allow very large text/JSON fields in CSV rows
                         parallel=true
                     )
+
                     """,
                     [tmp_path],
                 )

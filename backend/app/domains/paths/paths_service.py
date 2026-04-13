@@ -344,13 +344,9 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
         safe_c = f'"{c.replace(chr(34), chr(34)+chr(34))}"'
         proj_list.append(f"{event_ref}.{safe_c}" if event_ref else safe_c)
 
-    # Use a stable tie-breaker: order by (time, name, user_id) if row_id isn't available
+    # Use a stable tie-breaker: capture the ingestion-time order (row_id)
     prefix = "e." if not has_cohort_id else ""
-    tie_breaker = f"{prefix}event_name, {prefix}user_id"
-    if "row_id" in col_types:
-        tie_breaker = f"{prefix}row_id" if not has_cohort_id else "row_id"
-    elif "global_rn" in col_types:
-        tie_breaker = f"{prefix}global_rn" if not has_cohort_id else "global_rn"
+    tie_breaker = f"{prefix}row_id"
 
     sql += f"""
     base AS (

@@ -62,10 +62,16 @@ def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
     if not normalized_exists:
         return
 
-    # Use a VIEW instead of copying the dataset
+    # Restoring system invariants: events_scoped matches events_normalized (aggregated)
     connection.execute("""
         CREATE OR REPLACE VIEW events_scoped AS
         SELECT * FROM events_normalized
+    """)
+
+    # events_scoped_raw is for sequencing (row-level)
+    connection.execute("""
+        CREATE OR REPLACE VIEW events_scoped_raw AS
+        SELECT * FROM events_raw
     """)
 
     upsert_dataset_scope(connection, {"date_range": None, "filters": []})
@@ -93,7 +99,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'events_normalized'
+        WHERE table_name = 'events_raw'
         """
     )
     known_columns = {row["column_name"] for row in to_dicts(cursor, cursor.fetchall())}
@@ -102,7 +108,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         """
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'events_normalized'
+        WHERE table_name = 'events_raw'
         """
     )
     column_types = {
@@ -174,12 +180,22 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
 
     end_timer = time_block("scope_rebuild")
 
-    # Recreate filtered VIEW instead of table (Atomic replace)
+    # Recreate filtered aggregated VIEW
     connection.execute(
         f"""
         CREATE OR REPLACE VIEW events_scoped AS
         SELECT *
         FROM events_normalized
+        {where_clause}
+        """
+    )
+
+    # Recreate filtered row-level VIEW
+    connection.execute(
+        f"""
+        CREATE OR REPLACE VIEW events_scoped_raw AS
+        SELECT *
+        FROM events_raw
         {where_clause}
         """
     )
