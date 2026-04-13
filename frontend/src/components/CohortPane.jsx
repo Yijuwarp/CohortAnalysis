@@ -64,6 +64,14 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     const currentSchemaHash = datasetMetadata?.schema_hash || datasetMetadata?.users || refreshToken;
     const lastFetchedSchemaHash = cohortStateCache?.schema_hash;
 
+    if (forceOptions.forceDb) {
+      cohortStateCache = {
+        schema_hash: null,
+        cohorts: null,
+        savedCohorts: null
+      }
+    }
+
     if (!forceOptions.forceDb && currentSchemaHash === lastFetchedSchemaHash && cohortStateCache.cohorts) {
       setCohorts(cohortStateCache.cohorts);
       setSavedCohorts(cohortStateCache.savedCohorts);
@@ -125,6 +133,17 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setActiveTooltipId(null)
   }, [cohorts])
 
+  // Clear cache if dataset changes
+  const datasetKey = datasetMetadata?.filename || ''
+  useEffect(() => {
+    cohortStateCache = {
+      schema_hash: null,
+      cohorts: null,
+      savedCohorts: null
+    }
+    loadData({ forceDb: true })
+  }, [datasetKey])
+
   const handleToggleHide = async (cohortId) => {
     setError('')
     try {
@@ -144,7 +163,13 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
       await loadData({ forceDb: true })
       onCohortsChanged()
     } catch (err) {
-      setError(err.message || 'Failed to delete cohort')
+      if (err.message?.includes('not found') || err.message?.includes('404')) {
+        // Already gone, success
+        await loadData({ forceDb: true })
+        onCohortsChanged()
+      } else {
+        setError(err.message || 'Failed to delete cohort')
+      }
     } finally {
       setDeletingId(null)
     }
