@@ -148,6 +148,18 @@ def get_events_source_table(connection: duckdb.DuckDBPyConnection) -> str:
     return "events_scoped" if exists else "events_normalized"
 
 
+def get_raw_events_source_table(connection: duckdb.DuckDBPyConnection) -> str:
+    exists = connection.execute(
+        """
+        SELECT COUNT(*)
+        FROM information_schema.tables
+        WHERE table_name = 'events_scoped_raw'
+          AND table_schema = 'main'
+        """
+    ).fetchone()[0]
+    return "events_scoped_raw" if exists else "events_raw"
+
+
 def normalize_values(values: object) -> list[object]:
     if isinstance(values, str):
         try:

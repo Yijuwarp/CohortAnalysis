@@ -11,7 +11,7 @@ from app.models.paths_models import (
     PathsResponse, PathsCohortResult, PathsStepResult, 
     PathStep, PathStepGroup, PathStepFilter, PathDetail
 )
-from app.domains.cohorts.cohort_service import ensure_cohort_tables, get_events_source_table
+from app.domains.cohorts.cohort_service import ensure_cohort_tables, get_events_source_table, get_raw_events_source_table
 
 # ---------------------------------------------------------------------------
 # Table bootstrap
@@ -306,7 +306,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     Uses the Union Candidates pattern for clean SQL and traceability.
     """
     use_filters = path_uses_filters(steps)
-    source_table = get_events_source_table(conn) if use_filters else "cohort_activity_snapshot"
+    source_table = get_raw_events_source_table(conn) if use_filters else "cohort_activity_snapshot"
     col_types = _get_column_types(conn, source_table)
     
     # Pre-calculate which columns we need to project
@@ -394,6 +394,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
                 SELECT
                   s.cohort_id, s.user_id,
                   {", ".join([f"s.t{j}" for j in range(1, s_idx)])},
+                  {", ".join([f"s.rn{j}" for j in range(1, s_idx)])},
                   b.event_time AS t{s_idx},
                   b.rn AS rn{s_idx},
                   {g_idx} AS group_id,
@@ -401,7 +402,8 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
                 FROM step_{prev} s
                 JOIN base b ON b.user_id = s.user_id AND b.cohort_id = s.cohort_id
                 WHERE b.event_name = '{safe_event}' {filter_clause}
-                  AND (b.event_time > s.t{prev} OR (b.event_time = s.t{prev} AND b.rn > s.rn{prev}))
+                  AND b.event_time >= s.t{prev}
+                  AND b.rn NOT IN ({", ".join([f"COALESCE(s.rn{j}, -1)" for j in range(1, s_idx)])})
                   {gap_clause}
                 """
             group_queries.append(query)

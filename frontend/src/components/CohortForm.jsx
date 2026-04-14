@@ -88,7 +88,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   const [name, setName] = useState(initialData?.name || '')
   
   const initialLogic = initialData?.definition?.logic_operator || 'AND'
-  const initialJoin = initialData?.definition?.join_type || 'condition_met'
+  const initialJoin = initialData?.definition?.join_type || 'first_event'
   const [logicOperator, setLogicOperator] = useState(initialLogic)
   const [joinType, setJoinType] = useState(initialJoin)
   
@@ -907,7 +907,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         <div className="cohort-join-time">
           <select value={joinType} onChange={(e) => setJoinType(e.target.value)}>
              <option value="condition_met">Join when condition is met</option>
-             <option value="first_event">Join on first qualifying event</option>
+             <option value="first_event">Join on first event</option>
           </select>
         </div>
         

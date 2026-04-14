@@ -59,7 +59,7 @@ def test_basic_cohort_creation_inserts_expected_users_and_join_times(
         ("u1", datetime(2024, 1, 1, 9, 0, 0)),
         ("u2", datetime(2024, 1, 2, 9, 0, 0)),
         ("u3", datetime(2024, 1, 4, 9, 0, 0)),
-    ], f"join_time should match each user's first qualifying event, got {membership}"
+    ], f"join_time should match each user's first event, got {membership}"
 
 
 def test_nth_event_logic_uses_min_event_count_as_join_time(
@@ -883,7 +883,7 @@ def test_create_cohort_rejects_empty_in_values(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Operator IN requires a non-empty array value"}
+    assert response.json() == {"detail": "Operator IN requires a non-empty list value"}
 
 
 def test_create_cohort_rejects_non_numeric_value_for_numeric_operator(client: TestClient) -> None:
