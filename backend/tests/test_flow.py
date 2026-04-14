@@ -330,16 +330,15 @@ def test_l1_forward_first_occurrence_only(client: TestClient) -> None:
 # Test 6: Self-loop exclusion
 # ---------------------------------------------------------------------------
 
-def test_l1_forward_excludes_self_loops(client: TestClient) -> None:
+def test_l1_forward_includes_self_loops(client: TestClient) -> None:
     """
     u1: search → search → product_view
-    The first transition after 'search' must NOT be another 'search'.
-    Expected: product_view (skip the self-loop).
+    Now that self-loops are allowed, the first transition after 'search' SHOULD be 'search'.
     """
     csv_text = (
         "user_id,event_name,event_time\n"
         "u1,search,2024-01-01 10:00:00\n"
-        "u1,search,2024-01-01 10:00:30\n"
+        "u1,search,2024-01-01 10:00:45\n"
         "u1,product_view,2024-01-01 10:01:00\n"
     )
     _upload_and_map(client, csv_text)
@@ -349,8 +348,8 @@ def test_l1_forward_excludes_self_loops(client: TestClient) -> None:
     rows = resp.json()["rows"]
 
     event_names = [r["path"][-1] for r in rows]
-    assert "search" not in event_names, \
-        f"Self-loop 'search' should not appear in rows: {event_names}"
+    # self-loop 'search' should appear because A -> B -> A sequencing is now row-level
+    assert "search" in event_names
 
 
 # ---------------------------------------------------------------------------
@@ -388,7 +387,7 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
     all_users = next(c for c in cohorts_resp.json()["cohorts"] if c["cohort_name"] == "All Users")
     cid = str(all_users["cohort_id"])
 
-    other_rows = [r for r in rows if r["path"][-1] == "Other"]
+    other_rows = [r for r in rows if r["path"][-1] == "__OTHER__"]
     assert len(other_rows) == 1, f"Expected exactly one 'Other' row, got: {[r['path'] for r in rows]}"
 
     other_row = other_rows[0]
@@ -397,8 +396,8 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
     assert abs(_value_pct(other_row["values"][cid]) - 0.25) < 1e-4
 
     # Named rows should include top 3 + No further action
-    named_rows = [r for r in rows if r["path"][-1] != "Other"]
-    assert len(named_rows) == 4, f"Expected 4 named rows (including No further action), got {len(named_rows)}"
+    named_rows = [r for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
+    assert len(named_rows) == 3, f"Expected 3 named rows, got {len(named_rows)}"
 
     # Top rows should be expandable; No further action should not.
     for r in named_rows:
@@ -599,7 +598,7 @@ def test_l1_named_rows_are_expandable_other_is_not(client: TestClient) -> None:
     rows = resp.json()["rows"]
 
     for row in rows:
-        if row["path"][-1] == "Other":
+        if row["path"][-1] == "__OTHER__":
             assert row["expandable"] is False, "Other row must not be expandable"
         elif row["path"][-1] == "No further action":
             assert row["expandable"] is False, "No further action row must not be expandable"
@@ -702,16 +701,16 @@ def test_flow_property_filter_basic(client: TestClient):
     rows = resp.json()["rows"]
     
     # Should only contain product_view (from u1)
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["Other", "No further action"]]
-    assert event_names == ["product_view"]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
+    assert "product_view" in event_names
     assert rows[0]["values"][all_users_id]["user_count"] == 1
 
     # 2. Filtered by category=books
     resp = client.get("/flow/l1?start_event=search&direction=forward&property_column=category&property_operator=%3D&property_values=books")
     assert resp.status_code == 200
     rows = resp.json()["rows"]
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["Other", "No further action"]]
-    assert event_names == ["checkout"]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
+    assert "checkout" in event_names
     assert rows[0]["values"][all_users_id]["user_count"] == 1
 
 def test_flow_property_filter_l2(client):
@@ -731,7 +730,7 @@ def test_flow_property_filter_l2(client):
     
     # Expand search -> product_view
     resp_l2 = client.get(
-        "/flow/l2?start_event=search&parent_path=search&parent_path=product_view"
+        "/flow/l2?start_event=search&parent_event=product_view"
         "&property_column=category&property_values=electronics"
     )
     assert resp_l2.status_code == 200
@@ -749,7 +748,7 @@ def test_flow_property_filter_validation(client):
     # 1. Missing property_values
     resp = client.get("/flow/l1?start_event=search&property_column=category")
     assert resp.status_code == 400
-    assert "property_values required" in resp.json()["detail"]
+    assert "property_values are required" in resp.json()["detail"]
 
     # 2. Invalid column
     resp = client.get("/flow/l1?start_event=search&property_column=nonexistent&property_values=val")

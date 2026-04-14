@@ -213,7 +213,11 @@ def _build_level_sql(
                 FROM cohort_activity_snapshot e
                 WHERE e.user_id = s.user_id
                   AND e.cohort_id = s.cohort_id
-                  AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id))
+                  AND (
+                    ('{direction}' = 'forward' AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id)))
+                    OR
+                    ('{direction}' = 'reverse' AND (e.event_time < s.parent_time OR (e.event_time = s.parent_time AND e.row_id < s.parent_row_id)))
+                  )
                 ORDER BY e.event_time {order_dir}, e.row_id {order_dir}
                 LIMIT 1
             ) n ON TRUE
@@ -335,10 +339,10 @@ def _run_level_query(
         return [], parent_depth, 0
     if "No further action" in parent_path or "Other" in parent_path:
         return [], parent_depth, 0
-    if len(parent_path) != len(set(parent_path)):
-        return [], parent_depth, 0
-    if parent_path[0] != start_event:
-        raise HTTPException(status_code=400, detail="parent_path must start with start_event")
+    if parent_path[0].strip() != start_event.strip():
+        raise HTTPException(status_code=400, detail=f"parent_path must start with start_event ({start_event}). Got: {parent_path[0]}")
+    if property_column and (not property_values or _is_empty_filter(property_values)):
+        raise HTTPException(status_code=400, detail="property_values are required when property_column is specified")
 
     if _is_empty_filter(property_values):
         property_column = None
@@ -513,11 +517,11 @@ def get_l1_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _scoped_has_data(connection):
-        return {"rows": []}
-
     canonical_col = _validate_property_column(connection, property_column, property_operator)
     _ensure_performance_indexes(connection)
+
+    if not _scoped_has_data(connection):
+        return {"rows": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
@@ -544,11 +548,11 @@ def get_l2_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _scoped_has_data(connection):
-        return {"parent_path": parent_path, "rows": []}
-
     canonical_col = _validate_property_column(connection, property_column, property_operator)
     _ensure_performance_indexes(connection)
+
+    if not _scoped_has_data(connection):
+        return {"parent_path": parent_path, "rows": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:

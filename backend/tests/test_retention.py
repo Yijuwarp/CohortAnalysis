@@ -128,7 +128,9 @@ def test_retention_relative_window_semantics(client: TestClient) -> None:
     table = {r["cohort_name"]: r for r in resp.json()["retention_table"]}.get("boundary_cohort")
     # Day 0 covers Join Time to Join Time + 24h
     assert table["retention"]["0"] == 100.0
-    assert table["retention"]["1"] == 0.0
+    # Day 1 covers Join Time + 24h (Jan 2 23:50). Max data is Jan 2 00:10.
+    # User is NOT eligible for Day 1, so value should be None
+    assert table["retention"]["1"] is None
 
 
 def test_retention_hourly_relative_window(client: TestClient) -> None:
@@ -244,5 +246,8 @@ def test_hourly_relative_window_semantics(client: TestClient) -> None:
     
     # Hour 0: hbnd1 joins/active, hbnd2 joins. Both active.
     assert table["retention"]["0"] == 100.0
-    # Hour 1: hbnd1 NOT active (active was +20m), hbnd2 IS active (+65m).
-    assert table["retention"]["1"] == 50.0
+    # Hour 1: 
+    # hbnd1 (+1h = 11:50) is NOT eligible (max data = 11:15)
+    # hbnd2 (+1h = 11:10) IS eligible and active (+65m = 11:15)
+    # 1 active / 1 eligible = 100%
+    assert table["retention"]["1"] == 100.0

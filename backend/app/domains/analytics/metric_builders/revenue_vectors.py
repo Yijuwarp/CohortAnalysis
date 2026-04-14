@@ -59,7 +59,6 @@ def build_revenue_vector_sql(
          AND cm.cohort_id = ?
         WHERE cm.cohort_id = ?
           AND es.event_time >= cm.join_time
-          AND es.modified_revenue > 0
           {pushdown_clause}
     ),
     daily_revenue AS (

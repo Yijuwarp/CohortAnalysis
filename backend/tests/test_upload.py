@@ -16,8 +16,8 @@ def test_upload_valid_csv_inserts_rows_and_returns_columns(
     payload = response.json()
     assert payload["rows_imported"] == 2, "Upload should report two imported rows"
     assert payload["skipped_rows"] == 0, "Well-formed CSV should not skip rows"
-    # row_id is auto-added at ingestion
-    assert "row_id" in payload["columns"]
+    # row_id is auto-added at ingestion but hidden from metadata/UI
+    assert "row_id" not in payload["columns"]
     assert set(["user", "event", "time", "plan"]).issubset(set(payload["columns"]))
     assert payload["detected_types"]["user"] == "TEXT"
 
