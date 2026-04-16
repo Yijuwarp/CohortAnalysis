@@ -2,6 +2,7 @@
 Short summary: manages cohort activity status and snapshots.
 """
 import duckdb
+from typing import Optional
 from app.domains.cohorts.membership_builder import build_cohort_membership
 
 def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
@@ -9,15 +10,13 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
     ensure_cohort_tables(connection)
 
     existing = connection.execute("SELECT cohort_id FROM cohorts WHERE name = 'All Users'").fetchone()
-    if existing:
-        return
-
+    
     scoped_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
     ).fetchone()[0]
     source_table = "events_scoped" if scoped_exists else "events_normalized"
 
-    cohort_id = connection.execute(
+    cohort_id = existing[0] if existing else connection.execute(
         """
         INSERT INTO cohorts (cohort_id, name, logic_operator, join_type, is_active)
         VALUES (nextval('cohorts_id_sequence'), 'All Users', 'OR', 'first_event', TRUE)
@@ -25,45 +24,85 @@ def create_all_users_cohort(connection: duckdb.DuckDBPyConnection) -> None:
         """
     ).fetchone()[0]
 
+    # Always ensure membership is built
     build_cohort_membership(connection, int(cohort_id), source_table)
 
 
-def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection) -> None:
+def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection, cohort_id: Optional[int] = None) -> None:
+    """
+    Rebuilds the cohort_event_link index mapping and updates active status.
+    This links cohorts to relevant events in events_base by filtering for post-join activity.
+    """
     from app.domains.cohorts.cohort_service import ensure_cohort_tables
+    from app.utils.perf import time_block
     ensure_cohort_tables(connection)
-    scoped_raw_exists = connection.execute(
+    
+    end_timer = time_block("activity_refresh")
+    
+    scoped_exists = connection.execute(
         "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped_raw' AND table_schema = 'main'"
     ).fetchone()[0]
-    source_table = "events_scoped_raw" if scoped_raw_exists else "events_raw"
-
-
-    connection.execute("DELETE FROM cohort_activity_snapshot")
-    connection.execute(
-        f"""
-        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id)
-        SELECT cm.cohort_id, e.user_id, e.event_time, e.event_name, e.row_id
-        FROM cohort_membership cm
-        JOIN {source_table} e
-          ON cm.user_id = e.user_id
-        """
-    )
-
-
-    activity_rows = connection.execute(
-        """
-        SELECT
-            c.cohort_id,
-            COUNT(DISTINCT cas.user_id) AS active_members
-        FROM cohorts c
-        LEFT JOIN cohort_activity_snapshot cas ON c.cohort_id = cas.cohort_id
-        GROUP BY c.cohort_id
-        """
-    ).fetchall()
-
-    if not activity_rows:
+    
+    if not scoped_exists:
+        end_timer()
         return
 
-    connection.executemany(
-        "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
-        [(bool(active_members > 0), int(cohort_id)) for cohort_id, active_members in activity_rows],
-    )
+    # 2. Rebuild index mapping
+    where_clause = "WHERE cm.cohort_id = ?" if cohort_id is not None else ""
+    params = [cohort_id] if cohort_id is not None else []
+    
+    # Optimization: Use CREATE OR REPLACE TABLE for bulk sequential writes
+    end_link_timer = time_block("activity_link_rebuild")
+    
+    if cohort_id is not None:
+        # Partial update: We must keep existing links for other cohorts
+        connection.execute(f"""
+            INSERT INTO cohort_event_link (cohort_id, row_id)
+            SELECT cm.cohort_id, e.row_id
+            FROM events_scoped_raw e
+            JOIN cohort_membership cm ON e.user_id = cm.user_id
+            {where_clause}
+            AND e.event_time >= cm.join_time
+            ON CONFLICT (cohort_id, row_id) DO NOTHING
+        """, params)
+    else:
+        # Full refresh: Use CTAS for maximum throughput
+        connection.execute("""
+            CREATE OR REPLACE TABLE cohort_event_link AS
+            SELECT cm.cohort_id, e.row_id
+            FROM events_scoped_raw e
+            JOIN cohort_membership cm ON e.user_id = cm.user_id
+            WHERE e.event_time >= cm.join_time
+        """)
+    
+    from app.domains.cohorts.cohort_service import recreate_link_indexes
+    recreate_link_indexes(connection)
+    end_link_timer()
+
+    # 3. Update is_active status
+    # A cohort is active if it has members who have events in the scoped dataset (linked events)
+    end_active_timer = time_block("activity_status_update")
+    if cohort_id is not None:
+        has_activity = connection.execute(
+            "SELECT 1 FROM cohort_event_link WHERE cohort_id = ? LIMIT 1",
+            [cohort_id]
+        ).fetchone()
+        connection.execute(
+            "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
+            [bool(has_activity), cohort_id]
+        )
+    else:
+        connection.execute("""
+            UPDATE cohorts
+            SET is_active = (sub.has_events > 0)
+            FROM (
+                SELECT c.cohort_id, COUNT(cel.row_id) as has_events
+                FROM cohorts c
+                LEFT JOIN cohort_event_link cel ON c.cohort_id = cel.cohort_id
+                GROUP BY c.cohort_id
+            ) sub
+            WHERE cohorts.cohort_id = sub.cohort_id
+        """)
+    end_active_timer()
+    
+    end_timer(cohort_id=cohort_id)

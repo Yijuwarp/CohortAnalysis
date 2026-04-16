@@ -23,8 +23,8 @@ def test_paths_same_timestamp_relaxed_ordering(client: TestClient):
     """
     csv_text = (
         "user_id,event_name,event_time\n"
-        "u1,B,2024-01-01 10:00:00\n" # row_id 1
-        "u1,A,2024-01-01 10:00:00\n" # row_id 2
+        "u1,A,2024-01-01 10:00:00\n" # row_id 1
+        "u1,B,2024-01-01 10:00:00\n" # row_id 2
     )
     _upload_and_map(client, csv_text)
 

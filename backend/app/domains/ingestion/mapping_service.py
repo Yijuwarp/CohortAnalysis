@@ -98,13 +98,14 @@ def suggest_column_mapping(columns: list[str]) -> dict[str, str | None]:
 def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingRequest) -> dict[str, str | int]:
     from app.domains.ingestion.normalization_service import ensure_normalized_events_revenue_columns
     from app.domains.scope.scope_metadata import ensure_scope_tables
-    from app.domains.scope.filter_service import initialize_scoped_dataset
+    from app.domains.scope.filter_service import initialize_scoped_dataset_for_mapping
     from app.domains.cohorts.cohort_service import ensure_cohort_tables
     from app.domains.cohorts.activity_service import create_all_users_cohort, refresh_cohort_activity
     from app.domains.revenue.revenue_tables import ensure_revenue_event_selection_table
     from app.domains.revenue.revenue_config_service import initialize_revenue_event_selection
     from app.domains.revenue.revenue_recompute import recompute_modified_revenue_columns
 
+    connection.execute("BEGIN TRANSACTION")
     try:
         table_exists = connection.execute(
             "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events'"
@@ -125,8 +126,6 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             for row in to_dicts(cursor, cursor.fetchall())
             if row["column_name"] != "row_id"
         ]
-
-
 
         requested_columns = {
             mapping.user_id_column,
@@ -229,6 +228,16 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         # ---------- NORMALIZATION ----------
         normalize_timer = time_block("events_normalization")
 
+        connection.execute("DROP TABLE IF EXISTS events_base")
+        connection.execute("DROP VIEW IF EXISTS events_normalized")
+        
+        # Explicit State Reset: Remove ghost data and potential blocking views
+        connection.execute("DROP TABLE IF EXISTS cohort_membership")
+        connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
+        connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
+        connection.execute("DROP VIEW IF EXISTS events_scoped")
+        connection.execute("DROP VIEW IF EXISTS events_scoped_raw")
+
         core_map = {
             mapping.user_id_column: "user_id",
             mapping.event_name_column: "event_name",
@@ -279,18 +288,6 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         for col in metadata_cols:
             grouped_expressions.append(get_cast_expr(col, col))
 
-        group_by_indices = ", ".join([str(i + 1) for i in range(len(grouped_expressions))])
-
-        if mapping.event_count_column:
-            count_expr = f"SUM(CAST({quote_identifier(mapping.event_count_column)} AS INTEGER))"
-        else:
-            count_expr = "COUNT(*)"
-
-        if mapping.revenue_column:
-            rev_expr = f"SUM(COALESCE(CAST({quote_identifier(mapping.revenue_column)} AS DOUBLE), 0.0))"
-        else:
-            rev_expr = "0.0"
-
         # ---------- CALCULATE BOUNDARY ----------
         time_q = quote_identifier(mapping.event_time_column)
         actual_time_type = actual_types.get(mapping.event_time_column)
@@ -306,9 +303,7 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         max_time = max_time_row[0] if max_time_row else None
         
         now_local = datetime.now()
-        # Allow events up to 24h in the future to account for clock drift, but cap extreme dates
         future_cap = now_local + timedelta(days=1)
-
         if max_time:
             if not isinstance(max_time, datetime):
                 try:
@@ -318,20 +313,17 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             import_upper_bound = min(max_time, future_cap)
         else:
             import_upper_bound = future_cap
-
-            
         import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S')
 
-        connection.execute("DROP TABLE IF EXISTS events_raw")
-        connection.execute("DROP TABLE IF EXISTS events_normalized")
-
-        # 1. Create events_raw (row-level, no aggregation)
-        # Preserve original_revenue and event_count as scalar values if mapped, or 1.0/0.0 defaults
+        # ---------- MAPPING INITIALIZATION ----------
+        init_mapping_timer = time_block("mapping_initialization")
+        
+        # 1. Create events_base (Primary physical table with all cleaned data)
         raw_count_expr = f"CAST({quote_identifier(mapping.event_count_column)} AS DOUBLE)" if mapping.event_count_column else "1.0"
         raw_rev_expr = f"COALESCE(CAST({quote_identifier(mapping.revenue_column)} AS DOUBLE), 0.0)" if mapping.revenue_column else "0.0"
 
-        raw_sql = f"""
-            CREATE TABLE events_raw AS
+        base_sql = f"""
+            CREATE TABLE events_base AS
             SELECT
                 {", ".join(grouped_expressions)},
                 {raw_count_expr} AS event_count,
@@ -341,71 +333,92 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             FROM events
             WHERE {raw_time_expr} <= '{import_upper_bound_str}'::TIMESTAMP
         """
-        connection.execute(raw_sql)
+        connection.execute(base_sql)
 
-        # 2. Create events_normalized (aggregated version for metrics/retention)
-        sql = f"""
-            CREATE TABLE events_normalized AS
-            SELECT
-                {", ".join(grouped_expressions)},
-                CAST({count_expr} AS DOUBLE) AS event_count,
-                {rev_expr} AS original_revenue,
-                {rev_expr} AS modified_revenue
-
-            FROM events
-            WHERE {raw_time_expr} <= '{import_upper_bound_str}'::TIMESTAMP
-            GROUP BY {group_by_indices}
-        """
-
-        connection.execute(sql)
-        bad_time = connection.execute("""
-            SELECT 1
-            FROM events_normalized
-            WHERE event_time IS NULL
-            LIMIT 1
-        """).fetchone()
-
-        if bad_time:
-            raise HTTPException(
-                status_code=400,
-                detail="Some event_time values could not be parsed as TIMESTAMP"
-            )
-        row_count = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
-        normalize_timer(row_count=row_count)
+        init_mapping_timer(rows=int(connection.execute("SELECT COUNT(*) FROM events_base").fetchone()[0]))
 
         # ---------- TABLE SETUP ----------
+        # Crucial: Setup columns BEFORE attaching views or indexes to avoid Dependency Error
         setup_timer = time_block("table_setup")
-
-        ensure_normalized_events_revenue_columns(connection)
+        ensure_normalized_events_revenue_columns(connection, table_name="events_base")
         ensure_cohort_tables(connection)
         ensure_scope_tables(connection)
         ensure_revenue_event_selection_table(connection)
 
+        # Defer indexing until after table setup is complete
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_events_base_user ON events_base (user_id)")
+        connection.execute("CREATE INDEX IF NOT EXISTS idx_events_base_row ON events_base (row_id)")
+        
         setup_timer()
+
+        # ---------- DATA NORMALIZATION ----------
+        normalize_timer = time_block("events_normalization")
+
+        # 2. Create events_normalized View (Aggregated version for standard analytics)
+        all_cols_to_group = ["user_id", "event_name", "event_time"] + [quote_identifier(c) for c in metadata_cols]
+        group_by_sql = ", ".join(all_cols_to_group)
+        
+        # Ensure any legacy physical table is dropped to avoid conflicts with view creation
+        try:
+            connection.execute("DROP VIEW IF EXISTS events_normalized")
+        except:
+            pass
+        try:
+            connection.execute("DROP TABLE IF EXISTS events_normalized")
+        except:
+            pass
+
+        meta_select = "".join([quote_identifier(c) + "," for c in metadata_cols])
+
+        view_sql = f"""
+            CREATE OR REPLACE VIEW events_normalized AS
+            SELECT
+                user_id,
+                event_name,
+                event_time,
+                {meta_select}
+                CAST(SUM(event_count) AS DOUBLE) AS event_count,
+                CAST(SUM(original_revenue) AS DOUBLE) AS original_revenue,
+                CAST(SUM(modified_revenue) AS DOUBLE) AS modified_revenue,
+                MIN(row_id) AS row_id
+            FROM events_base
+            WHERE user_id IS NOT NULL 
+              AND event_name IS NOT NULL 
+              AND event_time IS NOT NULL
+            GROUP BY {group_by_sql}
+        """
+        connection.execute(view_sql)
+        
+        # Fail Fast: Sanity checks
+        row_count = int(connection.execute("SELECT COUNT(*) FROM events_base").fetchone()[0])
+        if row_count == 0:
+            raise HTTPException(status_code=400, detail="Normalization produced 0 rows. Check your column mapping.")
+
+        normalize_timer(row_count=row_count)
 
         # ---------- DATASET INITIALIZATION ----------
         init_timer = time_block("dataset_initialization")
 
-        connection.execute("DELETE FROM cohort_membership")
-        connection.execute("DELETE FROM cohort_activity_snapshot")
+        # Global delete across all cohort-related tables
         connection.execute("DELETE FROM cohort_conditions")
         connection.execute("DELETE FROM cohorts")
 
-        initialize_scoped_dataset(connection)
+        # Specialized initializer: Skips activity refresh redundant scan
+        initialize_scoped_dataset_for_mapping(connection)
 
         init_timer()
 
         # ---------- REVENUE PIPELINE ----------
         if mapping.revenue_column:
             revenue_timer = time_block("revenue_initialization")
-
-            # Reset revenue config for new dataset
             connection.execute("DELETE FROM revenue_event_selection")
-
             initialize_revenue_event_selection(connection)
-            recompute_modified_revenue_columns(connection, "events_raw")
-            recompute_modified_revenue_columns(connection, "events_normalized")
-
+            recompute_modified_revenue_columns(connection, "events_base")
+            
+            # Refresh views as table replacement via CTAS may require catalog sync
+            from app.domains.scope.filter_service import refresh_scoped_views
+            refresh_scoped_views(connection)
+            
             revenue_timer()
         else:
             connection.execute("DELETE FROM revenue_event_selection")
@@ -414,6 +427,13 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         cohort_timer = time_block("cohort_initialization")
 
         create_all_users_cohort(connection)
+        
+        # Invariant Guard: Ensure membership exists before snapshot
+        membership_count = int(connection.execute("SELECT COUNT(*) FROM cohort_membership").fetchone()[0])
+        if membership_count == 0:
+             raise HTTPException(status_code=500, detail="Initial cohort membership build failed")
+
+        # Final Single Activity Refresh
         refresh_cohort_activity(connection)
 
         cohort_timer()
@@ -433,11 +453,19 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
 
         total_events = stats.get("total_events") or 0
         total_users = stats.get("total_users") or 0
+        
+        if total_users == 0:
+             raise HTTPException(status_code=400, detail="No unique users identified. Verify user_id mapping.")
 
         stats_timer()
+        
+        connection.commit()
 
-    except duckdb.ConversionException as exc:
-        raise HTTPException(status_code=400, detail="Failed to convert event_time column to TIMESTAMP") from exc
+    except Exception as e:
+        connection.rollback()
+        if isinstance(e, duckdb.ConversionException):
+            raise HTTPException(status_code=400, detail="Failed to convert event_time column to TIMESTAMP") from e
+        raise e
 
     return {
         "status": "ok",

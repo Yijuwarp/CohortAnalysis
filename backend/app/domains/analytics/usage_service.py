@@ -8,16 +8,14 @@ from fastapi import HTTPException
 logger = logging.getLogger(__name__)
 from app.utils.perf import time_block
 from app.utils.sql import quote_identifier, classify_column
+from app.utils.db_utils import check_table_exists
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.domains.analytics.retention_service import build_active_cohort_base
 from app.utils.time_boundary import get_observation_end_time
 from app.queries.usage_queries import build_usage_property_filter_clause
 
 def list_events(connection: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
-    if not scoped_exists:
+    if not check_table_exists(connection, "events_scoped"):
         return {"events": []}
 
     rows = connection.execute("SELECT DISTINCT event_name FROM events_scoped ORDER BY event_name").fetchall()
@@ -25,10 +23,7 @@ def list_events(connection: duckdb.DuckDBPyConnection) -> dict[str, list[str]]:
 
 
 def get_event_properties(connection: duckdb.DuckDBPyConnection, event_name: str) -> dict[str, list[str]]:
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
-    if not scoped_exists:
+    if not check_table_exists(connection, "events_scoped"):
         return {"properties": []}
 
     event_exists = connection.execute("SELECT 1 FROM events_scoped WHERE event_name = ? LIMIT 1", [event_name]).fetchone()
@@ -56,10 +51,7 @@ def get_event_property_values(
     property: str,
     limit: int = 25,
 ) -> dict[str, object]:
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
-    if not scoped_exists:
+    if not check_table_exists(connection, "events_scoped"):
         return {"values": [], "total_distinct": 0}
 
     event_exists = connection.execute("SELECT 1 FROM events_scoped WHERE event_name = ? LIMIT 1", [event_name]).fetchone()
@@ -116,11 +108,8 @@ def get_usage(
     value: str | None = None,
 ) -> dict[str, object]:
     retention_event = retention_event or "any"
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
     ensure_cohort_tables(connection)
-
+    
     empty_response = {
         "max_day": int(max_day),
         "event": event,
@@ -131,7 +120,8 @@ def get_usage(
         "usage_adoption_table": [],
         "retained_users_table": [],
     }
-    if not scoped_exists:
+
+    if not check_table_exists(connection, "events_scoped"):
         return empty_response
 
     end_timer = time_block("usage_query")
@@ -144,9 +134,6 @@ def get_usage(
     if event_exists is None:
         end_timer(event=event, max_day=max_day, retention_event=retention_event, error="event_not_found")
         return empty_response
-
-    count = connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
-    print("USAGE: using events_scoped row count:", count)
 
     known_columns = {
         row[0]
@@ -179,14 +166,16 @@ def get_usage(
     usage_adoption_table = []
     retained_users_table = []
     
-    for cohort_id, cohort_name in cohorts:
+    for cohort_id, cohort_name, join_type in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
         
         # 1. Volume & Unique Vectors
+        join_type = next((c[2] for c in cohorts if c[0] == cohort_id), "condition_met")
         vol_sql, vol_params = build_usage_vector_sql(
             cohort_id=cohort_id,
             max_day=max_day,
+            join_type=join_type,
             event_name=event,
             metric="volume",
             property_clause=property_clause,
@@ -203,6 +192,7 @@ def get_usage(
         unique_sql, unique_params = build_usage_vector_sql(
             cohort_id=cohort_id,
             max_day=max_day,
+            join_type=join_type,
             event_name=event,
             metric="unique",
             property_clause=property_clause,
@@ -227,11 +217,13 @@ def get_usage(
                 adoption_increment[day] += 1
         
         # 3. Retained Users
+        join_type = next((c[2] for c in cohorts if c[0] == cohort_id), "condition_met")
         ret_sql, ret_params = build_retention_vector_sql(
             cohort_id=cohort_id,
             max_day=max_day,
             retention_event=retention_event,
-            observation_end_time=observation_end_time
+            observation_end_time=observation_end_time,
+            join_type=join_type
         )
         ret_agg_sql = f"SELECT day_offset, SUM(value::INTEGER), SUM(is_eligible::INTEGER) FROM ({ret_sql}) GROUP BY 1"
         ret_rows = connection.execute(ret_agg_sql, ret_params).fetchall()
@@ -290,7 +282,7 @@ def get_usage(
         "usage_users_table": usage_users_table,
         "usage_adoption_table": usage_adoption_table,
         "retained_users_table": retained_users_table,
-        "observation_end_time": get_observation_end_time(connection).isoformat() if get_observation_end_time(connection) else None
+        "observation_end_time": observation_end_time.isoformat() if observation_end_time else None
     }
 
 
@@ -301,12 +293,9 @@ def get_usage_frequency(
     operator: str = "=",
     value: str | None = None,
 ) -> dict[str, object]:
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
     ensure_cohort_tables(connection)
 
-    if not scoped_exists:
+    if not check_table_exists(connection, "events_scoped"):
         return {"buckets": [], "cohort_sizes": []}
 
     cohorts, cohort_sizes_map = build_active_cohort_base(connection)
@@ -417,7 +406,7 @@ def get_usage_frequency(
             bucket_data[bucket][cohort_id] = users
 
     # Validation: Buckets sum to cohort size
-    for cid, name in cohorts:
+    for cid, name, jtype in cohorts:
         size = cohort_sizes_map.get(cid, 0)
         total_bucket_users = sum(bucket_data[b].get(cid, 0) for b in bucket_order)
         if total_bucket_users != size:

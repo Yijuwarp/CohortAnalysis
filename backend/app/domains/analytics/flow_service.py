@@ -146,15 +146,7 @@ def _build_level_sql(
 
     property_exists_clause = ""
     if property_column:
-        property_exists_clause = f"""
-        AND EXISTS (
-            SELECT 1 FROM events_scoped es
-            WHERE es.user_id = e.user_id
-              AND es.event_time = e.event_time
-              AND es.event_name = e.event_name
-              {property_clause}
-        )
-        """
+        property_exists_clause = property_clause
 
     ctes: list[str] = [
         f"""
@@ -188,8 +180,11 @@ def _build_level_sql(
                     FROM cohort_activity_snapshot e
                     WHERE e.user_id = s.user_id
                       AND e.cohort_id = s.cohort_id
-                      AND e.event_time >= s.parent_time
-                      AND e.row_id != s.parent_row_id
+                      AND (
+                        ('{direction}' = 'forward' AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id)))
+                        OR
+                        ('{direction}' = 'reverse' AND (e.event_time < s.parent_time OR (e.event_time = s.parent_time AND e.row_id < s.parent_row_id)))
+                      )
                     ORDER BY e.event_time {order_dir}, e.row_id {order_dir}
                     LIMIT 1
                 ) n ON TRUE
@@ -215,9 +210,9 @@ def _build_level_sql(
                 WHERE e.user_id = s.user_id
                   AND e.cohort_id = s.cohort_id
                   AND (
-                    ('{direction}' = 'forward' AND e.event_time >= s.parent_time AND e.row_id != s.parent_row_id)
+                    ('{direction}' = 'forward' AND (e.event_time > s.parent_time OR (e.event_time = s.parent_time AND e.row_id > s.parent_row_id)))
                     OR
-                    ('{direction}' = 'reverse' AND e.event_time <= s.parent_time AND e.row_id != s.parent_row_id)
+                    ('{direction}' = 'reverse' AND (e.event_time < s.parent_time OR (e.event_time = s.parent_time AND e.row_id < s.parent_row_id)))
                   )
                 ORDER BY e.event_time {order_dir}, e.row_id {order_dir}
                 LIMIT 1

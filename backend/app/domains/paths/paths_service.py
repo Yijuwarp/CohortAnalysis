@@ -306,7 +306,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     Uses the Union Candidates pattern for clean SQL and traceability.
     """
     use_filters = path_uses_filters(steps)
-    source_table = get_raw_events_source_table(conn) if use_filters else "cohort_activity_snapshot"
+    source_table = "events_base"
     col_types = _get_column_types(conn, source_table)
     
     # Pre-calculate which columns we need to project
@@ -328,17 +328,11 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     # ---------------- BASE CTE (Materialized with Tie-Break) ----------------
     proj_list = []
     if not has_cohort_id:
-        proj_list.append("cm.cohort_id")
-        source_ref = f"{source_table} e JOIN cohort_membership cm ON e.user_id = cm.user_id AND e.event_time >= cm.join_time"
-        if cohort_id is not None:
-            source_ref += f" AND cm.cohort_id = {cohort_id}"
-        event_ref = "e"
-    else:
-        proj_list.append("cohort_id")
-        source_ref = source_table
-        if cohort_id is not None:
-            source_ref += f" WHERE cohort_id = {cohort_id}"
-        event_ref = ""
+        proj_list.append("cel.cohort_id")
+    source_ref = f"events_base e JOIN cohort_event_link cel ON e.row_id = cel.row_id"
+    if cohort_id is not None:
+        source_ref += f" AND cel.cohort_id = {cohort_id}"
+    event_ref = "e"
         
     for c in available_select:
         safe_c = f'"{c.replace(chr(34), chr(34)+chr(34))}"'
@@ -353,8 +347,8 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
       SELECT
         {", ".join(proj_list)},
         ROW_NUMBER() OVER (
-          PARTITION BY {"cm.cohort_id" if not has_cohort_id else "cohort_id"}, {prefix}user_id
-          ORDER BY {prefix}event_time, {tie_breaker}
+          PARTITION BY cel.cohort_id, e.user_id
+          ORDER BY e.event_time, e.row_id
         ) AS rn
       FROM {source_ref}
     ),
@@ -402,8 +396,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
                 FROM step_{prev} s
                 JOIN base b ON b.user_id = s.user_id AND b.cohort_id = s.cohort_id
                 WHERE b.event_name = '{safe_event}' {filter_clause}
-                  AND b.event_time >= s.t{prev}
-                  AND b.rn NOT IN ({", ".join([f"COALESCE(s.rn{j}, -1)" for j in range(1, s_idx)])})
+                  AND (b.event_time > s.t{prev} OR (b.event_time = s.t{prev} AND b.rn > s.rn{prev}))
                   {gap_clause}
                 """
             group_queries.append(query)
@@ -766,11 +759,12 @@ def _materialize_paths_cohort(conn: duckdb.DuckDBPyConnection, name: str, users:
     source_table = get_events_source_table(conn)
 
     conn.execute(f"""
-        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-        SELECT m.cohort_id, e.user_id, e.event_time, e.event_name
-        FROM {source_table} e
+        INSERT INTO cohort_event_link (cohort_id, row_id)
+        SELECT m.cohort_id, e.row_id
+        FROM events_base e
         JOIN cohort_membership m ON e.user_id = m.user_id
         WHERE m.cohort_id = {new_c_id}
+          AND e.event_time >= m.join_time
     """)
 
     return {"cohort_id": int(new_c_id), "name": name, "user_count": len(users)}

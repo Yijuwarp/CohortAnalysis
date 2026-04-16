@@ -39,9 +39,18 @@ def ensure_scope_tables(connection: duckdb.DuckDBPyConnection) -> None:
 
 def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[str, object]) -> dict[str, int]:
     ensure_scope_tables(connection)
-    total_rows = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
-    filtered_rows = int(connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0])
-    total_events = int(connection.execute("SELECT COALESCE(SUM(event_count), 0) FROM events_scoped").fetchone()[0] or 0)
+    # Consolidate aggregation queries for better performance
+    all_metrics = connection.execute("""
+        SELECT 
+            (SELECT COUNT(*) FROM events_normalized),
+            COUNT(*), 
+            COALESCE(SUM(event_count), 0)
+        FROM events_scoped
+    """).fetchone()
+    
+    total_rows = int(all_metrics[0] or 0)
+    filtered_rows = int(all_metrics[1] or 0)
+    total_events = int(all_metrics[2] or 0)
 
     connection.execute(
         """

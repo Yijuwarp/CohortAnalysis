@@ -18,14 +18,16 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
     tmp_path = None
     try:
         file_size = 0
-
+        save_timer = time_block("upload_file_save")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
             while chunk := await file.read(1024 * 1024):
                 file_size += len(chunk)
                 tmp.write(chunk)
             tmp_path = tmp.name
+        save_timer(file_size=file_size)
 
         try:
+            db_timer = time_block("upload_db_ingestion")
             input_rows = connection.execute(
                 "SELECT COUNT(*) FROM read_csv(?, auto_detect=true, ignore_errors=false)",
                 [tmp_path],
@@ -53,8 +55,11 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                     [tmp_path],
                 )
             except Exception as exc:
+                db_timer(error=str(exc))
                 end_timer(error=str(exc))
                 raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(exc)}") from exc
+            
+            db_timer(input_rows=input_rows)
 
             row_count = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
             skipped_rows = max(input_rows - row_count, 0)

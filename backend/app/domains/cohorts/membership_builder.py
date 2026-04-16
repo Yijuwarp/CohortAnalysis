@@ -8,29 +8,24 @@ from app.utils.perf import time_block
 from app.utils.sql import quote_identifier, get_column_type_map, get_column_kind
 from app.utils import timestamp
 
-def build_cohort_membership(
+def get_cohort_membership_sql_parts(
     connection: duckdb.DuckDBPyConnection,
     cohort_id: int,
     source_table: str,
-    target_table: str = "cohort_membership",
-) -> None:
-    if source_table not in {"events_normalized", "events_scoped"}:
-        raise ValueError("Unsupported source table")
-
-    from app.utils.db_utils import to_dict
-    res = connection.execute("SELECT logic_operator, join_type, source_saved_id FROM cohorts WHERE cohort_id = ?", [cohort_id])
+    column_types: dict[str, str],
+    cte_prefix: str = "c"
+) -> tuple[list[str], list[object], str]:
+    """
+    Returns (cte_parts, query_params, combined_conditions_cte_name)
+    """
+    from app.utils.db_utils import to_dict, to_dicts
+    res = connection.execute("SELECT logic_operator, join_type FROM cohorts WHERE cohort_id = ?", [cohort_id])
     cohort_row = to_dict(res, res.fetchone())
     if not cohort_row:
-        raise HTTPException(status_code=404, detail="Cohort not found")
+        raise HTTPException(status_code=404, detail=f"Cohort {cohort_id} not found")
 
     logic_operator = str(cohort_row.get("logic_operator") or "OR").upper()
-    join_type = str(cohort_row.get("join_type") or "condition_met")
-    source_saved_id = cohort_row.get("source_saved_id")
-
-    if target_table == "cohort_membership":
-        connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
-        connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
-
+    
     cursor = connection.execute(
         """
         SELECT event_name, min_event_count, property_column, property_operator, property_values,
@@ -41,80 +36,90 @@ def build_cohort_membership(
         """,
         [cohort_id],
     )
-    from app.utils.db_utils import to_dicts
     conditions = to_dicts(cursor, cursor.fetchall())
 
-    column_types = get_column_type_map(connection, source_table)
+    cte_parts: list[str] = []
+    query_params: list[object] = []
 
     if not conditions:
-        connection.execute(
+        # Default All Users logic
+        cte_name = f"{cte_prefix}_all"
+        cte_parts.append(
             f"""
-            INSERT INTO {target_table} (user_id, cohort_id, join_time)
-            SELECT user_id, ?, MIN(event_time)
-            FROM {source_table}
-            GROUP BY user_id
-            ON CONFLICT (cohort_id, user_id) DO NOTHING
-            """,
-            [cohort_id],
-        )
-    else:
-        has_negated = any(bool(row["is_negated"]) for row in conditions)
-
-        cte_parts: list[str] = []
-        query_params: list[object] = []
-
-        # Compute all_users once if any condition is negated
-        if has_negated:
-            cte_parts.append(
-                f"all_users AS (SELECT DISTINCT user_id FROM {source_table})"
+            {cte_name} AS (
+                SELECT user_id, MIN(event_time) AS event_time
+                FROM {source_table}
+                GROUP BY user_id
             )
+            """
+        )
+        return cte_parts, query_params, cte_name
 
-        for index, crow in enumerate(conditions):
-            event_name = crow["event_name"]
-            min_event_count = crow["min_event_count"]
-            property_column = crow["property_column"]
-            property_operator = crow["property_operator"]
-            property_values = crow["property_values"]
-            is_negated = crow["is_negated"]
+    has_negated = any(bool(row["is_negated"]) for row in conditions)
+    if has_negated:
+        cte_parts.append(
+            f"{cte_prefix}_all_users AS (SELECT DISTINCT user_id FROM {source_table})"
+        )
 
-            event_conditions = ["event_name = ?"]
-            event_params: list[object] = [event_name]
+    for index, crow in enumerate(conditions):
+        event_name = crow["event_name"]
+        min_event_count = crow["min_event_count"]
+        property_column = crow["property_column"]
+        property_operator = crow["property_operator"]
+        property_values = crow["property_values"]
+        is_negated = crow["is_negated"]
 
-            if property_column and property_operator and property_values is not None:
-                from app.domains.cohorts.cohort_service import normalize_values
-                parsed_values = normalize_values(property_values)
-                normalized_operator = str(property_operator).upper()
-                column_kind = get_column_kind(column_types.get(str(property_column), "TEXT"))
-                if column_kind == "TIMESTAMP":
-                    if normalized_operator in {"IN", "NOT IN"}:
-                        timestamp_value = parsed_values
-                    else:
-                        timestamp_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
-                    
-                    normalized_operator, timestamp_value = timestamp.migrate_legacy_timestamp_filter(normalized_operator, timestamp_value)
-                    clause, params = timestamp.build_sql_clause(
-                        quote_identifier(str(property_column)),
-                        normalized_operator,
-                        timestamp_value,
-                        parameterized=True,
-                    )
-                    event_conditions.append(clause)
-                    event_params.extend(params)
-                elif normalized_operator in {"IN", "NOT IN"}:
-                    placeholders = ", ".join(["?"] * len(parsed_values))
-                    event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
-                    event_params.extend(parsed_values)
+        event_conditions = ["event_name = ?"]
+        event_params: list[object] = [event_name]
+
+        if property_column and property_operator and property_values is not None:
+            from app.domains.cohorts.cohort_service import normalize_values
+            parsed_values = normalize_values(property_values)
+            normalized_operator = str(property_operator).upper()
+            column_kind = get_column_kind(column_types.get(str(property_column), "TEXT"))
+            if column_kind == "TIMESTAMP":
+                if normalized_operator in {"IN", "NOT IN"}:
+                    timestamp_value = parsed_values
                 else:
-                    scalar_value = parsed_values[0] if isinstance(parsed_values, list) else parsed_values
-                    event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ?")
-                    event_params.append(scalar_value)
+                    timestamp_value = parsed_values[0] if isinstance(parsed_values, list) and parsed_values else parsed_values
+                
+                normalized_operator, timestamp_value = timestamp.migrate_legacy_timestamp_filter(normalized_operator, timestamp_value)
+                clause, params = timestamp.build_sql_clause(
+                    quote_identifier(str(property_column)),
+                    normalized_operator,
+                    timestamp_value,
+                    parameterized=True,
+                )
+                event_conditions.append(clause)
+                event_params.extend(params)
+            elif normalized_operator in {"IN", "NOT IN"}:
+                placeholders = ", ".join(["?"] * len(parsed_values))
+                event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ({placeholders})")
+                event_params.extend(parsed_values)
+            else:
+                scalar_value = parsed_values[0] if isinstance(parsed_values, list) else parsed_values
+                event_conditions.append(f"{quote_identifier(str(property_column))} {normalized_operator} ?")
+                event_params.append(scalar_value)
 
-            where_clause = " AND ".join(event_conditions)
-
-            # Base condition CTE: users who DID perform the event
+        where_clause = " AND ".join(event_conditions)
+        base_cte = f"{cte_prefix}_cond{index}_base"
+        
+        if int(min_event_count) <= 1:
             cte_parts.append(
                 f"""
-                c{index}_base AS (
+                {base_cte} AS (
+                    SELECT user_id, MIN(event_time) AS event_time
+                    FROM {source_table}
+                    WHERE {where_clause}
+                    GROUP BY user_id
+                )
+                """
+            )
+            query_params.extend(event_params)
+        else:
+            cte_parts.append(
+                f"""
+                {base_cte} AS (
                     SELECT user_id, MIN(event_time) AS event_time
                     FROM (
                         SELECT
@@ -133,60 +138,90 @@ def build_cohort_membership(
                 )
                 """
             )
-            query_params.extend([*event_params, min_event_count])
+            query_params.extend(event_params)
+            query_params.append(min_event_count)
 
-            if bool(is_negated):
-                # Negated: all_users EXCEPT users who DID perform the event
-                # For join_time, use the user's earliest event in the source table
-                cte_parts.append(
-                    f"""
-                    c{index} AS (
-                        SELECT au.user_id, MIN(e.event_time) AS event_time
-                        FROM all_users au
-                        LEFT JOIN {source_table} e ON au.user_id = e.user_id
-                        WHERE au.user_id NOT IN (SELECT user_id FROM c{index}_base)
-                        GROUP BY au.user_id
-                    )
-                    """
+        final_cond_cte = f"{cte_prefix}_cond{index}"
+        if bool(is_negated):
+            cte_parts.append(
+                f"""
+                {final_cond_cte} AS (
+                    SELECT au.user_id, MIN(e.event_time) AS event_time
+                    FROM {cte_prefix}_all_users au
+                    LEFT JOIN {base_cte} cb ON au.user_id = cb.user_id
+                    LEFT JOIN {source_table} e ON au.user_id = e.user_id
+                    WHERE cb.user_id IS NULL
+                    GROUP BY au.user_id
                 )
-            else:
-                cte_parts.append(f"c{index} AS (SELECT user_id, event_time FROM c{index}_base)")
-
-        if logic_operator == "AND":
-            if len(conditions) == 1:
-                cte_parts.append("combined_conditions AS (SELECT user_id, event_time FROM c0)")
-            else:
-                least_time_expression = ", ".join([f"c{index}.event_time" for index in range(len(conditions))])
-                join_clauses = "\n".join(
-                    [f"INNER JOIN c{index} ON c0.user_id = c{index}.user_id" for index in range(1, len(conditions))]
-                )
-                cte_parts.append(
-                    f"""
-                    combined_conditions AS (
-                        SELECT c0.user_id, LEAST({least_time_expression}) AS event_time
-                        FROM c0
-                        {join_clauses}
-                    )
-                    """
-                )
-        else:
-            # Use UNION ALL and then GROUP BY user_id + MIN(event_time) downstream
-            union_query = "\nUNION ALL\n".join(
-                [f"SELECT user_id, event_time FROM c{index}" for index in range(len(conditions))]
+                """
             )
-            cte_parts.append(f"combined_conditions AS ({union_query})")
+        else:
+            cte_parts.append(f"{final_cond_cte} AS (SELECT user_id, event_time FROM {base_cte})")
 
-        connection.execute(
-            f"""
-            INSERT INTO {target_table} (user_id, cohort_id, join_time)
-            WITH {', '.join(cte_parts)}
-            SELECT user_id, ?, MIN(event_time)
-            FROM combined_conditions
-            GROUP BY user_id
-            ON CONFLICT (cohort_id, user_id) DO NOTHING
-            """,
-            [*query_params, cohort_id],
+    combined_cte = f"{cte_prefix}_combined"
+    if logic_operator == "AND":
+        if len(conditions) == 1:
+            cte_parts.append(f"{combined_cte} AS (SELECT user_id, event_time FROM {cte_prefix}_cond0)")
+        else:
+            least_time_expression = ", ".join([f"{cte_prefix}_cond{index}.event_time" for index in range(len(conditions))])
+            join_clauses = "\n".join(
+                [f"INNER JOIN {cte_prefix}_cond{index} ON {cte_prefix}_cond0.user_id = {cte_prefix}_cond{index}.user_id" for index in range(1, len(conditions))]
+            )
+            cte_parts.append(
+                f"""
+                {combined_cte} AS (
+                    SELECT {cte_prefix}_cond0.user_id, LEAST({least_time_expression}) AS event_time
+                    FROM {cte_prefix}_cond0
+                    {join_clauses}
+                )
+                """
+            )
+    else:
+        union_query = "\nUNION ALL\n".join(
+            [f"SELECT user_id, event_time FROM {cte_prefix}_cond{index}" for index in range(len(conditions))]
         )
+        cte_parts.append(f"{combined_cte} AS (SELECT user_id, event_time FROM ({union_query}) t)")
+
+    return cte_parts, query_params, combined_cte
+
+
+def build_cohort_membership(
+    connection: duckdb.DuckDBPyConnection,
+    cohort_id: int,
+    source_table: str,
+    target_table: str = "cohort_membership",
+) -> None:
+    if source_table not in {"events_normalized", "events_scoped"}:
+        raise ValueError("Unsupported source table")
+
+    from app.utils.db_utils import to_dict
+    res = connection.execute("SELECT join_type FROM cohorts WHERE cohort_id = ?", [cohort_id])
+    cohort_row = to_dict(res, res.fetchone())
+    if not cohort_row:
+        raise HTTPException(status_code=404, detail="Cohort not found")
+
+    join_type = str(cohort_row.get("join_type") or "condition_met")
+    column_types = get_column_type_map(connection, source_table)
+
+    if target_table == "cohort_membership":
+        connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
+        connection.execute("DELETE FROM cohort_event_link WHERE cohort_id = ?", [cohort_id])
+
+    cte_parts, query_params, combined_cte = get_cohort_membership_sql_parts(
+        connection, cohort_id, source_table, column_types
+    )
+
+    connection.execute(
+        f"""
+        INSERT INTO {target_table} (user_id, cohort_id, join_time)
+        WITH {', '.join(cte_parts)}
+        SELECT user_id, ?, MIN(event_time)
+        FROM {combined_cte}
+        GROUP BY user_id
+        ON CONFLICT (cohort_id, user_id) DO NOTHING
+        """,
+        [*query_params, cohort_id],
+    )
 
     if join_type == "first_event":
         connection.execute(
@@ -204,26 +239,7 @@ def build_cohort_membership(
             [cohort_id],
         )
 
-    # Fill the activity snapshot with row-level data for sequencing (Paths/Flows)
-    snapshot_table = target_table.replace('membership', 'activity_snapshot')
-    snapshot_source = source_table + "_raw" if source_table == "events_scoped" else ("events_raw" if source_table == "events_normalized" else source_table)
-    
-    # Check if the raw source actually exists
-    raw_exists = connection.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{snapshot_source}'").fetchone()[0]
-    if not raw_exists:
-        snapshot_source = source_table
-
-    connection.execute(
-        f"""
-        INSERT INTO {snapshot_table} (cohort_id, user_id, event_time, event_name, row_id, source_saved_id)
-        SELECT ?, e.user_id, e.event_time, e.event_name, e.row_id, ?
-        FROM {snapshot_source} e
-        JOIN {target_table} cm
-            ON cm.user_id = e.user_id
-           AND cm.cohort_id = ?
-        """,
-        [cohort_id, source_saved_id, cohort_id],
-    )
+    # Note: Link build is now strictly deferred to activity_service refresh
 
 
 
@@ -241,7 +257,9 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
 
     res = connection.execute("SELECT cohort_id FROM cohorts ORDER BY cohort_id")
     cohort_ids = [int(row["cohort_id"]) for row in to_dicts(res, res.fetchall())]
-    
+    if not cohort_ids:
+        return
+
     connection.execute("DROP TABLE IF EXISTS cohort_membership_staging")
     connection.execute("""
         CREATE TEMP TABLE cohort_membership_staging (
@@ -252,54 +270,117 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
         )
     """)
     
-    connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot_staging")
-    connection.execute("""
-        CREATE TEMP TABLE cohort_activity_snapshot_staging (
-            cohort_id INTEGER,
-            user_id TEXT,
-            event_time TIMESTAMP,
-            event_name TEXT,
-            row_id BIGINT,
-            source_saved_id UUID
-        )
-    """)
-
+    column_types = get_column_type_map(connection, "events_scoped")
+    batch_size = 10  # Process 10 cohorts at a time to keep SQL size manageable
 
     try:
         end_timer = time_block("cohort_rebuild")
-        for cohort_id in cohort_ids:
-            build_cohort_membership(connection, cohort_id, "events_scoped", target_table="cohort_membership_staging")
-
-            res_size = connection.execute(
-                "SELECT COUNT(*) as cohort_size FROM cohort_membership_staging WHERE cohort_id = ?",
-                [cohort_id],
-            )
-            cohort_size = to_dict(res_size, res_size.fetchone()).get("cohort_size", 0)
-            connection.execute(
-                "UPDATE cohorts SET is_active = ? WHERE cohort_id = ?",
-                [bool(cohort_size > 0), cohort_id],
-            )
-        end_timer(cohort_count=len(cohort_ids))
         
-        connection.execute("BEGIN")
-        connection.execute("DELETE FROM cohort_membership")
+        # Optimization: Pre-calculate the absolute minimum arrival time for every user in one pass.
+        # This will be used directly for ALL cohorts with join_type = 'first_event'.
+        connection.execute("DROP TABLE IF EXISTS user_arrival_times")
         connection.execute("""
-            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
+            CREATE TEMP TABLE user_arrival_times AS
+            SELECT user_id, MIN(event_time) as arrival_time
+            FROM events_scoped
+            GROUP BY user_id
+        """)
+        connection.execute("CREATE INDEX idx_arrival_user ON user_arrival_times (user_id)")
+
+        for i in range(0, len(cohort_ids), batch_size):
+            batch_cohort_ids = cohort_ids[i:i + batch_size]
+            end_batch_timer = time_block(f"cohort_batch_{i//batch_size}")
+            
+            # Fetch join_type for each cohort in the batch
+            placeholders = ", ".join(["?"] * len(batch_cohort_ids))
+            jt_cursor = connection.execute(f"SELECT cohort_id, join_type FROM cohorts WHERE cohort_id IN ({placeholders})", batch_cohort_ids)
+            join_types = {row[0]: str(row[1] or "condition_met") for row in jt_cursor.fetchall()}
+            
+            # Fetch condition count for each cohort to detect "All Users" fast-path
+            cond_cursor = connection.execute(f"SELECT cohort_id, COUNT(*) as c FROM cohort_conditions WHERE cohort_id IN ({placeholders}) GROUP BY cohort_id", batch_cohort_ids)
+            cond_counts = {row[0]: row[1] for row in cond_cursor.fetchall()}
+
+            all_cte_parts: list[str] = []
+            select_clauses: list[str] = []
+            batch_cte_params: list[object] = []
+            batch_cid_params: list[object] = []
+            
+            for index, cid in enumerate(batch_cohort_ids):
+                cte_prefix = f"b{i}_h{index}"
+                join_type = join_types.get(cid, "condition_met")
+                has_conditions = cond_counts.get(cid, 0) > 0
+
+                if not has_conditions:
+                    # Fast-path: "All Users" - select from arrival times directly
+                    select_clauses.append(f"SELECT user_id, ? AS cohort_id, arrival_time as join_time FROM user_arrival_times")
+                    batch_cid_params.append(cid)
+                    continue
+
+                ctes, params, final_cte = get_cohort_membership_sql_parts(
+                    connection, cid, "events_scoped", column_types, cte_prefix=cte_prefix
+                )
+                all_cte_parts.extend(ctes)
+                batch_cte_params.extend(params)
+                
+                # Optimized Select: Direct join_time based on join_type
+                if join_type == "first_event":
+                    # Optimization: Join the qualifying user set with our pre-calculated arrival times
+                    select_clauses.append(f"""
+                        SELECT f.user_id, ? AS cohort_id, a.arrival_time as join_time
+                        FROM {final_cte} f
+                        JOIN user_arrival_times a ON f.user_id = a.user_id
+                        GROUP BY f.user_id, a.arrival_time
+                    """)
+                else:
+                    # Standard logic: Join on first qualifying event
+                    select_clauses.append(f"SELECT user_id, ? AS cohort_id, MIN(event_time) as join_time FROM {final_cte} GROUP BY user_id")
+                
+                batch_cid_params.append(cid)
+
+            if not select_clauses:
+                end_batch_timer()
+                continue
+
+            combined_insert_sql = f"""
+                INSERT INTO cohort_membership_staging (user_id, cohort_id, join_time)
+                {f"WITH {', '.join(all_cte_parts)}" if all_cte_parts else ""}
+                {' UNION ALL '.join(select_clauses)}
+                ON CONFLICT (cohort_id, user_id) DO NOTHING
+            """
+            
+            connection.execute(combined_insert_sql, batch_cte_params + batch_cid_params)
+            end_batch_timer(batch_size=len(batch_cohort_ids))
+
+        # 3. Update active status
+        end_status_timer = time_block("membership_status_update")
+        connection.execute("""
+            UPDATE cohorts
+            SET is_active = (sub.size > 0)
+            FROM (
+                SELECT c.cohort_id, COUNT(cms.user_id) as size
+                FROM cohorts c
+                LEFT JOIN cohort_membership_staging cms ON c.cohort_id = cms.cohort_id
+                GROUP BY c.cohort_id
+            ) sub
+            WHERE cohorts.cohort_id = sub.cohort_id
+        """)
+        end_status_timer()
+
+        end_timer(cohort_count=len(cohort_ids))
+
+        # 4. Swap staging into the real cohort_membership table
+        end_swap_timer = time_block("membership_swap")
+        connection.execute("""
+            CREATE OR REPLACE TABLE cohort_membership AS 
             SELECT user_id, cohort_id, join_time FROM cohort_membership_staging
         """)
-        connection.execute("DELETE FROM cohort_activity_snapshot")
-        connection.execute("""
-            INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id, source_saved_id)
-            SELECT cohort_id, user_id, event_time, event_name, row_id, source_saved_id FROM cohort_activity_snapshot_staging
-        """)
+        
+        from app.domains.cohorts.cohort_service import recreate_membership_indexes
+        recreate_membership_indexes(connection)
+        end_swap_timer()
 
-        connection.execute("COMMIT")
     except Exception:
-        try:
-            connection.execute("ROLLBACK")
-        except Exception:
-            pass
         raise
     finally:
         connection.execute("DROP TABLE IF EXISTS cohort_membership_staging")
-        connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot_staging")
+        connection.execute("DROP TABLE IF EXISTS user_arrival_times")
