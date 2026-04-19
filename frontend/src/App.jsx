@@ -221,6 +221,8 @@ function AppWorkspace({ userId, onLogout }) {
   const [analyticsState, setAnalyticsState] = useState(() => readAnalyticsState(userId))
   const [scopeVersion, setScopeVersion] = useState(0)
   const [cohorts, setCohorts] = useState([])
+  const [savedCohorts, setSavedCohorts] = useState([])
+  const [columnsSet, setColumnsSet] = useState(new Set())
   const [cohortsRefreshToken, setCohortsRefreshToken] = useState(0)
   const [exportBuffer, setExportBuffer] = useState([])
   const [appliedFilters, setAppliedFilters] = useState([])
@@ -295,18 +297,28 @@ function AppWorkspace({ userId, onLogout }) {
     markTabsStale()
   }, [markTabsStale])
 
-  const refreshTab = useCallback(async (tabKey) => {
-    setTabReloading(prev => ({ ...prev, [tabKey]: true }))
+  const loadGlobalMetadata = useCallback(async () => {
     try {
-      const [eventsPayload, cohortsPayload, columnsRes] = await Promise.all([
+      const { getSavedCohorts } = await import('./api')
+      const [eventsPayload, cohortsPayload, savedRes, columnsRes] = await Promise.all([
         listEvents(),
         listCohorts(),
+        getSavedCohorts(),
         getColumns().catch(() => ({ columns: [] }))
       ])
-      setEvents(eventsPayload.events || [])
-      const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
-      const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => {
-        const schemaValid = isCohortSchemaValid(c, columnsSet)
+      
+      const eventList = eventsPayload.events || []
+      const cohortsList = cohortsPayload.cohorts || []
+      const savedList = savedRes || []
+      const cols = columnsRes.columns || []
+      const colsSet = new Set(cols.map(c => c.name))
+
+      setEvents(eventList)
+      setSavedCohorts(savedList)
+      setColumnsSet(colsSet)
+
+      const enrichedCohorts = cohortsList.map(c => {
+        const schemaValid = isCohortSchemaValid(c, colsSet)
         return {
           ...c,
           isInvalid: !schemaValid || Number(c.size) === 0,
@@ -315,15 +327,26 @@ function AppWorkspace({ userId, onLogout }) {
       })
       setCohorts(enrichedCohorts)
       
-      setStaleTabs(prev => ({ ...prev, [tabKey]: false }))
-      setTabRefreshTokens(prev => ({ ...prev, [tabKey]: prev[tabKey] + 1 }))
-      setScopeVersion(prev => prev + 1)
-    } catch {
-      // ignore
+      return { events: eventList, cohorts: enrichedCohorts, savedCohorts: savedList, columnsSet: colsSet }
+    } catch (err) {
+      console.error("Failed to load global metadata", err)
+      return null
+    }
+  }, [])
+
+  const refreshTab = useCallback(async (tabKey) => {
+    setTabReloading(prev => ({ ...prev, [tabKey]: true }))
+    try {
+      const data = await loadGlobalMetadata()
+      if (data) {
+        setStaleTabs(prev => ({ ...prev, [tabKey]: false }))
+        setTabRefreshTokens(prev => ({ ...prev, [tabKey]: prev[tabKey] + 1 }))
+        setScopeVersion(prev => prev + 1)
+      }
     } finally {
       setTabReloading(prev => ({ ...prev, [tabKey]: false }))
     }
-  }, [])
+  }, [loadGlobalMetadata])
 
   const updateAnalyticsState = useCallback((tab, newState) => {
     setAnalyticsState((prev) => {
@@ -399,13 +422,12 @@ function AppWorkspace({ userId, onLogout }) {
   const refreshDatasetInfo = useCallback(async () => {
     if (appState !== 'workspace') return
     try {
-      const [scope, retention] = await Promise.all([getScope(), getRetention(0, 'any')])
-      const allUsers = (retention.retention_table || []).find((row) => row.cohort_name === 'All Users')
+      const scope = await getScope()
       setDatasetMeta((prev) => ({
         ...(prev || {}),
         rows: Number(scope.total_rows || prev?.rows || 0),
         events: Number(scope.total_events || prev?.events || 0),
-        users: Number(allUsers?.size || prev?.users || 0),
+        users: Number(scope.total_users || prev?.users || 0),
       }))
     } catch {
       // best effort only
@@ -417,33 +439,10 @@ function AppWorkspace({ userId, onLogout }) {
   }, [refreshDatasetInfo, tabRefreshTokens])
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const [eventsPayload, cohortsPayload, columnsRes] = await Promise.all([
-          listEvents(),
-          listCohorts(),
-          getColumns().catch(() => ({ columns: [] }))
-        ])
-        setEvents(eventsPayload.events || [])
-        const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
-        const enrichedCohorts = (cohortsPayload.cohorts || []).map(c => {
-          const schemaValid = isCohortSchemaValid(c, columnsSet)
-          return {
-            ...c,
-            isInvalid: !schemaValid || Number(c.size) === 0,
-            isSchemaInvalid: !schemaValid,
-          }
-        })
-        setCohorts(enrichedCohorts)
-      } catch {
-        setEvents([])
-        setCohorts([])
-      }
-    }
     if (appState === 'workspace') {
-      load()
+      loadGlobalMetadata()
     }
-  }, [appState, cohortsRefreshToken])
+  }, [appState, cohortsRefreshToken, loadGlobalMetadata])
 
   const handleHardReset = () => {
     localStorage.removeItem(getWorkspaceStorageKey(userId));
@@ -747,6 +746,9 @@ function AppWorkspace({ userId, onLogout }) {
                         refreshToken={cohortsRefreshToken}
                         onCohortsChanged={triggerCohortRefresh} 
                         datasetMetadata={datasetMeta}
+                        cohorts={cohorts}
+                        savedCohorts={savedCohorts}
+                        columnsSet={columnsSet}
                       />
                     </section>
                   )}

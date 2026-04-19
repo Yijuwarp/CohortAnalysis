@@ -11,7 +11,7 @@ from app.models.paths_models import (
     PathsResponse, PathsCohortResult, PathsStepResult, 
     PathStep, PathStepGroup, PathStepFilter, PathDetail
 )
-from app.domains.cohorts.cohort_service import ensure_cohort_tables, get_events_source_table, get_raw_events_source_table
+from app.domains.cohorts.cohort_service import ensure_cohort_tables, get_events_source_table, get_raw_events_source_table, to_dict, to_dicts
 
 # ---------------------------------------------------------------------------
 # Table bootstrap
@@ -281,6 +281,14 @@ def delete_path(conn: duckdb.DuckDBPyConnection, path_id: int) -> bool:
 # Matching Logic
 # ---------------------------------------------------------------------------
 
+def _get_column_types(conn: duckdb.DuckDBPyConnection, table_name: str) -> Dict[str, str]:
+    try:
+        res = conn.execute(f"PRAGMA table_info('{table_name}')").fetchall()
+        return {row[1]: row[2] for row in res}
+    except:
+        return {}
+
+
 def _build_filter_clause(filters: List[PathStepFilter], col_types: Dict[str, str]) -> str:
     if not filters:
         return ""
@@ -306,7 +314,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     Uses the Union Candidates pattern for clean SQL and traceability.
     """
     use_filters = path_uses_filters(steps)
-    source_table = "events_base"
+    source_table = get_events_source_table(conn)
     col_types = _get_column_types(conn, source_table)
     
     # Pre-calculate which columns we need to project
@@ -327,28 +335,63 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     
     # ---------------- BASE CTE (Materialized with Tie-Break) ----------------
     proj_list = []
-    if not has_cohort_id:
-        proj_list.append("cel.cohort_id")
-    source_ref = f"events_base e JOIN cohort_event_link cel ON e.row_id = cel.row_id"
+    
+    # Use a stable tie-breaker: capture the ingestion-time order (row_id) if available
+    has_row_id = "row_id" in col_types
+    
+    # Standardize table and join logic
+    link_exists = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'cohort_event_link'").fetchone()[0] > 0
+    has_row_id = "row_id" in col_types
+    
     if cohort_id is not None:
-        source_ref += f" AND cel.cohort_id = {cohort_id}"
+        if link_exists and has_row_id:
+            source_ref = f"{source_table} e JOIN cohort_event_link cel ON e.row_id = cel.row_id"
+            source_ref += f" AND cel.cohort_id = {cohort_id}"
+            has_cohort_id = False
+            proj_list.append("cel.cohort_id AS cohort_id")
+            partition_col = "cel.cohort_id"
+        else:
+            # Fallback for legacy tests or schemas without linking table/row_id
+            source_ref = f"{source_table} e JOIN cohort_membership cm ON e.user_id = cm.user_id"
+            source_ref += f" AND cm.cohort_id = {cohort_id}"
+            has_cohort_id = False
+            proj_list.append("cm.cohort_id AS cohort_id")
+            partition_col = "cm.cohort_id"
+    else:
+        # Multi-cohort mode (usually called from run_paths)
+        if "cohort_id" in col_types:
+            source_ref = f"{source_table} e"
+            partition_col = "e.cohort_id"
+            proj_list.append("e.cohort_id AS cohort_id")
+            has_cohort_id = True
+        elif link_exists and has_row_id:
+            source_ref = f"{source_table} e JOIN cohort_event_link cel ON e.row_id = cel.row_id"
+            partition_col = "cel.cohort_id"
+            proj_list.append("cel.cohort_id AS cohort_id")
+            has_cohort_id = False
+        else:
+            source_ref = f"{source_table} e JOIN cohort_membership cm ON e.user_id = cm.user_id"
+            partition_col = "cm.cohort_id"
+            proj_list.append("cm.cohort_id AS cohort_id")
+            has_cohort_id = False
+    
     event_ref = "e"
         
     for c in available_select:
         safe_c = f'"{c.replace(chr(34), chr(34)+chr(34))}"'
         proj_list.append(f"{event_ref}.{safe_c}" if event_ref else safe_c)
 
-    # Use a stable tie-breaker: capture the ingestion-time order (row_id)
     prefix = "e." if not has_cohort_id else ""
-    tie_breaker = f"{prefix}row_id"
+    tie_breaker = f"{prefix}row_id" if has_row_id else f"{prefix}event_time"
 
     sql += f"""
     base AS (
       SELECT
         {", ".join(proj_list)},
+        {f"{prefix}row_id," if has_row_id else ""}
         ROW_NUMBER() OVER (
-          PARTITION BY cel.cohort_id, e.user_id
-          ORDER BY e.event_time, e.row_id
+          PARTITION BY {partition_col}, e.user_id
+          ORDER BY e.event_time, {tie_breaker}
         ) AS rn
       FROM {source_ref}
     ),
@@ -373,7 +416,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
             
             if s_idx == 1:
                 query = f"""
-                SELECT cohort_id, user_id, event_time AS t1, rn AS rn1, {g_idx} AS group_id
+                SELECT cohort_id, user_id, event_time AS t1, rn AS rn1, {f"row_id AS row_id1," if has_row_id else ""} {g_idx} AS group_id, [rn] AS used_rns
                 FROM base
                 WHERE event_name = '{safe_event}' {filter_clause}
                 """
@@ -389,14 +432,18 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
                   s.cohort_id, s.user_id,
                   {", ".join([f"s.t{j}" for j in range(1, s_idx)])},
                   {", ".join([f"s.rn{j}" for j in range(1, s_idx)])},
+                  {f"{', '.join([f's.row_id{j}' for j in range(1, s_idx)])}," if has_row_id else ""}
                   b.event_time AS t{s_idx},
                   b.rn AS rn{s_idx},
+                  {f"b.row_id AS row_id{s_idx}," if has_row_id else ""}
+                  list_append(s.used_rns, b.rn) AS used_rns,
                   {g_idx} AS group_id,
                   EXTRACT(EPOCH FROM (b.event_time - s.t{prev})) AS time_sec
                 FROM step_{prev} s
                 JOIN base b ON b.user_id = s.user_id AND b.cohort_id = s.cohort_id
                 WHERE b.event_name = '{safe_event}' {filter_clause}
-                  AND (b.event_time > s.t{prev} OR (b.event_time = s.t{prev} AND b.rn > s.rn{prev}))
+                  AND (b.event_time > s.t{prev} OR (b.event_time = s.t{prev} AND b.rn <> s.rn{prev}))
+                  AND NOT list_contains(s.used_rns, b.rn)
                   {gap_clause}
                 """
             group_queries.append(query)
@@ -757,14 +804,18 @@ def _materialize_paths_cohort(conn: duckdb.DuckDBPyConnection, name: str, users:
     )
 
     source_table = get_events_source_table(conn)
+    col_types = _get_column_types(conn, source_table)
+    link_exists = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'cohort_event_link'").fetchone()[0] > 0
+    has_row_id = "row_id" in col_types
 
-    conn.execute(f"""
-        INSERT INTO cohort_event_link (cohort_id, row_id)
-        SELECT m.cohort_id, e.row_id
-        FROM events_base e
-        JOIN cohort_membership m ON e.user_id = m.user_id
-        WHERE m.cohort_id = {new_c_id}
-          AND e.event_time >= m.join_time
-    """)
+    if link_exists and has_row_id:
+        conn.execute(f"""
+            INSERT INTO cohort_event_link (cohort_id, row_id)
+            SELECT m.cohort_id, e.row_id
+            FROM {source_table} e
+            JOIN cohort_membership m ON e.user_id = m.user_id
+            WHERE m.cohort_id = {new_c_id}
+              AND e.event_time >= m.join_time
+        """)
 
     return {"cohort_id": int(new_c_id), "name": name, "user_count": len(users)}

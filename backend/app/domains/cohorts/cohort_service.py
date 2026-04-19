@@ -89,46 +89,34 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
         connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
     except: pass
     if "events_base" in existing_tables:
+        # Optimal view for unified schema - project all columns for direct property filtering
         connection.execute(
-            """
+            f"""
             CREATE OR REPLACE VIEW cohort_activity_snapshot AS
             SELECT 
                 cel.cohort_id,
-                e.user_id,
-                e.event_time,
-                e.event_name,
-                e.row_id,
-                e.event_count,
-                e.original_revenue,
-                e.modified_revenue,
+                e.*,
                 CAST(NULL AS UUID) AS source_saved_id
             FROM events_base e
             JOIN cohort_event_link cel ON e.row_id = cel.row_id
             """
         )
     elif "events_scoped" in existing_tables:
-        # Fallback for tests that setup events_scoped manually
+        # Legacy fallback view
         cols_res = connection.execute("PRAGMA table_info('events_scoped')").fetchall()
         cols = {row[1] for row in cols_res}
-
         rev_expr = "revenue" if "revenue" in cols else "CAST(0 AS DOUBLE)"
         orig_rev = "original_revenue" if "original_revenue" in cols else rev_expr
         mod_rev = "modified_revenue" if "modified_revenue" in cols else rev_expr
         count_expr = "event_count" if "event_count" in cols else "1.0"
         
-        # Check for events_scoped_raw existence
         raw_exists = connection.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped_raw'").fetchone()[0] > 0
-        
         if raw_exists:
             connection.execute(
                 f"""
                 CREATE OR REPLACE VIEW cohort_activity_snapshot AS
                 SELECT 
-                    cel.cohort_id,
-                    e.user_id,
-                    e.event_time,
-                    e.event_name,
-                    e.row_id,
+                    cel.cohort_id, e.user_id, e.event_time, e.event_name, e.row_id,
                     CAST({count_expr} AS DOUBLE) AS event_count,
                     CAST({orig_rev} AS DOUBLE) AS original_revenue,
                     CAST({mod_rev} AS DOUBLE) AS modified_revenue,
@@ -138,16 +126,11 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
                 """
             )
         else:
-            # Fallback directly to events_scoped for legacy tests
             connection.execute(
                 f"""
                 CREATE OR REPLACE VIEW cohort_activity_snapshot AS
                 SELECT 
-                    cm.cohort_id,
-                    e.user_id,
-                    e.event_time,
-                    e.event_name,
-                    CAST(NULL AS BIGINT) AS row_id,
+                    cm.cohort_id, e.user_id, e.event_time, e.event_name, CAST(NULL AS BIGINT) AS row_id,
                     CAST({count_expr} AS DOUBLE) AS event_count,
                     CAST({orig_rev} AS DOUBLE) AS original_revenue,
                     CAST({mod_rev} AS DOUBLE) AS modified_revenue,
@@ -156,6 +139,23 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
                 JOIN cohort_membership cm ON e.user_id = cm.user_id
                 """
             )
+    else:
+        # FRESH BOOTSTRAP: Create as TABLE for backward-compatibility with tests that seed it manually
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cohort_activity_snapshot (
+                cohort_id INTEGER,
+                user_id TEXT,
+                event_time TIMESTAMP,
+                event_name TEXT,
+                row_id BIGINT,
+                event_count DOUBLE DEFAULT 1.0,
+                original_revenue DOUBLE DEFAULT 0.0,
+                modified_revenue DOUBLE DEFAULT 0.0,
+                source_saved_id UUID
+            )
+            """
+        )
     res_conditions = connection.execute(
         """
         SELECT column_name
