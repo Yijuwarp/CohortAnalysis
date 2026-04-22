@@ -16,6 +16,7 @@ def ensure_scope_tables(connection: duckdb.DuckDBPyConnection) -> None:
             total_rows INTEGER,
             filtered_rows INTEGER,
             total_events BIGINT,
+            total_users INTEGER DEFAULT 0,
             updated_at TIMESTAMP
         )
         """
@@ -33,25 +34,40 @@ def ensure_scope_tables(connection: duckdb.DuckDBPyConnection) -> None:
     }
     if "total_events" not in existing_columns:
         connection.execute("ALTER TABLE dataset_scope ADD COLUMN total_events BIGINT")
+    if "total_users" not in existing_columns:
+        connection.execute("ALTER TABLE dataset_scope ADD COLUMN total_users INTEGER DEFAULT 0")
 
     connection.execute("UPDATE dataset_scope SET total_events = 0 WHERE total_events IS NULL")
+    connection.execute("UPDATE dataset_scope SET total_users = 0 WHERE total_users IS NULL")
 
 
 def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[str, object]) -> dict[str, int]:
     ensure_scope_tables(connection)
-    total_rows = int(connection.execute("SELECT COUNT(*) FROM events_normalized").fetchone()[0])
-    filtered_rows = int(connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0])
-    total_events = int(connection.execute("SELECT COALESCE(SUM(event_count), 0) FROM events_scoped").fetchone()[0] or 0)
+    # Consolidate aggregation queries for better performance
+    all_metrics = connection.execute("""
+        SELECT 
+            (SELECT COUNT(*) FROM events_normalized),
+            COUNT(*), 
+            COALESCE(SUM(event_count), 0),
+            COUNT(DISTINCT user_id)
+        FROM events_scoped
+    """).fetchone()
+    
+    total_rows = int(all_metrics[0] or 0)
+    filtered_rows = int(all_metrics[1] or 0)
+    total_events = int(all_metrics[2] or 0)
+    total_users = int(all_metrics[3] or 0)
 
     connection.execute(
         """
-        INSERT INTO dataset_scope (id, filters_json, total_rows, filtered_rows, total_events, updated_at)
-        VALUES (1, ?, ?, ?, ?, ?)
+        INSERT INTO dataset_scope (id, filters_json, total_rows, filtered_rows, total_events, total_users, updated_at)
+        VALUES (1, ?, ?, ?, ?, ?, ?)
         ON CONFLICT (id) DO UPDATE SET
             filters_json = excluded.filters_json,
             total_rows = excluded.total_rows,
             filtered_rows = excluded.filtered_rows,
             total_events = excluded.total_events,
+            total_users = excluded.total_users,
             updated_at = excluded.updated_at
         """,
         [
@@ -59,16 +75,17 @@ def upsert_dataset_scope(connection: duckdb.DuckDBPyConnection, payload: dict[st
             total_rows,
             filtered_rows,
             total_events,
+            total_users,
             datetime.now(timezone.utc),
         ],
     )
-    return {"total_rows": total_rows, "filtered_rows": filtered_rows, "total_events": total_events}
+    return {"total_rows": total_rows, "filtered_rows": filtered_rows, "total_events": total_events, "total_users": total_users}
 
 
 def get_scope(connection: duckdb.DuckDBPyConnection) -> dict[str, object]:
     ensure_scope_tables(connection)
     row = connection.execute(
-        "SELECT filters_json, total_rows, filtered_rows, total_events, updated_at FROM dataset_scope WHERE id = 1"
+        "SELECT filters_json, total_rows, filtered_rows, total_events, total_users, updated_at FROM dataset_scope WHERE id = 1"
     ).fetchone()
     if row is None:
         return {
@@ -76,6 +93,7 @@ def get_scope(connection: duckdb.DuckDBPyConnection) -> dict[str, object]:
             "total_rows": 0,
             "filtered_rows": 0,
             "total_events": 0,
+            "total_users": 0,
             "updated_at": None,
         }
 
@@ -84,7 +102,8 @@ def get_scope(connection: duckdb.DuckDBPyConnection) -> dict[str, object]:
         "total_rows": int(row[1] or 0),
         "filtered_rows": int(row[2] or 0),
         "total_events": int(row[3] or 0),
-        "updated_at": row[4].isoformat() if row[4] else None,
+        "total_users": int(row[4] or 0),
+        "updated_at": row[5].isoformat() if row[5] else None,
     }
 
 def get_columns(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[str, str | None]]]:
@@ -117,6 +136,7 @@ def get_columns(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[st
                 "category": classify_column(str(name)),
             }
             for name, data_type in rows
+            if str(name) != "row_id"
         ]
         return {"columns": payload}
     finally:
@@ -140,18 +160,27 @@ def get_column_values(
     is_high_cardinality = column.lower() in HIGH_CARDINALITY_COLUMNS
 
     # Ensure table/column is known
-    # We strictly use events_scoped as it reflects the current filtering state
-    # Ensure table/column is known and get its type
+    # Determine source table (fallback to events_normalized if events_scoped is missing)
+    source_table = "events_scoped"
+    exists_scoped = connection.execute(
+        """
+        SELECT COUNT(*) FROM (
+            SELECT table_name FROM information_schema.tables 
+            UNION 
+            SELECT table_name FROM information_schema.views
+        ) WHERE table_name = 'events_scoped'
+        """
+    ).fetchone()[0]
+    if not exists_scoped:
+        source_table = "events_normalized"
+
+    # Use PRAGMA table_info which is robust for both tables and views
     column_metadata = {
-        row[0]: row[1].upper()
-        for row in connection.execute(
-            """
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = 'events_scoped'
-            """
-        ).fetchall()
+        row[1]: row[2].upper()
+        for row in connection.execute(f"PRAGMA table_info('{source_table}')").fetchall()
     }
+
+
     if column not in column_metadata:
         raise HTTPException(status_code=400, detail=f"Unknown column: {column}")
 
@@ -185,7 +214,7 @@ def get_column_values(
         rows = connection.execute(
             f"""
             SELECT DISTINCT {column_ref}
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             LIMIT ?
             """,
@@ -196,7 +225,7 @@ def get_column_values(
         rows = connection.execute(
             f"""
             SELECT {column_ref}, SUM(event_count) as freq
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             GROUP BY 1
             ORDER BY freq DESC, {column_ref} ASC
@@ -205,17 +234,19 @@ def get_column_values(
             query_params + [limit]
         ).fetchall()
 
+
     # Calculate total distinct for UX (optional but kept for alignment with existing interface)
     # Note: total_distinct also respects the search/filter parameters
     total_distinct = int(
         connection.execute(
             f"""
             SELECT COUNT(DISTINCT {column_ref})
-            FROM events_scoped
+            FROM {source_table}
             {where_sql}
             """,
             query_params
         ).fetchone()[0]
+
     )
 
     return {

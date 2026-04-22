@@ -14,9 +14,9 @@ def test_robust_observation_boundary(client: TestClient):
     
     csv_text = (
         "user_id,event_name,event_time\n"
-        f"uA,signup,{(now).isoformat()}\n"
-        f"uB,signup,{(now - timedelta(days=1)).isoformat()}\n"
-        f"uC,signup,{(now - timedelta(days=7)).isoformat()}\n"
+        f"uA,signup,{(now - timedelta(seconds=1)).isoformat()}\n"
+        f"uB,signup,{(now - timedelta(days=2)).isoformat()}\n"
+        f"uC,signup,{(now - timedelta(days=8)).isoformat()}\n"
         "uD,signup,2037-01-01 10:00:00\n" # Future
     )
     
@@ -51,11 +51,11 @@ def test_robust_observation_boundary(client: TestClient):
     
     assert row is not None, f"BoundTest not found"
     
-    # Day 0: 3 users (A,B,C)
-    assert row["availability"]["0"]["eligible_users"] == 3
-    # Day 1: uB (1 day ago), uC (7 days ago). Total 2.
+    # Day 0: 2 users (B,C). uA joined 1s ago and hasn't finished Day 0.
+    assert row["availability"]["0"]["eligible_users"] == 2
+    # Day 1: uB, uC. Total 2.
     assert row["availability"]["1"]["eligible_users"] == 2
-    # Day 7: uC (7 days ago). Total 1.
+    # Day 7: uC. Total 1.
     assert row["availability"]["7"]["eligible_users"] == 1
     
-    assert row["availability"]["0"]["cohort_size"] == 4
+    assert row["availability"]["0"]["cohort_size"] == 3

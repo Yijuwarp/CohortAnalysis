@@ -35,6 +35,7 @@ vi.mock('./components/SearchableSelect', () => ({ default: () => <div>Mock Searc
 describe('App onboarding and workspace flow', () => {
   beforeEach(() => {
     localStorage.clear()
+    localStorage.setItem('user_id', 'deadbeef')
     vi.clearAllMocks()
     api.getScope.mockResolvedValue({ total_rows: 100, total_events: 140, filtered_rows: 100 })
     api.getRetention.mockResolvedValue({ retention_table: [{ cohort_name: 'All Users', size: 42 }] })

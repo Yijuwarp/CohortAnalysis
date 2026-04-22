@@ -599,7 +599,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                 <thead>
                   <tr>
                     <th
-                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sticky-col-top sortable-header`}
                       style={{ 
                         width: columnWidths.cohort,
                         minWidth: columnWidths.cohort,
@@ -616,7 +616,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                     </th>
                     {showSplit && (
                       <th
-                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sticky-col-top sortable-header`}
                         style={{ 
                           width: columnWidths.split, 
                           minWidth: columnWidths.split,
@@ -633,7 +633,7 @@ export default function MonetizationTable({ refreshToken, maxDay, retentionEvent
                       </th>
                     )}
                     <th
-                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sticky-col-top sortable-header`}
                       style={{ 
                         width: columnWidths.size, 
                         minWidth: columnWidths.size,

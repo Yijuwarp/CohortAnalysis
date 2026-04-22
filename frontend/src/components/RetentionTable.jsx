@@ -529,7 +529,7 @@ export default function RetentionTable({
                 <thead>
                   <tr>
                     <th
-                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                      className={`${isPinned ? 'sticky-col sticky-col-cohort' : ''} sticky-col-top sortable-header`}
                       style={{ 
                         width: columnWidths.cohort,
                         minWidth: columnWidths.cohort,
@@ -546,7 +546,7 @@ export default function RetentionTable({
                     </th>
                     {showSplit && (
                       <th
-                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                        className={`${isPinned ? 'sticky-col sticky-col-split' : ''} sticky-col-top sortable-header`}
                         style={{ 
                           width: columnWidths.split, 
                           minWidth: columnWidths.split,
@@ -563,7 +563,7 @@ export default function RetentionTable({
                       </th>
                     )}
                     <th
-                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                      className={`${isPinned ? 'sticky-col sticky-col-size' : ''} sticky-col-top sortable-header`}
                       style={{ 
                         width: columnWidths.size, 
                         minWidth: columnWidths.size,
@@ -581,7 +581,7 @@ export default function RetentionTable({
                     {bucketColumns.map((b) => (
                       <th
                         key={b}
-                        className="sortable-header"
+                        className="sticky-col-top sticky-col sortable-header"
                         onClick={() => {
                           if (isResizingRef.current) return
                           handleSort(`${labelPrefix}${b}`)

@@ -144,30 +144,26 @@ def _build_level_sql(
     if cohort_id is not None:
         parent_params.append(cohort_id)
 
-    property_exists_clause = ""
+    # Property filter is now applied directly to cohort_activity_snapshot
+    # which has been expanded to include all columns in cohort_service.py
+    property_filter_expr = ""
     if property_column:
-        property_exists_clause = f"""
-        AND EXISTS (
-            SELECT 1 FROM events_scoped es
-            WHERE es.user_id = e.user_id
-              AND es.event_time = e.event_time
-              AND es.event_name = e.event_name
-              {property_clause}
-        )
-        """
+        property_filter_expr = property_clause
 
     ctes: list[str] = [
         f"""
         root_step AS (
-            SELECT e.cohort_id, e.user_id, e.event_time AS parent_time, ? AS parent_event
+            SELECT e.cohort_id, e.user_id, e.event_time AS parent_time, e.row_id AS parent_row_id, ? AS parent_event, e.used_row_ids
             FROM (
                 SELECT
                     e.cohort_id,
                     e.user_id,
                     e.event_time,
-                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time ASC) AS rn
+                    e.row_id,
+                    ROW_NUMBER() OVER (PARTITION BY e.cohort_id, e.user_id ORDER BY e.event_time ASC, e.row_id ASC) AS rn,
+                    [e.row_id] AS used_row_ids
                 FROM cohort_activity_snapshot e
-                WHERE e.event_name = ?{property_exists_clause}{cohort_clause}
+                WHERE e.event_name = ?{property_filter_expr}{cohort_clause}
             ) e
             WHERE rn = 1
         )
@@ -180,19 +176,22 @@ def _build_level_sql(
         ctes.append(
             f"""
             {cte_name} AS (
-                SELECT s.cohort_id, s.user_id, n.event_time AS parent_time, n.event_name AS parent_event
+                SELECT s.cohort_id, s.user_id, t.event_time AS parent_time, t.row_id AS parent_row_id, t.event_name AS parent_event,
+                       list_append(s.used_row_ids, t.row_id) AS used_row_ids
                 FROM {prev_cte} s
-                JOIN LATERAL (
-                    SELECT e.event_name, e.event_time
-                    FROM cohort_activity_snapshot e
-                    WHERE e.user_id = s.user_id
-                      AND e.cohort_id = s.cohort_id
-                      AND e.event_time {time_op} s.parent_time
-                      AND e.event_name <> s.parent_event
-                    ORDER BY e.event_time {order_dir}
-                    LIMIT 1
-                ) n ON TRUE
-                WHERE n.event_name = ?
+                JOIN cohort_activity_snapshot t ON t.user_id = s.user_id AND t.cohort_id = s.cohort_id
+                WHERE 
+                    t.event_name = ?
+                    AND NOT list_contains(s.used_row_ids, t.row_id)
+                    AND (
+                        ('{direction}' = 'forward' AND (t.event_time > s.parent_time OR (t.event_time = s.parent_time AND t.row_id <> s.parent_row_id)))
+                        OR
+                        ('{direction}' = 'reverse' AND (t.event_time < s.parent_time OR (t.event_time = s.parent_time AND t.row_id <> s.parent_row_id)))
+                    )
+                QUALIFY ROW_NUMBER() OVER (
+                    PARTITION BY t.cohort_id, t.user_id 
+                    ORDER BY t.event_time {order_dir}, t.row_id {order_dir}
+                ) = 1
             )
             """
         )
@@ -203,21 +202,23 @@ def _build_level_sql(
         f"""
         transition_candidates AS (
             SELECT
-                s.cohort_id,
-                s.user_id,
-                n.event_name AS next_event,
-                ABS(EXTRACT(EPOCH FROM (n.event_time - s.parent_time)))::DOUBLE AS time_diff_sec
+                t.cohort_id,
+                t.user_id,
+                t.event_name AS next_event,
+                ABS(EXTRACT(EPOCH FROM (t.event_time - s.parent_time)))::DOUBLE AS time_diff_sec
             FROM {prev_cte} s
-            JOIN LATERAL (
-                SELECT e.event_name, e.event_time
-                FROM cohort_activity_snapshot e
-                WHERE e.user_id = s.user_id
-                  AND e.cohort_id = s.cohort_id
-                  AND e.event_time {time_op} s.parent_time
-                  AND e.event_name <> s.parent_event
-                ORDER BY e.event_time {order_dir}
-                LIMIT 1
-            ) n ON TRUE
+            JOIN cohort_activity_snapshot t ON t.user_id = s.user_id AND t.cohort_id = s.cohort_id
+            WHERE 
+                NOT list_contains(s.used_row_ids, t.row_id)
+                AND (
+                    ('{direction}' = 'forward' AND (t.event_time > s.parent_time OR (t.event_time = s.parent_time AND t.row_id <> s.parent_row_id)))
+                    OR
+                    ('{direction}' = 'reverse' AND (t.event_time < s.parent_time OR (t.event_time = s.parent_time AND t.row_id <> s.parent_row_id)))
+                )
+            QUALIFY ROW_NUMBER() OVER (
+                PARTITION BY t.cohort_id, t.user_id 
+                ORDER BY t.event_time {order_dir}, t.row_id {order_dir}
+            ) = 1
         ),
         denominators AS (
             SELECT cohort_id, COUNT(*) AS total_users
@@ -336,10 +337,10 @@ def _run_level_query(
         return [], parent_depth, 0
     if "No further action" in parent_path or "Other" in parent_path:
         return [], parent_depth, 0
-    if len(parent_path) != len(set(parent_path)):
-        return [], parent_depth, 0
-    if parent_path[0] != start_event:
-        raise HTTPException(status_code=400, detail="parent_path must start with start_event")
+    if parent_path[0].strip() != start_event.strip():
+        raise HTTPException(status_code=400, detail=f"parent_path must start with start_event ({start_event}). Got: {parent_path[0]}")
+    if property_column and (not property_values or _is_empty_filter(property_values)):
+        raise HTTPException(status_code=400, detail="property_values are required when property_column is specified")
 
     if _is_empty_filter(property_values):
         property_column = None
@@ -514,11 +515,11 @@ def get_l1_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _scoped_has_data(connection):
-        return {"rows": []}
-
     canonical_col = _validate_property_column(connection, property_column, property_operator)
     _ensure_performance_indexes(connection)
+
+    if not _scoped_has_data(connection):
+        return {"rows": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:
@@ -545,11 +546,11 @@ def get_l2_flows(
     depth = _validate_depth(depth)
 
     ensure_cohort_tables(connection)
-    if not _scoped_has_data(connection):
-        return {"parent_path": parent_path, "rows": []}
-
     canonical_col = _validate_property_column(connection, property_column, property_operator)
     _ensure_performance_indexes(connection)
+
+    if not _scoped_has_data(connection):
+        return {"parent_path": parent_path, "rows": []}
 
     cohorts = _fetch_active_cohorts(connection)
     if not cohorts:

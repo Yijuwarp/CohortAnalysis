@@ -349,6 +349,7 @@ export default function FilterData({ refreshToken, onFiltersApplied }) {
                     placeholder={row.column ? 'Search values to add' : 'Select a column first'}
                     disabled={!row.column}
                     column={row.column}
+                    excludeValues={selectedValues}
                   />
                 </div>
               </>

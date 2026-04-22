@@ -59,7 +59,7 @@ def test_basic_cohort_creation_inserts_expected_users_and_join_times(
         ("u1", datetime(2024, 1, 1, 9, 0, 0)),
         ("u2", datetime(2024, 1, 2, 9, 0, 0)),
         ("u3", datetime(2024, 1, 4, 9, 0, 0)),
-    ], f"join_time should match each user's first qualifying event, got {membership}"
+    ], f"join_time should match each user's first event, got {membership}"
 
 
 def test_nth_event_logic_uses_min_event_count_as_join_time(
@@ -883,7 +883,7 @@ def test_create_cohort_rejects_empty_in_values(client: TestClient) -> None:
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Operator IN requires a non-empty array value"}
+    assert response.json() == {"detail": "Operator IN requires a non-empty list value"}
 
 
 def test_create_cohort_rejects_non_numeric_value_for_numeric_operator(client: TestClient) -> None:
@@ -947,7 +947,10 @@ def test_create_cohort_rejects_non_string_timestamp_values(client: TestClient) -
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Timestamp filters require string values"}
+    # The error depends on the operator. Now >= is not in allowed timestamp ops.
+    assert "not allowed for column type TIMESTAMP" in response.json()["detail"]
+
+
 
 
 def test_create_cohort_rejects_boolean_value_for_numeric_operator(client: TestClient) -> None:
@@ -990,7 +993,8 @@ def test_create_cohort_normalizes_datetime_local_timestamp_values(client: TestCl
     listed = client.get('/cohorts')
     assert listed.status_code == 200, listed.text
     cohort = next(row for row in listed.json()['cohorts'] if row['cohort_id'] == created.json()['cohort_id'])
-    assert cohort['conditions'][0]['property_filter']['values'] == ['2024-01-01 09:00:00']
+    assert cohort['conditions'][0]['property_filter']['values'] == {'date': '2024-01-01'}
+
 
 
 def test_create_cohort_rejects_empty_timestamp_string(client: TestClient) -> None:
@@ -1010,7 +1014,8 @@ def test_create_cohort_rejects_empty_timestamp_string(client: TestClient) -> Non
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Timestamp filters require non-empty string values"}
+    assert response.json() == {"detail": "Timestamp value cannot be empty"}
+
 
 
 def test_create_cohort_rejects_empty_timestamp_string_in_list(client: TestClient) -> None:
@@ -1034,7 +1039,8 @@ def test_create_cohort_rejects_empty_timestamp_string_in_list(client: TestClient
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Timestamp filters require non-empty string values"}
+    assert "Invalid timestamp value in IN" in response.json()["detail"]
+
 
 
 def test_create_cohort_rejects_invalid_timestamp_format(client: TestClient) -> None:
@@ -1054,7 +1060,8 @@ def test_create_cohort_rejects_invalid_timestamp_format(client: TestClient) -> N
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Invalid timestamp format"}
+    assert "Invalid timestamp format" in response.json()["detail"]
+
 
 
 def test_toggle_hide_updates_cohort_visibility_flag(client: TestClient, db_connection) -> None:

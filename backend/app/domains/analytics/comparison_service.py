@@ -345,81 +345,107 @@ def compare_cohorts(
         # Fix 6: Use unique temp table to prevent collisions
         temp_table_name = f"tmp_vec_{cid}_{request_id}"
         
+        # Fetch join_type for the cohort
+        join_type_row = conn.execute("SELECT join_type FROM cohorts WHERE cohort_id = ?", [cid]).fetchone()
+        join_type = join_type_row[0] if join_type_row else "condition_met"
+        
         builder_sql = ""
         params = []
         
-        # 1. Select Builder
-        if tab == "retention":
-            builder_sql, params = build_retention_vector_sql(
-                cohort_id=cid,
-                max_day=internal_max_day, 
-                retention_event=event,
-                retention_type=retention_type,
-                granularity=granularity,
-                observation_end_time=observation_end_time
-            )
-            # Full grid for validation, then filter
-            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
-            fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
-            fetch_params = [day]
-            
-        elif tab == "usage":
-            metric_type = "unique" if metric in ("unique_users_percent", "unique_users_cumulative_percent") else "volume"
-            builder_sql, params = build_usage_vector_sql(
-                cohort_id=cid,
-                max_day=internal_max_day,
-                event_name=event,
-                metric=metric_type,
-                granularity=granularity,
-                property_clause=property_clause,
-                property_params=property_params,
-                observation_end_time=observation_end_time
-            )
-            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
-            
-            if metric == "unique_users_cumulative_percent" or metric == "cumulative_per_installed_user":
-                agg = "MAX(value)" if "unique" in metric else "SUM(value)"
-                fetch_sql = f"SELECT {agg}::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
-                fetch_params = [day]
-            elif metric == "per_retained_user":
-                ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
-                fetch_sql = f"""
-                    SELECT v.value::FLOAT 
-                    FROM {temp_table_name} v
-                    JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
-                    WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
-                    ORDER BY v.user_id
-                """
-                fetch_params = ret_params + [day]
-            elif metric == "per_event_firer":
-                fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND value > 0 AND is_eligible = 1 ORDER BY user_id"
-                fetch_params = [day]
-            else:
+        try:
+            # 1. Select Builder
+            if tab == "retention":
+                builder_sql, params = build_retention_vector_sql(
+                    cohort_id=cid,
+                    max_day=internal_max_day, 
+                    retention_event=event,
+                    retention_type=retention_type,
+                    granularity=granularity,
+                    observation_end_time=observation_end_time,
+                    join_type=join_type
+                )
+                # Full grid for validation, then filter
+                conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
                 fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
                 fetch_params = [day]
                 
-        elif tab == "monetization":
-            builder_sql, params = build_revenue_vector_sql(cid, internal_max_day, granularity, observation_end_time=observation_end_time)
-            conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
-            
-            if metric == "cumulative_revenue_per_acquired_user":
-                fetch_sql = f"SELECT SUM(value)::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
-                fetch_params = [day]
-            elif metric == "revenue_per_retained_user":
-                ret_sql, ret_params = build_retention_vector_sql(cid, internal_max_day, retention_event=None, observation_end_time=observation_end_time)
-                fetch_sql = f"""
-                    SELECT v.value::FLOAT 
-                    FROM {temp_table_name} v
-                    JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
-                    WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
-                    ORDER BY v.user_id
-                """
-                fetch_params = ret_params + [day]
-            else:
-                fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
-                fetch_params = [day]
+            elif tab == "usage":
+                metric_type = "unique" if metric in ("unique_users_percent", "unique_users_cumulative_percent") else "volume"
+                builder_sql, params = build_usage_vector_sql(
+                    cohort_id=cid,
+                    max_day=internal_max_day,
+                    event_name=event,
+                    metric=metric_type,
+                    granularity=granularity,
+                    property_clause=property_clause,
+                    property_params=property_params,
+                    observation_end_time=observation_end_time,
+                    join_type=join_type
+                )
+                conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
+                
+                if metric == "unique_users_cumulative_percent" or metric == "cumulative_per_installed_user":
+                    agg = "MAX(value)" if "unique" in metric else "SUM(value)"
+                    fetch_sql = f"SELECT {agg}::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                    fetch_params = [day]
+                elif metric == "per_retained_user":
+                    ret_sql, ret_params = build_retention_vector_sql(
+                        cohort_id=cid, 
+                        max_day=internal_max_day, 
+                        retention_event=None, 
+                        observation_end_time=observation_end_time,
+                        join_type=join_type
+                    )
+                    fetch_sql = f"""
+                        SELECT v.value::FLOAT 
+                        FROM {temp_table_name} v
+                        JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
+                        WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
+                        ORDER BY v.user_id
+                    """
+                    fetch_params = ret_params + [day]
+                elif metric == "per_event_firer":
+                    fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND value > 0 AND is_eligible = 1 ORDER BY user_id"
+                    fetch_params = [day]
+                else:
+                    fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                    fetch_params = [day]
+                    
+            elif tab == "monetization":
+                builder_sql, params = build_revenue_vector_sql(
+                    cohort_id=cid, 
+                    max_day=internal_max_day, 
+                    granularity=granularity, 
+                    property_clause=property_clause,
+                    property_params=property_params,
+                    observation_end_time=observation_end_time,
+                    join_type=join_type
+                )
+                conn.execute(f"CREATE TEMP TABLE {temp_table_name} AS {builder_sql}", params)
+                
+                if metric == "cumulative_revenue_per_acquired_user":
+                    fetch_sql = f"SELECT SUM(value)::FLOAT FROM {temp_table_name} WHERE day_offset <= ? AND is_eligible = 1 GROUP BY user_id ORDER BY user_id"
+                    fetch_params = [day]
+                elif metric == "revenue_per_retained_user":
+                    ret_sql, ret_params = build_retention_vector_sql(
+                        cohort_id=cid, 
+                        max_day=internal_max_day, 
+                        retention_event=None, 
+                        observation_end_time=observation_end_time,
+                        join_type=join_type
+                    )
+                    fetch_sql = f"""
+                        SELECT v.value::FLOAT 
+                        FROM {temp_table_name} v
+                        JOIN ({ret_sql}) r ON v.user_id = r.user_id AND v.day_offset = r.day_offset
+                        WHERE v.day_offset = ? AND r.value = 1 AND v.is_eligible = 1
+                        ORDER BY v.user_id
+                    """
+                    fetch_params = ret_params + [day]
+                else:
+                    fetch_sql = f"SELECT value::FLOAT FROM {temp_table_name} WHERE day_offset = ? AND is_eligible = 1 ORDER BY user_id"
+                    fetch_params = [day]
 
-        try:
             # Execute fetch
             vec_rows = conn.execute(fetch_sql, fetch_params).fetchall()
             vec = [float(row[0]) for row in vec_rows]

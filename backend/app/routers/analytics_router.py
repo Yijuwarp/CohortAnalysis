@@ -65,7 +65,7 @@ async def usage_endpoint(
     retention_event: str | None = Query(None),
     property: str | None = Query(None),
     operator: str = Query("="),
-    value: str | None = Query(None),
+    value: list[str] | None = Query(None),
 ):
     parsed_max_day = parse_max_day(max_day)
     try:
@@ -81,7 +81,7 @@ async def usage_frequency_endpoint(
     event: str,
     property: str | None = Query(None),
     operator: str = Query("="),
-    value: str | None = Query(None),
+    value: list[str] | None = Query(None),
 ):
     return run_query(user_id, lambda conn: get_usage_frequency(conn, event, property, operator, value))
 

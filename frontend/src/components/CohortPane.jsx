@@ -19,16 +19,8 @@ const formatCohortSize = (size) => {
 }
 
 
-let cohortStateCache = {
-  schema_hash: null,
-  cohorts: null,
-  savedCohorts: null
-}
-
-export default function CohortPane({ refreshToken, onCohortsChanged, datasetMetadata }) {
-  const [cohorts, setCohorts] = useState([])
+export default function CohortPane({ refreshToken, onCohortsChanged, datasetMetadata, cohorts = [], savedCohorts = [], columnsSet }) {
   const [pendingCohorts, setPendingCohorts] = useState([])
-  const [savedCohorts, setSavedCohorts] = useState([])
   const [selectedCohortId, setSelectedCohortId] = useState(null)
   const [deletingId, setDeletingId] = useState(null)
 
@@ -50,105 +42,14 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
   const [activeTooltipId, setActiveTooltipId] = useState(null)
   const [splitModalCohort, setSplitModalCohort] = useState(null) // cohort object for split modal
 
-  const loadSavedCohortsOnly = async () => {
-    try {
-      const savedRes = await getSavedCohorts()
-      setSavedCohorts(savedRes || [])
-      cohortStateCache = { ...cohortStateCache, savedCohorts: savedRes || [] }
-    } catch (err) {
-      console.error('Failed to refresh saved cohorts', err)
-    }
-  }
-
-  const loadData = async (forceOptions = {}) => {
-    const currentSchemaHash = datasetMetadata?.schema_hash || datasetMetadata?.users || refreshToken;
-    const lastFetchedSchemaHash = cohortStateCache?.schema_hash;
-
-    if (forceOptions.forceDb) {
-      cohortStateCache = {
-        schema_hash: null,
-        cohorts: null,
-        savedCohorts: null
-      }
-    }
-
-    if (!forceOptions.forceDb && currentSchemaHash === lastFetchedSchemaHash && cohortStateCache.cohorts) {
-      setCohorts(cohortStateCache.cohorts);
-      setSavedCohorts(cohortStateCache.savedCohorts);
-      return;
-    }
-
-    setLoading(true)
-    setError('')
-    try {
-      const [cohortsListRes, savedRes, columnsRes] = await Promise.all([
-        listCohorts(),
-        getSavedCohorts(),
-        getColumns().catch(() => ({ columns: [] }))
-      ])
-      
-      const cohortsList = cohortsListRes.cohorts || []
-      const columnsSet = new Set((columnsRes.columns || []).map(c => c.name))
-      
-      // Fetch full details for each cohort in the list to get conditions/definitions
-      const detailedCohorts = await Promise.all(
-        cohortsList.map(c => getCohortDetail(c.cohort_id).catch(err => {
-          console.error(`Failed to fetch detail for cohort ${c.cohort_id}`, err)
-          return c // Fallback to lightweight if detail fails
-        }))
-      )
-      
-      const enriched = detailedCohorts.map(c => {
-        const schemaValid = isCohortSchemaValid(c, columnsSet)
-        const isValid = schemaValid && Number(c.size) > 0
-        return {
-          ...c,
-          isInvalid: !isValid,
-          isSchemaInvalid: !schemaValid,
-        }
-      })
-
-      setCohorts(enriched)
-      setSavedCohorts(savedRes || [])
-      
-      cohortStateCache = {
-        schema_hash: currentSchemaHash,
-        cohorts: enriched,
-        savedCohorts: savedRes || [],
-        columnsSet,
-      }
-    } catch (err) {
-      console.error("Failed to load cohort data", err)
-      setError("Failed to load cohort data")
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    loadData()
-  }, [refreshToken])
-
   useEffect(() => {
     setActiveTooltipId(null)
   }, [cohorts])
-
-  // Clear cache if dataset changes
-  const datasetKey = datasetMetadata?.filename || ''
-  useEffect(() => {
-    cohortStateCache = {
-      schema_hash: null,
-      cohorts: null,
-      savedCohorts: null
-    }
-    loadData({ forceDb: true })
-  }, [datasetKey])
 
   const handleToggleHide = async (cohortId) => {
     setError('')
     try {
       await toggleCohortHide(cohortId)
-      await loadData({ forceDb: true })
       onCohortsChanged()
     } catch (err) {
       setError(err.message)
@@ -160,12 +61,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setError('')
     try {
       await deleteCohort(cohortId)
-      await loadData({ forceDb: true })
       onCohortsChanged()
     } catch (err) {
       if (err.message?.includes('not found') || err.message?.includes('404')) {
         // Already gone, success
-        await loadData({ forceDb: true })
         onCohortsChanged()
       } else {
         setError(err.message || 'Failed to delete cohort')
@@ -185,9 +84,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
       try {
         setSplittingId(cohort.cohort_id)
         for (const child of children) {
-          await deleteCohort(child.cohort_id)
+          await deleteCohort(child.cohort_id).catch(() => {}) // Silently fail if already gone
         }
-        await loadData({ forceDb: true })
         onCohortsChanged()
       } catch (err) {
         setError(err.message)
@@ -259,10 +157,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
   // Saved Cohorts Dropdown options
   const cohortOptions = useMemo(() => {
-    const columnsSet = cohortStateCache.columnsSet || new Set()
+    const cols = columnsSet || new Set()
     const options = savedCohorts.map((c) => {
       const activeMatch = cohorts.find(ac => ac.source_saved_id === c.id || ac.cohort_name === c.name)
-      const schemaInvalid = !isCohortSchemaValid(c, columnsSet)
+      const schemaInvalid = !isCohortSchemaValid(c, cols)
       const isInvalid = c.is_valid === false || schemaInvalid || (activeMatch && activeMatch.isInvalid)
       return {
         label: c.name,
@@ -274,7 +172,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     // Sort: valid first, invalid last
     options.sort((a, b) => Number(a._isInvalid) - Number(b._isInvalid))
     return options
-  }, [savedCohorts, cohorts])
+  }, [savedCohorts, cohorts, columnsSet])
 
   const selectedSavedObj = savedCohorts.find((c) => c.id === selectedCohortId)
   const isSelectedInvalid = selectedSavedObj && (selectedSavedObj.is_valid === false)
@@ -307,9 +205,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
     try {
       await createCohort(payload)
-      await loadData({ forceDb: true })
-      setPendingCohorts(prev => prev.filter(p => p.id !== pendingId))
       onCohortsChanged()
+      setPendingCohorts(prev => prev.filter(p => p.id !== pendingId))
     } catch (err) {
       setPendingCohorts(prev => prev.map(p => p.id === pendingId ? { ...p, status: 'error', error: err.message } : p))
     }
@@ -319,9 +216,8 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setPendingCohorts(prev => prev.map(p => p.id === pendingItem.id ? { ...p, status: 'creating', error: null } : p))
     try {
       await createCohort(pendingItem.payload)
-      await loadData({ forceDb: true })
-      setPendingCohorts(prev => prev.filter(p => p.id !== pendingItem.id))
       onCohortsChanged()
+      setPendingCohorts(prev => prev.filter(p => p.id !== pendingItem.id))
     } catch (err) {
       setPendingCohorts(prev => prev.map(p => p.id === pendingItem.id ? { ...p, status: 'error', error: err.message } : p))
     }
@@ -369,7 +265,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
 
   const onFormSaved = () => {
     setIsFormOpen(false)
-    loadData({ forceDb: true })
+    onCohortsChanged()
   }
 
   return (
@@ -639,10 +535,10 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
         <SavedCohortsPanel
            savedCohorts={savedCohorts}
            cohorts={cohorts}
-           columnsSet={cohortStateCache.columnsSet}
+           columnsSet={columnsSet}
            onClose={() => setIsPanelOpen(false)}
            onDeleted={() => {
-              loadSavedCohortsOnly()
+              onCohortsChanged()
            }}
            onEdit={handleEditSaved}
            onDuplicate={handleDuplicate}
@@ -654,7 +550,6 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
           cohort={splitModalCohort}
           onClose={() => setSplitModalCohort(null)}
           onSplitDone={() => {
-            loadData({ forceDb: true })
             onCohortsChanged()
           }}
         />

@@ -82,36 +82,49 @@ def update_revenue_config(connection: duckdb.DuckDBPyConnection, payload: Update
     if not payload.revenue_config and not payload.events:
         raise HTTPException(status_code=400, detail="revenue_config cannot be empty")
 
-    # Payload supports both dictionary-based and list-based updates
-    updates: list[tuple[bool, float | None, str]] = []
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        # Payload supports both dictionary-based and list-based updates
+        updates: list[tuple[bool, float | None, str]] = []
 
-    for event_name, config in payload.revenue_config.items():
-        updates.append((config.included, config.override, event_name))
+        for event_name, config in payload.revenue_config.items():
+            updates.append((config.included, config.override, event_name))
 
-    for item in payload.events:
-        updates.append((item.include, item.override, item.event_name))
+        for item in payload.events:
+            updates.append((item.include, item.override, item.event_name))
 
-    # Perform UPSERT into revenue_event_selection
-    connection.executemany(
-        """
-        INSERT INTO revenue_event_selection (event_name, is_included, override_revenue)
-        VALUES (?, ?, ?)
-        ON CONFLICT (event_name) DO UPDATE SET
-            is_included = EXCLUDED.is_included,
-            override_revenue = EXCLUDED.override_revenue
-        """,
-        [(u[2], u[0], u[1]) for u in updates],
-    )
+        # Perform UPSERT into revenue_event_selection
+        connection.executemany(
+            """
+            INSERT INTO revenue_event_selection (event_name, is_included, override_revenue)
+            VALUES (?, ?, ?)
+            ON CONFLICT (event_name) DO UPDATE SET
+                is_included = EXCLUDED.is_included,
+                override_revenue = EXCLUDED.override_revenue
+            """,
+            [(u[2], u[0], u[1]) for u in updates],
+        )
 
-    recompute_modified_revenue_columns(connection, "events_normalized")
+        # COMPREHENSIVE RECOMPUTE:
+        # We must recompute across ALL revenue-carrying tables to keep the pipeline consistent.
+        recompute_modified_revenue_columns(connection, "events_base")
+        # events_normalized is now a view and will reflect changes in events_base
+        
+        # Recompute scoped if it exists
+        scoped_exists = connection.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
+        ).fetchone()[0]
+        if scoped_exists:
+            recompute_modified_revenue_columns(connection, "events_scoped")
 
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
-    if scoped_exists:
-        recompute_modified_revenue_columns(connection, "events_scoped")
+        # Snapshot recompute is no longer needed as analytics now join events_base directly
 
-    # Match legacy return format for this endpoint
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        raise e
+
+    # Return refreshed configuration state
     rows = connection.execute(
         "SELECT event_name, is_included, override_revenue FROM revenue_event_selection ORDER BY event_name"
     ).fetchall()
