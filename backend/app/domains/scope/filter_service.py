@@ -8,7 +8,7 @@ from app.utils.perf import time_block
 from app.utils.sql import sql_quote_value, quote_identifier, get_column_kind
 from app.models.filter_models import ApplyFiltersRequest
 from app.domains.scope.scope_metadata import upsert_dataset_scope
-from app.utils.db_utils import to_dicts
+from app.utils.db_utils import to_dicts, clear_schema_cache
 from app.utils import timestamp
 
 def build_where_clause(payload: ApplyFiltersRequest, column_types: dict[str, str]) -> str:
@@ -240,6 +240,8 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         raise e
 
     end_timer(filtered_rows=counts.get("filtered_rows", 0))
+
+    clear_schema_cache()
 
     return {
         "status": "ok",

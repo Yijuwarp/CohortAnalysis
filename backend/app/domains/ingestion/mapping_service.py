@@ -10,7 +10,7 @@ from app.utils.sql import quote_identifier
 from app.domains.ingestion.normalization_service import ensure_normalized_events_revenue_columns
 from app.domains.ingestion.type_detection import detect_column_type
 from app.models.ingestion_models import ColumnMappingRequest
-from app.utils.db_utils import to_dict, to_dicts
+from app.utils.db_utils import to_dict, to_dicts, clear_schema_cache
 
 def suggest_user_id(columns: list[str]) -> str | None:
     for col in columns:
@@ -475,6 +475,8 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         if isinstance(e, duckdb.ConversionException):
             raise HTTPException(status_code=400, detail="Failed to convert event_time column to TIMESTAMP") from e
         raise e
+
+    clear_schema_cache()
 
     return {
         "status": "ok",

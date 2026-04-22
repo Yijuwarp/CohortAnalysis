@@ -213,6 +213,7 @@ def get_column_values(
         # Simple distinct for fast performance on massive cardinalities
         rows = connection.execute(
             f"""
+            SELECT DISTINCT {column_ref}
             FROM {source_table}
             {where_sql}
             LIMIT ?

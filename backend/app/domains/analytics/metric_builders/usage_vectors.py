@@ -41,7 +41,7 @@ def build_usage_vector_sql(
 
     # Aggregation logic per user/day
     if metric == "volume":
-        val_expr = "COUNT(*)" # Normalized snapshot rows are already 1 event each
+        val_expr = "SUM(e.event_count)" # Correctly sums pre-aggregated counts mapped during ingestion
     else:
         val_expr = "1" # For uniques, any match is 1
 

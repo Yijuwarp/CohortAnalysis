@@ -9,6 +9,7 @@ from app.utils.perf import time_block
 from app.utils.sql import reset_application_state
 from app.domains.ingestion.type_detection import detect_column_type
 from app.domains.ingestion.mapping_service import suggest_column_mapping
+from app.utils.db_utils import clear_schema_cache
 
 async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
@@ -83,6 +84,8 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                 column_count=len(column_names),
                 file_size=file_size
             )
+
+            clear_schema_cache()
 
             return {
                 "rows_imported": row_count,
