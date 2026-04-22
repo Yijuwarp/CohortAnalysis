@@ -867,8 +867,9 @@ tbody tr:hover {
 }
 
 .sticky-col-top {
+  position: sticky !important;
   top: 0 !important;
-  z-index: 10; /* Lower than horizontal sticky */
+  z-index: 21; /* Slightly higher than horizontal by default */
 }
 
 td.sticky-col {
@@ -877,11 +878,11 @@ td.sticky-col {
 
 th.sticky-col {
   background: #ecfdf3;
-  z-index: 21;
+  z-index: 22;
 }
 
 th.sticky-col-top {
-  z-index: 10;
+  z-index: 21;
 }
 
 /* The top-left corner cells (sticky in both directions) */

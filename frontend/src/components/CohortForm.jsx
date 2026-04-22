@@ -707,6 +707,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
                               placeholder={loadingKeys.has(valueCacheKey) ? "Loading options..." : "Select values"}
                               column={propertyFilter.column}
                               eventName={condition.event_name}
+                              excludeValues={Array.isArray(propertyFilter.values) ? propertyFilter.values : []}
                             />
 
                             <div className="cohort-pills">

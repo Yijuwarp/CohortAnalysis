@@ -105,7 +105,7 @@ def get_usage(
     retention_event: str | None = None,
     property: str | None = None,
     operator: str = "=",
-    value: str | None = None,
+    values: list[str] | None = None,
 ) -> dict[str, object]:
     retention_event = retention_event or "any"
     ensure_cohort_tables(connection)
@@ -114,7 +114,7 @@ def get_usage(
         "max_day": int(max_day),
         "event": event,
         "retention_event": retention_event or "any",
-        "property_filter": {"property": property, "operator": operator, "value": value} if property else None,
+        "property_filter": {"property": property, "operator": operator, "values": values} if property else None,
         "usage_volume_table": [],
         "usage_users_table": [],
         "usage_adoption_table": [],
@@ -154,7 +154,7 @@ def get_usage(
     property_clause, property_params = build_usage_property_filter_clause(
         property=property,
         operator=operator,
-        value=value,
+        values=values,
     )
 
     from app.domains.analytics.metric_builders.usage_vectors import build_usage_vector_sql
@@ -199,22 +199,30 @@ def get_usage(
             property_params=property_params,
             observation_end_time=observation_end_time
         )
-        user_daily_flags = connection.execute(unique_sql, unique_params).fetchall()
-        # (user_id, day_offset, value, is_eligible)
+        agg_sql = f"""
+        WITH active_users AS (
+            SELECT user_id, day_offset,
+                   ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY day_offset) as rn
+            FROM ({unique_sql})
+            WHERE value > 0
+        )
+        SELECT 
+            day_offset,
+            COUNT(*) as distinct_users,
+            SUM((rn = 1)::INTEGER) as newly_adopted_users
+        FROM active_users
+        GROUP BY day_offset
+        """
+        agg_rows = connection.execute(agg_sql, unique_params).fetchall()
         
-        user_first_day = {}
         distinct_users_by_day = {d: 0 for d in range(max_day + 1)}
-        for _, uid, day, val, is_elig in user_daily_flags:
-            if val > 0:
-                day = int(day)
-                distinct_users_by_day[day] += 1
-                if uid not in user_first_day or day < user_first_day[uid]:
-                    user_first_day[uid] = day
-        
         adoption_increment = {d: 0 for d in range(max_day + 1)}
-        for day in user_first_day.values():
+        
+        for day, dist, newly_adopted in agg_rows:
+            day = int(day)
             if day <= max_day:
-                adoption_increment[day] += 1
+                distinct_users_by_day[day] = int(dist)
+                adoption_increment[day] = int(newly_adopted)
         
         # 3. Retained Users
         join_type = next((c[2] for c in cohorts if c[0] == cohort_id), "condition_met")
@@ -291,7 +299,7 @@ def get_usage_frequency(
     event: str,
     property: str | None = None,
     operator: str = "=",
-    value: str | None = None,
+    values: list[str] | None = None,
 ) -> dict[str, object]:
     ensure_cohort_tables(connection)
 
@@ -323,7 +331,7 @@ def get_usage_frequency(
     property_clause, property_params = build_usage_property_filter_clause(
         property=property,
         operator=operator,
-        value=value,
+        values=values,
         table_alias="e",
     )
 

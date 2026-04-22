@@ -232,7 +232,16 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         connection.execute("DROP VIEW IF EXISTS events_normalized")
         
         # Explicit State Reset: Remove ghost data and potential blocking views
+        connection.execute("DROP INDEX IF EXISTS pk_membership")
+        connection.execute("DROP INDEX IF EXISTS idx_membership_user")
+        connection.execute("DROP INDEX IF EXISTS idx_membership_cohort")
         connection.execute("DROP TABLE IF EXISTS cohort_membership")
+        
+        connection.execute("DROP INDEX IF EXISTS pk_link")
+        connection.execute("DROP INDEX IF EXISTS idx_link_row")
+        connection.execute("DROP INDEX IF EXISTS idx_link_cohort")
+        connection.execute("DROP TABLE IF EXISTS cohort_event_link")
+        
         connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
         connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
         connection.execute("DROP VIEW IF EXISTS events_scoped")
