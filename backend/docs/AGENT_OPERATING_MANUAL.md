@@ -1,7 +1,7 @@
 # Agent Operating Manual (Backend)
 
 ## Current reality
-Backend logic is currently concentrated in `app/domains/legacy_api.py`, with routers in `app/routers/*` forwarding to that module.
+Backend logic is structured into domain-specific modules inside `app/domains/*` (e.g., `cohort_service.py`, `paths_service.py`, `retention_service.py`), with FastAPI routers in `app/routers/*` invoking functions from these domain services.
 
 ## What to preserve
 - Endpoint paths and request/response contracts
@@ -17,6 +17,6 @@ Backend logic is currently concentrated in `app/domains/legacy_api.py`, with rou
 ## Validation checklist for backend docs
 When documenting behavior, verify against code for:
 - Router endpoint list (`app/routers/*`)
-- Pydantic request models (defined in `legacy_api.py` and re-exported in `app/models/*`)
+- Pydantic request models (defined directly in `app/models/*`)
 - Table creation/migration helpers (`ensure_*` functions)
 - Analytics SQL in retention/usage/monetization functions

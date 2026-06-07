@@ -28,7 +28,9 @@ Computes periodic active user counts per cohort.
 - `max_day` (default 7)
 - `retention_event` (optional; `any` behavior when omitted)
 - `include_ci` (default false)
-- `retention_type` (classic | ever-after)
+- `confidence` (default 0.95; confidence level for Wilson score interval)
+- `retention_type` (classic | ever-after, default "classic")
+- `granularity` (day | hour, default "day")
 
 **Logic**:
 - **Classic**: User is active if they perform an event ON the specific day/interval relative to their `join_time`.
@@ -44,11 +46,15 @@ Analyzes event volume and unique user activity.
 **Query Params**:
 - `event` (required)
 - `max_day` (default 7)
+- `retention_event` (optional; custom retention event to align denominator)
+- `property` (optional; custom event property to filter by)
+- `operator` (default "="; comparison operator for property filter)
+- `value` (optional; value to filter by)
 
 **Logic**:
 - Uses `events_scoped` directly to support property-level filtering.
 - Activity is aligned with `cohort_membership` using `join_time` offsets.
-- Provides `usage_volume_table`, `usage_users_table`, and `retained_users_table`.
+- Provides `usage_volume_table`, `usage_users_table`, `usage_adoption_table`, and `retained_users_table`.
 
 ---
 
@@ -73,8 +79,8 @@ Triggers multi-step conversion and drop-off analysis across active cohorts.
 **Logic: Earliest Greedy Matching**
 - **Sequential**: Matching starts from step 1 and proceeds sequentially to step $N$.
 - **Greedy**: For each step, the system finds the **earliest** valid event occurrence after the previous step's match.
-- **Deterministic**: Ties in timestamps are broken using internal row identifiers (`rn`, `row_id`, or `global_rn`).
-- **Constraints**: Each step $N$ must satisfy $t_N > t_{N-1}$ (or higher row ID if $t_N = t_{N-1}$).
+- **Deterministic**: Ties in timestamps are broken using internal row identifiers (if present) or event name/time attributes.
+- **Constraints**: Each step $N$ must satisfy $t_N > t_{N-1}$ (or higher row ID/rank if $t_N = t_{N-1}$).
 
 **Source**:
 - Uses `cohort_activity_snapshot` as the base event stream when steps have no filters.
@@ -102,7 +108,37 @@ Deep-dive into individual user activity.
 
 ---
 
-## Statistical Testing (Comparison)
-- **Primary Test**: Mann-Whitney U (non-parametric).
-- **Rationale**: Analytics data (especially revenue) is often skewed; Mann-Whitney is robust to outliers and non-normal distributions.
-- **Edge cases**: If variance is zero for either cohort, $p\_value$ returns `null`.
+## Statistical Testing (Comparison) (`POST /compare-cohorts`)
+Evaluates statistical significance between Cohort A and Cohort B for a specific day and metric.
+
+**Request Payload**:
+- `cohort_a` (int; required)
+- `cohort_b` (int; required)
+- `tab` ("retention" | "usage" | "monetization")
+- `metric` (specific metric name depending on tab)
+- `day` (target offset day)
+- `max_day` (optional max day constraint)
+- `event` (optional target event)
+- `granularity` ("day" | "hour", default "day")
+- `retention_type` ("classic" | "ever_after")
+- `property`, `operator`, `value` (optional property filters for usage metric)
+
+**Logic**:
+- **Continuous Metrics** (e.g., events per user, revenue per user):
+  - **Welch's t-test**: Performs parametric two-sample t-test for unequal variances.
+  - **Mann-Whitney U Test (Primary)**: Non-parametric test robust to skewed analytics and revenue distributions.
+  - **Edge cases**: If variance is zero for both cohorts, the p-value returns `null`.
+- **Proportion Metrics** (e.g., retention rate, unique user percentage):
+  - **Two-Proportion z-test**: Standard parametric test for proportion differences.
+  - **Fisher's Exact Test**: Non-parametric test computed for smaller combined cohorts (total size $\le 5000$).
+
+---
+
+## Impact Analysis (`POST /impact/run`, `POST /impact/stats`)
+Measures conversion, retention, and monetization differences between a baseline cohort and variant cohorts following exposure and interaction events.
+
+**Logic**:
+- **Exposure**: Filters for users performing `exposure_events` (e.g. feature flags, A/B variant assignment events).
+- **Interaction**: Captures subsequent `interaction_events` indicating user interaction with the variant feature.
+- **Outcomes**: Computes retention, monetization, and custom impact metrics relative to the exposure timeline.
+- **Stats**: Evaluates significance on outcome metrics lazily via cached run data.

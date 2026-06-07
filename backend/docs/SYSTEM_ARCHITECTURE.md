@@ -6,7 +6,7 @@ The backend is a high-performance analytical server built with FastAPI and DuckD
 - **FastAPI Entry Point**: `app/main.py` handles startup logic and router registration.
 - **Domain Services**: `app/domains/*` contains the core business logic, partitioned by feature area (Ingestion, Scope, Cohorts, Analytics, etc.).
 - **Multi-User Isolation**: A structural isolation layer in `app/db/connection.py` (`run_query`) manages per-user DuckDB connections and enforces thread-safety.
-- **Data Persistence**: Analytics data is stored in per-user DuckDB files located at `backend/data/{user_id}/cohort_analysis.duckdb`.
+- **Data Persistence**: Analytics data is stored in per-user DuckDB files located at `backend/data/users/user_{user_id}.duckdb`.
 
 ## Initialization Behavior
 `app/main.py` registers specialized routers for each functional domain:

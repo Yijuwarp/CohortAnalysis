@@ -25,7 +25,7 @@ The Cohort Engine is responsible for defining, materializing, and maintaining us
 
 For each condition, the engine builds a SQL CTE that:
 1. Filters `events_scoped` by `event_name` and optional property filters.
-2. Computes cumulative `SUM(event_count)` per user, ordered by `event_time` and internal row ID (`rn`, `row_id`, or `global_rn`) to ensure deterministic results.
+2. Computes cumulative `SUM(event_count)` per user, ordered by `event_time` and `event_name` to ensure deterministic results.
 3. Retains users only when the cumulative count reaches `min_event_count`.
 
 ### Logical Combination

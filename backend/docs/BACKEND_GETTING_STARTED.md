@@ -53,5 +53,5 @@ pytest
 ```
 To run specific domain tests:
 ```bash
-pytest app/tests/domains/
+pytest tests/
 ```
