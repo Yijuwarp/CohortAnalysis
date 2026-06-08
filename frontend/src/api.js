@@ -225,10 +225,17 @@ export async function getUsage(event, maxDay, retentionEvent, propertyFilter = n
   if (retentionEvent !== 'any') {
     path += `&retention_event=${encodeURIComponent(retentionEvent)}`
   }
-  if (propertyFilter?.property) {
+  const hasValues = Array.isArray(propertyFilter?.values)
+    ? propertyFilter.values.length > 0
+    : (propertyFilter?.value !== undefined && propertyFilter?.value !== null && propertyFilter?.value !== '')
+  if (propertyFilter?.property && hasValues) {
     path += `&property=${encodeURIComponent(propertyFilter.property)}`
     path += `&operator=${encodeURIComponent(propertyFilter.operator || '=')}`
-    if (propertyFilter.value !== undefined && propertyFilter.value !== null && propertyFilter.value !== '') {
+    if (Array.isArray(propertyFilter.values)) {
+      propertyFilter.values.forEach(v => {
+        path += `&value=${encodeURIComponent(v)}`
+      })
+    } else {
       path += `&value=${encodeURIComponent(propertyFilter.value)}`
     }
   }
@@ -271,10 +278,17 @@ export async function getMonetization(maxDay) {
 
 export async function getUsageFrequency(event, propertyFilter = null) {
   let path = `/usage-frequency?event=${encodeURIComponent(event)}`
-  if (propertyFilter?.property) {
+  const hasValues = Array.isArray(propertyFilter?.values)
+    ? propertyFilter.values.length > 0
+    : (propertyFilter?.value !== undefined && propertyFilter?.value !== null && propertyFilter?.value !== '')
+  if (propertyFilter?.property && hasValues) {
     path += `&property=${encodeURIComponent(propertyFilter.property)}`
     path += `&operator=${encodeURIComponent(propertyFilter.operator || '=')}`
-    if (propertyFilter.value !== undefined && propertyFilter.value !== null && propertyFilter.value !== '') {
+    if (Array.isArray(propertyFilter.values)) {
+      propertyFilter.values.forEach(v => {
+        path += `&value=${encodeURIComponent(v)}`
+      })
+    } else {
       path += `&value=${encodeURIComponent(propertyFilter.value)}`
     }
   }

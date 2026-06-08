@@ -12,6 +12,14 @@ function formatTime(sec) {
   return `${h}h ${m}m`
 }
 
+function compactNumber(n) {
+  if (n < 1000) return n.toLocaleString()
+  return new Intl.NumberFormat('en-US', {
+    notation: 'compact',
+    maximumFractionDigits: 1
+  }).format(n).toLowerCase()
+}
+
 function computePct(userCount, parentUsers) {
   if (!parentUsers || parentUsers <= 0) return 0
   return userCount / parentUsers
@@ -46,7 +54,7 @@ export default function FlowTable({
     return (
       <td key={cid} title={`${val.user_count?.toLocaleString() || 0} users | P20 ${formatTime(val.p20_time_sec)} | Median ${formatTime(val.median_time_sec)} | P80 ${formatTime(val.p80_time_sec)}`}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontWeight: 700 }}>{formatPct(pct)}</div>
+          <div style={{ fontWeight: 700 }}>{compactNumber(val.user_count)} ({formatPct(pct)})</div>
           <div style={{ fontSize: 12, color: '#6b7280' }}>{formatTime(val.median_time_sec)}</div>
         </div>
       </td>
@@ -64,7 +72,6 @@ export default function FlowTable({
     const isLoopRow = row.path.slice(0, -1).includes(eventName)
     const canExpand = !isNoFurtherAction && !isOtherRow && depth < maxDepth && !isLoopRow
     const children = getChildren(row.path)
-    const basedOnUsers = Math.round(Number(row.values?.[cohorts[0]]?.parent_users || 0))
 
     const own = (
       <tr key={key} data-testid={`flow-row-d${depth}`}>
@@ -108,22 +115,11 @@ export default function FlowTable({
       return [own, <tr key={`${key}-loading`}><td className="sticky-col flow-path-col" style={{ paddingLeft: depth * 18 }}>Loading...</td>{cohorts.map(cid => <td key={cid}></td>)}</tr>]
     }
 
-    const contextRow = basedOnUsers > 0 ? (
-      <tr key={`${key}-context`}>
-        <td className="sticky-col flow-path-col">
-          <div style={{ paddingLeft: `${indentPx} + 16px` }} className="flow-subtle-label">
-            Based on {basedOnUsers.toLocaleString()} users
-          </div>
-        </td>
-        {cohorts.map(cid => <td key={cid}></td>)}
-      </tr>
-    ) : null
-
     if (!children || children.length === 0) {
-      return [own, ...(contextRow ? [contextRow] : [])]
+      return [own]
     }
 
-    return [own, ...(contextRow ? [contextRow] : []), ...renderRows(children)]
+    return [own, ...renderRows(children)]
   })
 
   if (!rootRows || rootRows.length === 0) return <p style={{ marginTop: 16 }}>No transitions found</p>
@@ -134,11 +130,19 @@ export default function FlowTable({
         <thead>
           <tr>
             <th className="sticky-col flow-path-col">Event</th>
-            {cohorts.map(cid => (
-              <th key={cid}>
-                <div>{cohortMap[cid]?.name || `Cohort ${cid}`}</div>
-              </th>
-            ))}
+            {cohorts.map(cid => {
+              const totalUsers = rootRows?.[0]?.values?.[cid]?.parent_users || 0
+              return (
+                <th key={cid}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                    <div>{cohortMap[cid]?.name || `Cohort ${cid}`}</div>
+                    <div style={{ fontSize: 11, fontWeight: 400, opacity: 0.8 }}>
+                      ({compactNumber(totalUsers)} users)
+                    </div>
+                  </div>
+                </th>
+              )
+            })}
           </tr>
         </thead>
         <tbody>{renderRows(rootRows)}</tbody>

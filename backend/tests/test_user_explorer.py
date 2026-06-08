@@ -1,9 +1,7 @@
 from __future__ import annotations
+from tests.utils import csv_upload, DeterministicTestClient
 
-from tests.utils import csv_upload
-
-
-def _prepare_fixture(client):
+def _prepare_fixture(client: DeterministicTestClient):
     csv_text = (
         "user_id,event_name,event_time,country,plan,event_count\n"
         "u1,signup,2026-01-01 09:00:00,US,free,1\n"
@@ -26,19 +24,14 @@ def _prepare_fixture(client):
     )
     assert mapped.status_code == 200, mapped.text
 
-
-def test_users_search_returns_scoped_users(client):
+def test_users_search_returns_scoped_users(client: DeterministicTestClient):
     _prepare_fixture(client)
-
     response = client.get('/users/search?query=u&limit=20')
     assert response.status_code == 200, response.text
-
     assert response.json() == [{"user_id": "u1"}, {"user_id": "u2"}]
 
-
-def test_user_explorer_returns_summary_timeline_and_navigation(client):
+def test_user_explorer_returns_summary_timeline_and_navigation(client: DeterministicTestClient):
     _prepare_fixture(client)
-
     created = client.post(
         "/cohorts",
         json={"name": "Purchasers", "logic_operator": "AND", "conditions": [{"event_name": "purchase", "min_event_count": 1}]},
@@ -64,8 +57,7 @@ def test_user_explorer_returns_summary_timeline_and_navigation(client):
     assert next_payload['pagination']['page'] == 2
     assert next_payload['cursor']['current_event_time'].startswith('2026-01-02T10:00:00')
 
-
-def test_user_explorer_jump_datetime_and_cohort_join_tagging(client):
+def test_user_explorer_jump_datetime_and_cohort_join_tagging(client: DeterministicTestClient):
     _prepare_fixture(client)
     created = client.post(
         "/cohorts",

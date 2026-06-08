@@ -7,7 +7,7 @@ def get_observation_end_time(connection: duckdb.DuckDBPyConnection) -> datetime 
     Uses p99.9 of event_time from events_scoped, clamped to UTC now.
     """
     row = connection.execute("""
-        SELECT MAX(event_time)
+        SELECT quantile_cont(event_time, 0.999)
         FROM events_scoped
     """).fetchone()
 

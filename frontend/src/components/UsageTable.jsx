@@ -20,6 +20,8 @@ function computeCumulative(values) {
   return result
 }
 
+const isMultiOperator = (op) => op?.toLowerCase().includes('in')
+
 // ---------------------------------------------------------------------------
 // Action Icons
 // ---------------------------------------------------------------------------
@@ -161,6 +163,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
   const [propertyOperator, setPropertyOperator] = useState(state?.propertyOperator || '=')
   const [propertyValues, setPropertyValues] = useState([])
   const [propertyValue, setPropertyValue] = useState(state?.propertyValue || '')
+  const [multiPropertyValues, setMultiPropertyValues] = useState(Array.isArray(state?.propertyValue) ? state.propertyValue : [])
   const [propertyLoading, setPropertyLoading] = useState(false)
   const [showPropertyFilter, setShowPropertyFilter] = useState(state?.showPropertyFilter ?? false)
   const filterRowRef = useRef(null)
@@ -176,12 +179,12 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       metricType,
       eventProperty,
       propertyOperator,
-      propertyValue,
+      propertyValue: isMultiOperator(propertyOperator) ? multiPropertyValues : propertyValue,
       showPropertyFilter,
       columnWidths
     }
     setState(nextState)
-  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinnedVolume, isPinnedUsers, modeUsers, metricType, eventProperty, propertyOperator, propertyValue, showPropertyFilter, columnWidths])
+  }, [event, effectiveMaxDayVolume, effectiveMaxDayUsers, isPinnedVolume, isPinnedUsers, modeUsers, metricType, eventProperty, propertyOperator, propertyValue, multiPropertyValues.join(','), showPropertyFilter, columnWidths])
   const [volumeRows, setVolumeRows] = useState([])
   const [userRows, setUserRows] = useState([])
   const [retainedRows, setRetainedRows] = useState([])
@@ -275,13 +278,24 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     })
   }
 
-  const propertyFilter = eventProperty ? { property: eventProperty, operator: propertyOperator, value: propertyValue } : null
-  const propertyFilterRequiresValue = Boolean(eventProperty && !propertyValue)
+  const multiValuesKey = multiPropertyValues.join(',')
+
+  const propertyValuesToPass = isMultiOperator(propertyOperator) ? multiPropertyValues : (propertyValue ? [propertyValue] : [])
+  const propertyFilter = useMemo(
+    () => eventProperty ? { property: eventProperty, operator: propertyOperator, values: propertyValuesToPass } : null,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [eventProperty, propertyOperator, propertyValue, multiValuesKey]
+  )
+  const propertyFilterRequiresValue = useMemo(
+    () => Boolean(eventProperty && (isMultiOperator(propertyOperator) ? multiPropertyValues.length === 0 : !propertyValue)),
+    [eventProperty, propertyOperator, propertyValue, multiValuesKey]
+  )
 
   const clearPropertyFilter = () => {
     setEventProperty('')
     setPropertyOperator('=')
     setPropertyValue('')
+    setMultiPropertyValues([])
     setPropertyValues([])
     setShowPropertyFilter(false)
   }
@@ -302,7 +316,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       .then(res => setFrequencyData(res))
       .catch(() => setFrequencyData(null))
       .finally(() => setFrequencyLoading(false))
-  }, [event, propertyFilter?.property, propertyFilter?.operator, propertyFilter?.value, localRefreshToken])
+  }, [event, propertyFilter, localRefreshToken, refreshToken])
 
   const loadUsage = async (selectedEvent = event) => {
     if (!selectedEvent) {
@@ -371,7 +385,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
       setUserRows([])
       setRetainedRows([])
     }
-  }, [event, maxDay, retentionEvent, scopeVersion, eventProperty, propertyOperator, propertyValue])
+  }, [event, maxDay, retentionEvent, scopeVersion, propertyFilter, propertyFilterRequiresValue, refreshToken])
 
   useEffect(() => {
     if (!event) {
@@ -414,6 +428,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
     if (!event || !eventProperty) {
       setPropertyValues([])
       setPropertyValue('')
+      setMultiPropertyValues([])
       return
     }
 
@@ -424,11 +439,13 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
         const nextValues = response.values || []
         setPropertyValues(nextValues)
         setPropertyValue((current) => (current && nextValues.includes(current) ? current : ''))
+        setMultiPropertyValues((current) => current.filter(v => nextValues.includes(v)))
       })
       .catch(() => {
         if (!isMounted) return
         setPropertyValues([])
         setPropertyValue('')
+        setMultiPropertyValues([])
       })
 
     return () => {
@@ -662,7 +679,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
           'Event': event,
           'Metric': volumeLabel,
           'Max Day': maxDay,
-          'Property Filter': eventProperty ? `${eventProperty} ${propertyOperator} ${propertyValue}` : 'None'
+          'Property Filter': eventProperty ? `${eventProperty} ${propertyOperator} ${isMultiOperator(propertyOperator) ? multiPropertyValues.join(', ') : propertyValue}` : 'None'
         }
       }
     }
@@ -741,49 +758,91 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
 
         {/* Row 2: Filters (Animated Wrapper) */}
         <div className={`usage-filter-row-wrapper ${showPropertyFilter ? 'open' : ''}`}>
-          <div className="usage-filter-row" ref={filterRowRef}>
-            <span className="filter-label">where</span>
-            {propertyLoading ? (
-              <small className="secondary-text">Loading properties...</small>
-            ) : (
-              <div className="filter-triplet">
-                <SearchableSelect
-                  options={eventProperties}
-                  value={eventProperty}
-                  onChange={(value) => {
-                    setEventProperty(value)
-                    setPropertyValue('')
-                  }}
-                  placeholder="Property"
-                  style={{ width: '180px' }}
-                />
-                <select 
-                  className="operator-select"
-                  value={propertyOperator} 
-                  onChange={(e) => setPropertyOperator(e.target.value)} 
-                  disabled={!eventProperty}
-                >
-                  <option value="=">=</option>
-                  <option value="!=">!=</option>
-                </select>
-                <SearchableSelect
-                  options={propertyValues}
-                  value={propertyValue}
-                  onChange={setPropertyValue}
-                  placeholder="Value"
-                  disabled={!eventProperty}
-                  column={eventProperty}
-                  eventName={event}
-                  style={{ width: '180px' }}
-                />
-                <button 
-                  type="button" 
-                  className="filter-remove-btn" 
-                  onClick={clearPropertyFilter} 
-                  title="Remove filter"
-                >
-                  ✕
-                </button>
+          <div className="usage-filter-row" style={{ flexDirection: 'column', alignItems: 'flex-start' }} ref={filterRowRef}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', width: '100%' }}>
+              <span className="filter-label">where</span>
+              {propertyLoading ? (
+                <small className="secondary-text">Loading properties...</small>
+              ) : (
+                <div className="filter-triplet">
+                  <SearchableSelect
+                    options={eventProperties}
+                    value={eventProperty}
+                    onChange={(value) => {
+                      setEventProperty(value)
+                      setPropertyValue('')
+                    }}
+                    placeholder="Property"
+                    style={{ width: '180px' }}
+                  />
+                  <select 
+                    className="operator-select"
+                    value={propertyOperator} 
+                    onChange={(e) => {
+                      const nextOp = e.target.value
+                      setPropertyOperator(nextOp)
+                    }} 
+                    disabled={!eventProperty}
+                  >
+                    <option value="=">=</option>
+                    <option value="!=">!=</option>
+                    <option value="in">in</option>
+                    <option value="not in">not in</option>
+                  </select>
+                  {isMultiOperator(propertyOperator) ? (
+                    <SearchableSelect
+                      options={propertyValues}
+                      value=""
+                      onChange={(val) => {
+                        if (!val) return
+                        const normalized = String(val)
+                        if (!multiPropertyValues.includes(normalized)) {
+                          setMultiPropertyValues(prev => [...prev, normalized])
+                        }
+                      }}
+                      placeholder="Add value..."
+                      disabled={!eventProperty}
+                      column={eventProperty}
+                      eventName={event}
+                      excludeValues={multiPropertyValues}
+                      style={{ width: '180px' }}
+                    />
+                  ) : (
+                    <SearchableSelect
+                      options={propertyValues}
+                      value={propertyValue}
+                      onChange={setPropertyValue}
+                      placeholder="Value"
+                      disabled={!eventProperty}
+                      column={eventProperty}
+                      eventName={event}
+                      style={{ width: '180px' }}
+                    />
+                  )}
+                  <button 
+                    type="button" 
+                    className="filter-remove-btn" 
+                    onClick={clearPropertyFilter} 
+                    title="Remove filter"
+                  >
+                    ✕
+                  </button>
+                </div>
+              )}
+            </div>
+            {isMultiOperator(propertyOperator) && multiPropertyValues.length > 0 && (
+              <div className="cohort-pills" style={{ paddingLeft: '52px', paddingTop: '6px' }}>
+                {multiPropertyValues.map(val => (
+                  <span key={val} className="cohort-pill">
+                    {val}
+                    <button 
+                      type="button" 
+                      onClick={() => setMultiPropertyValues(prev => prev.filter(v => v !== val))}
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
               </div>
             )}
           </div>
@@ -818,7 +877,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
             <thead>
               <tr>
                 <th
-                  className={`${isPinnedVolume ? 'sticky-col sticky-col-cohort' : ''} sortable-header`}
+                  className={`${isPinnedVolume ? 'sticky-col sticky-col-cohort' : ''} sticky-col-top sortable-header`}
                   style={{ 
                     width: columnWidths.cohort,
                     minWidth: columnWidths.cohort,
@@ -835,7 +894,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 </th>
                 {showSplit && (
                   <th
-                    className={`${isPinnedVolume ? 'sticky-col sticky-col-split' : ''} sortable-header`}
+                    className={`${isPinnedVolume ? 'sticky-col sticky-col-split' : ''} sticky-col-top sortable-header`}
                     style={{ 
                       width: columnWidths.split, 
                       minWidth: columnWidths.split,
@@ -852,7 +911,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </th>
                 )}
                 <th
-                  className={`${isPinnedVolume ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  className={`${isPinnedVolume ? 'sticky-col sticky-col-size' : ''} sticky-col-top sortable-header`}
                   style={{ 
                     width: columnWidths.size, 
                     minWidth: columnWidths.size,
@@ -870,7 +929,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 {dayColumnsVolume.map((day) => (
                   <th
                     key={day}
-                    className="sortable-header"
+                    className="sticky-col-top sticky-col sortable-header"
                     onClick={() => {
                       if (isResizingRef.current) return
                       handleSortVolume(`D${day}`)
@@ -982,7 +1041,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
             <thead>
               <tr>
                 <th 
-                  className={`${isPinnedUsers ? 'sticky-col sticky-col-cohort' : ''} sortable-header`} 
+                  className={`${isPinnedUsers ? 'sticky-col sticky-col-cohort' : ''} sticky-col-top sortable-header`} 
                   style={{ 
                     width: columnWidths.cohort,
                     minWidth: columnWidths.cohort,
@@ -999,7 +1058,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 </th>
                 {showSplit && (
                   <th 
-                    className={`${isPinnedUsers ? 'sticky-col sticky-col-split' : ''} sortable-header`} 
+                    className={`${isPinnedUsers ? 'sticky-col sticky-col-split' : ''} sticky-col-top sortable-header`} 
                     style={{ 
                       width: columnWidths.split, 
                       minWidth: columnWidths.split,
@@ -1016,7 +1075,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                   </th>
                 )}
                 <th
-                  className={`${isPinnedUsers ? 'sticky-col sticky-col-size' : ''} sortable-header`}
+                  className={`${isPinnedUsers ? 'sticky-col sticky-col-size' : ''} sticky-col-top sortable-header`}
                   style={{ 
                     width: columnWidths.size, 
                     minWidth: columnWidths.size,
@@ -1034,7 +1093,7 @@ export default function UsageTable({ refreshToken, retentionEvent, maxDay, state
                 {dayColumnsUsers.map((day) => (
                   <th
                     key={day}
-                    className="sortable-header"
+                    className="sticky-col-top sticky-col sortable-header"
                     onClick={() => {
                       if (isResizingRef.current) return
                       handleSortUsers(`D${day}`)

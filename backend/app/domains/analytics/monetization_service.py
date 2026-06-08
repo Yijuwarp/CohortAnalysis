@@ -39,7 +39,7 @@ def get_monetization(
     retained_users_table = []
     eligibility_table = []
     
-    for cohort_id, cohort_name in cohorts:
+    for cohort_id, cohort_name, join_type in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
         
@@ -47,6 +47,7 @@ def get_monetization(
         rev_sql, rev_params = build_revenue_vector_sql(
             cohort_id=cohort_id,
             max_day=max_day,
+            join_type=join_type,
             observation_end_time=observation_end_time
         )
         # Aggregate per day: (day_offset, sum_revenue, sum_events, eligible_users)
@@ -81,6 +82,7 @@ def get_monetization(
         ret_sql, ret_params = build_retention_vector_sql(
             cohort_id=cohort_id,
             max_day=max_day,
+            join_type=join_type,
             retention_event=None,
             observation_end_time=observation_end_time
         )
@@ -109,7 +111,7 @@ def get_monetization(
         "revenue_table": revenue_table,
         "cohort_sizes": [
             {"cohort_id": int(cid), "cohort_name": str(name), "size": int(cohort_sizes.get(cid, 0))}
-            for cid, name in cohorts
+            for cid, name, jtype in cohorts
         ],
         "retained_users_table": retained_users_table,
         "eligibility_table": eligibility_table,

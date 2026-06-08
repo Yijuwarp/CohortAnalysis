@@ -2,20 +2,19 @@ import pytest
 import io
 import json
 from datetime import datetime
-from fastapi.testclient import TestClient
-from tests.utils import csv_upload
+from app.db.connection import get_connection
+from tests.utils import csv_upload, DeterministicTestClient
 
 @pytest.fixture(autouse=True)
-def setup_db(db_connection):
-    """Ensure tables are fresh and schema is up to date."""
+def cleanup_after_test(db_connection):
+    """Cleanup after each test."""
     yield
-    # Cleanup after each test
     db_connection.execute("DELETE FROM cohort_membership")
     db_connection.execute("DELETE FROM cohort_conditions")
     db_connection.execute("DELETE FROM cohorts")
     db_connection.execute("DELETE FROM events_normalized")
 
-def _prepare_data(client: TestClient, num_users=20):
+def _prepare_data(client, num_users=20):
     """Upload CSV and map columns to ensure schema exists."""
     rows = ["user_id,event_name,event_time,country"]
     for i in range(num_users):
@@ -34,7 +33,7 @@ def _prepare_data(client: TestClient, num_users=20):
     })
     assert mapping.status_code == 200
 
-def _create_parent_cohort(client: TestClient, name="Parent"):
+def _create_parent_cohort(client, name="Parent"):
     """Create a cohort containing all users."""
     _prepare_data(client)
     resp = client.post("/cohorts", json={
@@ -46,7 +45,7 @@ def _create_parent_cohort(client: TestClient, name="Parent"):
     assert resp.status_code == 200
     return resp.json()["cohort_id"]
 
-def test_random_split_creates_n_groups(client: TestClient, db_connection):
+def test_random_split_creates_n_groups(client: DeterministicTestClient, db_connection):
     cohort_id = _create_parent_cohort(client)
     n = 3
     resp = client.post(f"/cohorts/{cohort_id}/split", json={
@@ -62,7 +61,7 @@ def test_random_split_creates_n_groups(client: TestClient, db_connection):
     for child in children:
         assert child[2] == "random"
 
-def test_property_split_creates_value_cohorts(client: TestClient, db_connection):
+def test_property_split_creates_value_cohorts(client: DeterministicTestClient, db_connection):
     cohort_id = _create_parent_cohort(client)
     
     # 10 US, 5 India, 5 UK
@@ -91,7 +90,7 @@ def test_property_split_creates_value_cohorts(client: TestClient, db_connection)
     ot_size = db_connection.execute("SELECT COUNT(*) FROM cohort_membership WHERE cohort_id = ?", [ot_id]).fetchone()[0]
     assert ot_size == 5
 
-def test_property_split_no_other_when_all_selected(client: TestClient):
+def test_property_split_no_other_when_all_selected(client: DeterministicTestClient):
     cohort_id = _create_parent_cohort(client)
     
     resp = client.post(f"/cohorts/{cohort_id}/split", json={
@@ -103,7 +102,7 @@ def test_property_split_no_other_when_all_selected(client: TestClient):
     assert len(data["child_cohorts"]) == 3
     assert not any("_other" in c["name"] for c in data["child_cohorts"])
 
-def test_preview_split_no_persistence(client: TestClient, db_connection):
+def test_preview_split_no_persistence(client: DeterministicTestClient, db_connection):
     cohort_id = _create_parent_cohort(client)
     
     resp = client.post(f"/cohorts/{cohort_id}/split/preview", json={
@@ -117,7 +116,7 @@ def test_preview_split_no_persistence(client: TestClient, db_connection):
     count = db_connection.execute("SELECT COUNT(*) FROM cohorts WHERE split_parent_cohort_id = ?", [cohort_id]).fetchone()[0]
     assert count == 0
 
-def test_split_rejects_subcohort(client: TestClient):
+def test_split_rejects_subcohort(client: DeterministicTestClient):
     cohort_id = _create_parent_cohort(client)
     resp = client.post(f"/cohorts/{cohort_id}/split", json={
         "type": "random",
@@ -132,7 +131,7 @@ def test_split_rejects_subcohort(client: TestClient):
     assert resp2.status_code == 400
     assert "Cannot split sub-cohort" in resp2.json()["detail"]
 
-def test_delete_parent_cascades_to_splits(client: TestClient, db_connection):
+def test_delete_parent_cascades_to_splits(client: DeterministicTestClient, db_connection):
     cohort_id = _create_parent_cohort(client)
     client.post(f"/cohorts/{cohort_id}/split", json={"type": "random", "random": {"num_groups": 2}})
     
@@ -143,7 +142,7 @@ def test_delete_parent_cascades_to_splits(client: TestClient, db_connection):
     assert db_connection.execute("SELECT COUNT(*) FROM cohorts WHERE cohort_id = ?", [cohort_id]).fetchone()[0] == 0
     assert db_connection.execute("SELECT COUNT(*) FROM cohorts WHERE split_parent_cohort_id = ?", [cohort_id]).fetchone()[0] == 0
 
-def test_list_cohorts_includes_split_info(client: TestClient):
+def test_list_cohorts_includes_split_info(client: DeterministicTestClient):
     cohort_id = _create_parent_cohort(client)
     client.post(f"/cohorts/{cohort_id}/split", json={
         "type": "property", 
