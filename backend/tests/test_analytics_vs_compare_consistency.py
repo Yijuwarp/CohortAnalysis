@@ -26,7 +26,7 @@ def setup_consistent_data(client: TestClient):
         "u1,registration,2026-01-01 10:00:00,0\n"
         "u1,app_open,2026-01-01 11:00:00,0\n"
         "u1,purchase,2026-01-01 12:00:00,10.0\n"
-        "u1,app_open,2026-01-02 11:00:00,0\n"
+        "u1,app_open,2026-01-02 13:00:00,0\n"
         "u2,registration,2026-01-01 10:00:00,0\n"
         "u2,app_open,2026-01-01 11:00:00,0\n"
     )
@@ -55,7 +55,7 @@ def setup_consistent_data(client: TestClient):
     client.post("/cohorts", json={
         "name": "Cohort B Precise",
         "logic_operator": "AND",
-        "conditions": [{"event_name": "purchase", "min_event_count": 0, "max_event_count": 0}]
+        "conditions": [{"event_name": "purchase", "min_event_count": 1, "is_negated": True}]
     })
     
     cohorts_payload = client.get("/cohorts").json()
@@ -85,8 +85,14 @@ def test_retention_consistency(client: TestClient):
     
     # Comparison Service
     # D1 retention_rate
-    comp_url = f"/compare?cohort_a={cohort_a_id}&cohort_b={cohort_b_id}&tab=retention&metric=retention_rate&day=1&event=app_open"
-    comp_resp = client.get(comp_url)
+    comp_resp = client.post("/compare-cohorts", json={
+        "cohort_a": cohort_a_id,
+        "cohort_b": cohort_b_id,
+        "tab": "retention",
+        "metric": "retention_rate",
+        "day": 1,
+        "event": "app_open"
+    })
     assert comp_resp.status_code == 200
     comp_data = comp_resp.json()
     
@@ -111,8 +117,14 @@ def test_usage_consistency(client: TestClient):
     vol_b = next(c for c in usage_data["usage_volume_table"] if c["cohort_id"] == cohort_b_id)
     
     # Comparison Service: per_installed_user (volume) on D0
-    comp_url = f"/compare?cohort_a={cohort_a_id}&cohort_b={cohort_b_id}&tab=usage&metric=per_installed_user&day=0&event=app_open"
-    comp_resp = client.get(comp_url)
+    comp_resp = client.post("/compare-cohorts", json={
+        "cohort_a": cohort_a_id,
+        "cohort_b": cohort_b_id,
+        "tab": "usage",
+        "metric": "per_installed_user",
+        "day": 0,
+        "event": "app_open"
+    })
     assert comp_resp.status_code == 200
     comp_data = comp_resp.json()
     
@@ -133,8 +145,13 @@ def test_monetization_consistency(client: TestClient):
     rev_a_d0 = next(r["revenue"] for r in rev_rows if r["cohort_id"] == cohort_a_id and r["day_number"] == 0)
     
     # Comparison Service: revenue_per_acquired_user on D0
-    comp_url = f"/compare?cohort_a={cohort_a_id}&cohort_b={cohort_b_id}&tab=monetization&metric=revenue_per_acquired_user&day=0"
-    comp_resp = client.get(comp_url)
+    comp_resp = client.post("/compare-cohorts", json={
+        "cohort_a": cohort_a_id,
+        "cohort_b": cohort_b_id,
+        "tab": "monetization",
+        "metric": "revenue_per_acquired_user",
+        "day": 0
+    })
     assert comp_resp.status_code == 200
     comp_data = comp_resp.json()
     
@@ -148,10 +165,19 @@ def test_grid_completeness(client: TestClient):
     # u2 has NO activity on D1.
     # Usage service should show 0.
     usage_resp = client.get("/usage?event=app_open&max_day=1")
+    assert usage_resp.status_code == 200
+    usage_data = usage_resp.json()
     vol_b = next(c for c in usage_data["usage_volume_table"] if c["cohort_id"] == cohort_b_id)
     assert int(vol_b["values"]["1"]) == 0
     
     # Comparison should show 0.
-    comp_url = f"/compare?cohort_a={cohort_a_id}&cohort_b={cohort_b_id}&tab=usage&metric=per_installed_user&day=1&event=app_open"
-    comp_resp = client.get(comp_url)
+    comp_resp = client.post("/compare-cohorts", json={
+        "cohort_a": cohort_a_id,
+        "cohort_b": cohort_b_id,
+        "tab": "usage",
+        "metric": "per_installed_user",
+        "day": 1,
+        "event": "app_open"
+    })
+    assert comp_resp.status_code == 200
     assert comp_resp.json()["cohort_b_value"] == 0.0

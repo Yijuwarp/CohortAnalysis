@@ -420,7 +420,10 @@ def test_run_paths_db_priority(client: TestClient, db_connection: duckdb.DuckDBP
     # 1. Create a path in DB with 60m gap
     path_res = client.post("/paths", json={
         "name": "Test Priority",
-        "steps": [{"event_name": "A", "step_order": 0}, {"event_name": "B", "step_order": 1}],
+        "steps": [
+            {"step_order": 0, "groups": [{"event_name": "A"}]},
+            {"step_order": 1, "groups": [{"event_name": "B"}]}
+        ],
         "max_step_gap_minutes": 60
     })
     path_id = path_res.json()["id"]

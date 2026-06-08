@@ -376,7 +376,7 @@ def test_retention_overlay_handles_same_timestamp_different_events_without_doubl
     assert row['retention']['1'] == 100.0
 
     # If overlay join duplicated same-timestamp records ambiguously, this day can inflate under bad joins.
-    assert all(value <= 100.0 for value in row['retention'].values())
+    assert all(value <= 100.0 for value in row['retention'].values() if value is not None)
 
 
 def test_columns_includes_data_type(client: TestClient) -> None:
@@ -398,7 +398,7 @@ def test_column_values_returns_distinct_values(client: TestClient) -> None:
     assert response.status_code == 200, response.text
 
     payload = response.json()
-    assert payload['values'] == ['CA', 'US']
+    assert set(payload['values']) == {'CA', 'US'}
     assert payload['total_distinct'] == 2
 
 

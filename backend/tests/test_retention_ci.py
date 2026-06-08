@@ -74,42 +74,27 @@ def test_retention_endpoint_rejects_invalid_confidence(client: TestClient) -> No
 
 def test_retention_returns_null_retention_and_ci_for_zero_sized_cohort(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    db_connection,
 ) -> None:
-    class _FakeConnection:
-        def execute(self, *_args, **_kwargs):
-            class _Result:
-                @staticmethod
-                def fetchone():
-                    return [1]
-
-            return _Result()
-
-        @staticmethod
-        def close() -> None:
-            return None
-
-    # Patch the service module directly
-    monkeypatch.setattr(main, 'get_connection', lambda: _FakeConnection())
-    monkeypatch.setattr(retention_service, 'ensure_cohort_tables', lambda _connection: None)
-    monkeypatch.setattr(retention_service, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort')], {99: 0}))
-    monkeypatch.setattr(retention_service, 'fetch_retention_active_rows', lambda *args, **kwargs: [])
-
-    # The router might also need its dependency patched if it's already bound
-    # But usually TestClient(main.app) will use the patched main.get_connection if called that way.
-    # However, for FastAPI dependencies, we might need to use app.dependency_overrides.
-    main.app.dependency_overrides[main.app_get_connection] = lambda: _FakeConnection()
-
-    try:
-        response = client.get('/retention?max_day=1&include_ci=true&confidence=0.95')
-
-        assert response.status_code == 200, response.text
-        row = response.json()['retention_table'][0]
-        assert row['size'] == 0
-        assert row['retention'] == {'0': None, '1': None}
-        assert row['retention_ci'] == {
-            '0': {'lower': None, 'upper': None},
-            '1': {'lower': None, 'upper': None},
-        }
-    finally:
-        main.app.dependency_overrides.clear()
+    _prepare_events(client)
+    
+    # Create a cohort matching zero users
+    client.post("/cohorts", json={
+        "name": "empty_cohort",
+        "logic_operator": "AND",
+        "conditions": [{"event_name": "nonexistent", "min_event_count": 1}]
+    })
+    
+    # Force the empty cohort to be active for testing zero-size retention behavior
+    db_connection.execute("UPDATE cohorts SET is_active = TRUE WHERE name = 'empty_cohort'")
+    
+    response = client.get('/retention?max_day=1&include_ci=true&confidence=0.95')
+    assert response.status_code == 200, response.text
+    
+    row = next(r for r in response.json()['retention_table'] if r['cohort_name'] == 'empty_cohort')
+    assert row['size'] == 0
+    assert row['retention'] == {'0': None, '1': None}
+    assert row['retention_ci'] == {
+        '0': {'lower': None, 'upper': None},
+        '1': {'lower': None, 'upper': None},
+    }

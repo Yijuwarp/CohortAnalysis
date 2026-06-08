@@ -280,6 +280,8 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
             INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, source_saved_id)
             SELECT cohort_id, user_id, event_time, event_name, source_saved_id FROM cohort_activity_snapshot_staging
         """)
+        from app.domains.cohorts.activity_service import refresh_cohort_activity
+        refresh_cohort_activity(connection)
         connection.execute("COMMIT")
     except Exception:
         try:

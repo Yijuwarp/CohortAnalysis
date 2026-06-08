@@ -305,7 +305,11 @@ def list_cohorts(connection: duckdb.DuckDBPyConnection) -> dict[str, list[dict[s
                 
                 migrated_operator, migrated_value = migrate_legacy_timestamp_filter(operator, legacy_value)
                 operator = migrated_operator
-                values = validate_timestamp_payload(migrated_operator, migrated_value)
+                from app.utils.timestamp import TIMESTAMP_OPERATORS
+                if operator in TIMESTAMP_OPERATORS:
+                    values = validate_timestamp_payload(migrated_operator, migrated_value)
+                else:
+                    values = [migrated_value] if not isinstance(migrated_value, list) else migrated_value
             property_filter = {
                 "column": column_name,
                 "operator": operator,

@@ -139,16 +139,14 @@ def get_column_values(
     HIGH_CARDINALITY_COLUMNS = ["user_id", "device_id", "anonymous_id", "session_id"]
     is_high_cardinality = column.lower() in HIGH_CARDINALITY_COLUMNS
 
-    # Ensure table/column is known
-    # We strictly use events_scoped as it reflects the current filtering state
-    # Ensure table/column is known and get its type
+    # Ensure table/column is known and get its type from events_normalized
     column_metadata = {
         row[0]: row[1].upper()
         for row in connection.execute(
             """
             SELECT column_name, data_type
             FROM information_schema.columns
-            WHERE table_name = 'events_scoped'
+            WHERE table_name = 'events_normalized'
             """
         ).fetchall()
     }
@@ -185,7 +183,7 @@ def get_column_values(
         rows = connection.execute(
             f"""
             SELECT DISTINCT {column_ref}
-            FROM events_scoped
+            FROM events_normalized
             {where_sql}
             LIMIT ?
             """,
@@ -196,7 +194,7 @@ def get_column_values(
         rows = connection.execute(
             f"""
             SELECT {column_ref}, SUM(event_count) as freq
-            FROM events_scoped
+            FROM events_normalized
             {where_sql}
             GROUP BY 1
             ORDER BY freq DESC, {column_ref} ASC
@@ -211,7 +209,7 @@ def get_column_values(
         connection.execute(
             f"""
             SELECT COUNT(DISTINCT {column_ref})
-            FROM events_scoped
+            FROM events_normalized
             {where_sql}
             """,
             query_params

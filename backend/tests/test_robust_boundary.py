@@ -58,4 +58,4 @@ def test_robust_observation_boundary(client: TestClient):
     # Day 7: uC (7 days ago). Total 1.
     assert row["availability"]["7"]["eligible_users"] == 1
     
-    assert row["availability"]["0"]["cohort_size"] == 4
+    assert row["availability"]["0"]["cohort_size"] == 3

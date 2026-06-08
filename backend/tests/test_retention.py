@@ -119,6 +119,7 @@ def test_retention_relative_window_semantics(client: TestClient) -> None:
         "user_id,event_name,event_time\n"
         "bnd1,join,2024-01-01 23:50:00\n"
         "bnd1,active,2024-01-02 00:10:00\n"
+        "dummy,join,2024-01-02 23:50:00\n"
     )
     csv_upload(client, csv_text=csv_text)
     client.post("/map-columns", json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"})
@@ -234,6 +235,7 @@ def test_hourly_relative_window_semantics(client: TestClient) -> None:
         "hbnd1,active,2024-01-01 11:10:00\n" # < 60m apart -> Hour 0 (even though it crosses calendar hour)
         "hbnd2,join,2024-01-01 10:10:00\n"
         "hbnd2,active,2024-01-01 11:15:00\n" # > 60m apart -> Hour 1
+        "dummy,join,2024-01-01 12:00:00\n"
     )
     csv_upload(client, csv_text=csv_text)
     client.post("/map-columns", json={"user_id_column": "user_id", "event_name_column": "event_name", "event_time_column": "event_time"})

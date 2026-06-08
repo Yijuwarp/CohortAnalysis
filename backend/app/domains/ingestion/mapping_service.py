@@ -296,18 +296,28 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             cleaned_expr = f"REPLACE(TRIM(REGEXP_REPLACE({v_col_raw}, '\\s*(UTC|Z|[+-]\\d{{2}}:?\\d{{2}})$', '', 'i')), 'T', ' ')"
             raw_time_expr = f"COALESCE(TRY_CAST({cleaned_expr} AS TIMESTAMP), TRY_CAST({cleaned_expr} || ':00:00' AS TIMESTAMP))"
 
-        p99_99_row = connection.execute(f"SELECT quantile_cont({raw_time_expr}, 0.9999) FROM events").fetchone()
-        p99_99_threshold = p99_99_row[0] if p99_99_row else None
+        max_time_row = connection.execute(f"SELECT MAX({raw_time_expr}) FROM events").fetchone()
+        max_time = max_time_row[0] if max_time_row else None
         
         now_local = datetime.now()
-        if p99_99_threshold:
-            # Handle possible conversion issues
-            if not isinstance(p99_99_threshold, datetime):
+        if max_time:
+            if not isinstance(max_time, datetime):
                 try:
-                    p99_99_threshold = datetime.fromisoformat(str(p99_99_threshold))
+                    max_time = datetime.fromisoformat(str(max_time))
                 except:
-                    p99_99_threshold = now_local
-            import_upper_bound = min(p99_99_threshold, now_local)
+                    max_time = now_local
+            
+            if max_time <= now_local:
+                import_upper_bound = max_time
+            else:
+                p99_99_row = connection.execute(f"SELECT quantile_cont({raw_time_expr}, 0.9999) FROM events").fetchone()
+                p99_99_val = p99_99_row[0] if p99_99_row else now_local
+                if not isinstance(p99_99_val, datetime):
+                    try:
+                        p99_99_val = datetime.fromisoformat(str(p99_99_val))
+                    except:
+                        p99_99_val = now_local
+                import_upper_bound = min(p99_99_val, now_local)
         else:
             import_upper_bound = now_local
             

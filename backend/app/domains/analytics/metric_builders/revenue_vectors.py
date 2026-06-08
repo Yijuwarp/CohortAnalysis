@@ -18,7 +18,7 @@ def build_revenue_vector_sql(
         bucket_val = 3600
         total_buckets = max_day * 24
 
-    bucket_expr = f"FLOOR(EXTRACT(EPOCH FROM (es.event_time - cm.join_time)) / {bucket_val})"
+    bucket_expr = f"datediff('{granularity}', cm.join_time, es.event_time)"
     pushdown_clause = f"AND {bucket_expr} <= {total_buckets}"
     
     # Eligibility expression
@@ -27,7 +27,7 @@ def build_revenue_vector_sql(
             obs_time_str = observation_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
             obs_time_str = str(observation_end_time)
-        eligibility_expr = f"cm.join_time + (dg.day_offset * INTERVAL '1 {granularity}') <= '{obs_time_str}'::TIMESTAMP"
+        eligibility_expr = f"datediff('{granularity}', cm.join_time, '{obs_time_str}'::TIMESTAMP) >= dg.day_offset"
     else:
         eligibility_expr = "TRUE"
 
@@ -59,7 +59,7 @@ def build_revenue_vector_sql(
          AND cm.cohort_id = ?
         WHERE cm.cohort_id = ?
           AND es.event_time >= cm.join_time
-          AND es.modified_revenue > 0
+          AND es.modified_revenue != 0
           {pushdown_clause}
     ),
     daily_revenue AS (

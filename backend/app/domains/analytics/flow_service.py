@@ -334,7 +334,7 @@ def _run_level_query(
     parent_depth = len(parent_path)
     if parent_depth < 1 or parent_depth >= depth:
         return [], parent_depth, 0
-    if "No further action" in parent_path or "Other" in parent_path:
+    if "No further action" in parent_path or "Other" in parent_path or "__OTHER__" in parent_path:
         return [], parent_depth, 0
     if len(parent_path) != len(set(parent_path)):
         return [], parent_depth, 0

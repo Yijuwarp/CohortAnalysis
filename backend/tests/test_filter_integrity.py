@@ -22,12 +22,12 @@ def test_normalization_contract_array():
     # Reject scalar
     with pytest.raises(Exception) as excinfo:
         normalize_filter_value("a", "IN")
-    assert "requires a list value" in str(excinfo.value)
+    assert "requires an array value" in str(excinfo.value)
     
     # Reject empty list
     with pytest.raises(Exception) as excinfo:
         normalize_filter_value([], "IN")
-    assert "requires a non-empty list value" in str(excinfo.value)
+    assert "requires a non-empty array value" in str(excinfo.value)
 
 def test_normalization_reject_nested():
     with pytest.raises(Exception) as excinfo:

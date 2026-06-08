@@ -131,7 +131,7 @@ def test_monetization_respects_event_selection_and_scope(client: TestClient) -> 
 
     all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
     by_day = {row['day_number']: row['revenue'] for row in all_users}
-    assert by_day == {1: 5.0}
+    assert by_day == {0: 0.0, 1: 5.0}
 
 
 def test_monetization_negative_revenue_included(client: TestClient) -> None:

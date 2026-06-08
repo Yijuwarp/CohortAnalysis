@@ -193,7 +193,6 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
     )
 
     rebuild_all_cohort_memberships(connection)
-    refresh_cohort_activity(connection)
 
     end_timer(filtered_rows=counts["filtered_rows"])
 

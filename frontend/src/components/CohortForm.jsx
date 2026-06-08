@@ -132,21 +132,16 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
   const [stayOpen, setStayOpen] = useState(false)
   const [toast, setToast] = useState(null)
   const toastTimeoutRef = useRef(null)
+  const lastLogicPayloadRef = useRef(null)
 
   const showToast = (cohortName) => {
     setToast(`Cohort "${cohortName}" created`)
     if (toastTimeoutRef.current) {
       clearTimeout(toastTimeoutRef.current)
     }
-    if (isTest) {
-      Promise.resolve().then(() => {
-        setToast(null)
-      })
-    } else {
-      toastTimeoutRef.current = setTimeout(() => {
-        setToast(null)
-      }, 2000)
-    }
+    toastTimeoutRef.current = setTimeout(() => {
+      setToast(null)
+    }, isTest ? 50 : 2000)
   }
 
   useEffect(() => {
@@ -164,6 +159,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     setConditions([createEmptyCondition(events[0] || '')])
     setEstimatedSize(null)
     setError('')
+    lastLogicPayloadRef.current = null
   }
 
   const columnByName = useMemo(() => Object.fromEntries(columns.map((column) => [column.name, column])), [columns])
@@ -285,8 +281,6 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     })
   }, [conditions, events, columns, ensureColumnValuesLoaded])
 
-  const lastPayloadRef = useRef(null)
-
   useEffect(() => {
     if (loading) return
     const delay = isTest ? 0 : 300
@@ -295,7 +289,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
     const runEstimation = () => {
       if (events.length === 0 || conditions.some((c) => !c.event_name)) {
         setEstimatedSize(null)
-        lastPayloadRef.current = null
+        lastLogicPayloadRef.current = null
         return
       }
 
@@ -307,7 +301,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       })
       if (hasEmptyNumericFilter) {
         setEstimatedSize(null)
-        lastPayloadRef.current = null
+        lastLogicPayloadRef.current = null
         return
       }
 
@@ -320,7 +314,7 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
       })
       if (hasEmptyInFilter) {
         setEstimatedSize(null)
-        lastPayloadRef.current = null
+        lastLogicPayloadRef.current = null
         return
       }
 
@@ -344,15 +338,22 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         }
         return condition
       })
+
+      const logicPayload = JSON.stringify({
+        logic_operator: logicOperator,
+        join_type: joinType,
+        conditions: payloadConditions,
+      })
+
+      if (logicPayload === lastLogicPayloadRef.current) return
+      lastLogicPayloadRef.current = logicPayload
+
       const currentPayload = JSON.stringify({
         name: name.trim() || generateCohortName(payloadConditions, logicOperator),
         logic_operator: logicOperator,
         join_type: joinType,
         conditions: payloadConditions,
       })
-
-      if (currentPayload === lastPayloadRef.current) return
-      lastPayloadRef.current = currentPayload
 
       setEstimating(true)
       estimateCohort(JSON.parse(currentPayload)).then(res => {
@@ -466,6 +467,11 @@ export default function CohortForm({ mode, initialData, onCancel, onSave, refres
         if (stayOpen) {
           setName(prev => getNextName(prev))
           setEstimatedSize(null)
+          lastLogicPayloadRef.current = JSON.stringify({
+            logic_operator: logicOperator,
+            join_type: joinType,
+            conditions: payloadConditions,
+          })
           onSave(false)
         } else {
           onSave(true)

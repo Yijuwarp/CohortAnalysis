@@ -37,10 +37,10 @@ def normalize_filter_value(value: Any, operator: str) -> Any:
         if not isinstance(value, list):
             # We strictly expect a list for IN/NOT IN
             from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Operator {op} requires a list value")
+            raise HTTPException(status_code=400, detail=f"Operator {op} requires an array value")
         if not value:
             from fastapi import HTTPException
-            raise HTTPException(status_code=400, detail=f"Operator {op} requires a non-empty list value")
+            raise HTTPException(status_code=400, detail=f"Operator {op} requires a non-empty array value")
         return value
 
     return value

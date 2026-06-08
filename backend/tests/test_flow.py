@@ -101,7 +101,7 @@ def test_l1_forward_basic_top_events_and_percentages(client: TestClient) -> None
     all_users = next(c for c in cohorts if c["cohort_name"] == "All Users")
     cid = str(all_users["cohort_id"])
 
-    by_event = {row["path"][-1]: row for row in rows if row["path"][-1] != "Other"}
+    by_event = {row["path"][-1]: row for row in rows if row["path"][-1] != "__OTHER__"}
 
     assert "product_view" in by_event, f"Expected product_view in rows: {[r['path'] for r in rows]}"
     assert "checkout" in by_event, f"Expected checkout in rows: {[r['path'] for r in rows]}"
@@ -116,7 +116,7 @@ def test_l1_forward_basic_top_events_and_percentages(client: TestClient) -> None
     assert abs(_value_pct(co_row["values"][cid]) - 1 / 3) < 1e-4
 
     # product_view should appear first (higher pct)
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] != "Other"]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] != "__OTHER__"]
     assert event_names.index("product_view") < event_names.index("checkout")
 
 
@@ -155,7 +155,7 @@ def test_l1_reverse_correct_previous_events(client: TestClient) -> None:
     all_users = next(c for c in cohorts_resp.json()["cohorts"] if c["cohort_name"] == "All Users")
     cid = str(all_users["cohort_id"])
 
-    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
+    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "__OTHER__"}
 
     assert "search" in by_event
     assert by_event["search"]["values"][cid]["user_count"] == 2
@@ -207,7 +207,7 @@ def test_l2_expansion_respects_parent_event(client: TestClient) -> None:
     all_users = next(c for c in cohorts_resp.json()["cohorts"] if c["cohort_name"] == "All Users")
     cid = str(all_users["cohort_id"])
 
-    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
+    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "__OTHER__"}
 
     assert "checkout" in by_event, f"Expected checkout in L2: {[r['path'] for r in rows]}"
     assert "add_to_cart" in by_event, f"Expected add_to_cart in L2: {[r['path'] for r in rows]}"
@@ -263,7 +263,7 @@ def test_l1_forward_multi_cohort_different_values(client: TestClient) -> None:
     assert resp.status_code == 200, resp.text
     rows = resp.json()["rows"]
 
-    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
+    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "__OTHER__"}
 
     # Cohort A sees purchase
     if "purchase" in by_event:
@@ -313,7 +313,7 @@ def test_l1_forward_first_occurrence_only(client: TestClient) -> None:
     cid = str(all_users["cohort_id"])
 
     # Only the transition from the FIRST search occurrence should count
-    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "Other"}
+    by_event = {r["path"][-1]: r for r in rows if r["path"][-1] != "__OTHER__"}
 
     # product_view is the first event after the first search
     assert "product_view" in by_event
@@ -388,7 +388,7 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
     all_users = next(c for c in cohorts_resp.json()["cohorts"] if c["cohort_name"] == "All Users")
     cid = str(all_users["cohort_id"])
 
-    other_rows = [r for r in rows if r["path"][-1] == "Other"]
+    other_rows = [r for r in rows if r["path"][-1] == "__OTHER__"]
     assert len(other_rows) == 1, f"Expected exactly one 'Other' row, got: {[r['path'] for r in rows]}"
 
     other_row = other_rows[0]
@@ -397,7 +397,7 @@ def test_l1_forward_other_bucket_correct_and_not_expandable(client: TestClient) 
     assert abs(_value_pct(other_row["values"][cid]) - 0.25) < 1e-4
 
     # Named rows should include top 3 + No further action
-    named_rows = [r for r in rows if r["path"][-1] != "Other"]
+    named_rows = [r for r in rows if r["path"][-1] != "__OTHER__"]
     assert len(named_rows) == 4, f"Expected 4 named rows (including No further action), got {len(named_rows)}"
 
     # Top rows should be expandable; No further action should not.
@@ -599,7 +599,7 @@ def test_l1_named_rows_are_expandable_other_is_not(client: TestClient) -> None:
     rows = resp.json()["rows"]
 
     for row in rows:
-        if row["path"][-1] == "Other":
+        if row["path"][-1] == "__OTHER__":
             assert row["expandable"] is False, "Other row must not be expandable"
         elif row["path"][-1] == "No further action":
             assert row["expandable"] is False, "No further action row must not be expandable"
@@ -702,7 +702,7 @@ def test_flow_property_filter_basic(client: TestClient):
     rows = resp.json()["rows"]
     
     # Should only contain product_view (from u1)
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["Other", "No further action"]]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
     assert event_names == ["product_view"]
     assert rows[0]["values"][all_users_id]["user_count"] == 1
 
@@ -710,7 +710,7 @@ def test_flow_property_filter_basic(client: TestClient):
     resp = client.get("/flow/l1?start_event=search&direction=forward&property_column=category&property_operator=%3D&property_values=books")
     assert resp.status_code == 200
     rows = resp.json()["rows"]
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["Other", "No further action"]]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
     assert event_names == ["checkout"]
     assert rows[0]["values"][all_users_id]["user_count"] == 1
 
@@ -799,7 +799,7 @@ def test_property_only_on_root_event(client: TestClient):
     rows = resp.json()["rows"]
     
     # Should still see product_view
-    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["Other", "No further action"]]
+    event_names = [r["path"][-1] for r in rows if r["path"][-1] not in ["__OTHER__", "No further action"]]
     assert "product_view" in event_names
 
 def test_flow_invalid_property_column(client: TestClient):

@@ -35,6 +35,7 @@ vi.mock('./components/SearchableSelect', () => ({ default: () => <div>Mock Searc
 describe('App onboarding and workspace flow', () => {
   beforeEach(() => {
     localStorage.clear()
+    localStorage.setItem('user_id', 'abcdef12')
     vi.clearAllMocks()
     api.getScope.mockResolvedValue({ total_rows: 100, total_events: 140, filtered_rows: 100 })
     api.getRetention.mockResolvedValue({ retention_table: [{ cohort_name: 'All Users', size: 42 }] })
@@ -73,7 +74,7 @@ describe('App onboarding and workspace flow', () => {
   })
 
   it('restores workspace from localStorage', async () => {
-    localStorage.setItem('cohort-analysis-workspace-v2', JSON.stringify({
+    localStorage.setItem('cohort-analysis-workspace-v2-abcdef12', JSON.stringify({
       version: 2,
       state: {
         appState: 'workspace',
@@ -99,7 +100,7 @@ describe('App onboarding and workspace flow', () => {
 
 
   it('allows replacing dataset from mapping view', async () => {
-    localStorage.setItem('cohort-analysis-workspace-v2', JSON.stringify({
+    localStorage.setItem('cohort-analysis-workspace-v2-abcdef12', JSON.stringify({
       version: 2,
       state: {
         appState: 'mapping',
@@ -128,7 +129,14 @@ describe('App onboarding and workspace flow', () => {
     expect(screen.getByText('Mock Mapping UI')).toBeInTheDocument()
   })
   it('clears persisted state only after successful replacement upload', async () => {
-    localStorage.setItem('cohort-analysis-workspace-v2', JSON.stringify({ version: 2, state: { appState: 'workspace' } }))
+    localStorage.setItem('cohort-analysis-workspace-v2-abcdef12', JSON.stringify({
+      version: 2,
+      state: {
+        appState: 'workspace',
+        columns: ['a'],
+        datasetMeta: { filename: 'events.csv', rows: 2, users: 1, events: 2 },
+      }
+    }))
 
     api.uploadCSV.mockRejectedValueOnce(new Error('upload failed'))
     const { rerender } = render(<App />)
@@ -136,14 +144,14 @@ describe('App onboarding and workspace flow', () => {
     fireEvent.change(input, { target: { files: [new File(['a'], 'events.csv', { type: 'text/csv' })] } })
 
     await waitFor(() => expect(api.uploadCSV).toHaveBeenCalled())
-    expect(localStorage.getItem('cohort-analysis-workspace-v2')).not.toBeNull()
+    expect(localStorage.getItem('cohort-analysis-workspace-v2-abcdef12')).not.toBeNull()
 
     api.uploadCSV.mockResolvedValueOnce({ rows_imported: 2, skipped_rows: 0, columns: ['a'], detected_types: {}, mapping_suggestions: null, total_events: 2 })
     rerender(<App />)
     fireEvent.change(screen.getByTestId('csv-upload-input'), { target: { files: [new File(['a'], 'events.csv', { type: 'text/csv' })] } })
 
     await screen.findByText('Mock Mapping UI')
-    const saved = JSON.parse(localStorage.getItem('cohort-analysis-workspace-v2'))
+    const saved = JSON.parse(localStorage.getItem('cohort-analysis-workspace-v2-abcdef12'))
     expect(saved.version).toBe(2)
     expect(saved.state.appState).toBe('mapping')
   })

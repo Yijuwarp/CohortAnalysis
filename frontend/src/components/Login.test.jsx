@@ -23,7 +23,7 @@ describe('Login Component', () => {
   })
 
   it('calls login API and sets localStorage on success', async () => {
-    loginMock.mockResolvedValue({ user_id: '8charid1' })
+    loginMock.mockResolvedValue({ user_id: 'abcdef12' })
     const onLogin = vi.fn()
 
     render(<Login onLogin={onLogin} />)
@@ -36,8 +36,8 @@ describe('Login Component', () => {
 
     await waitFor(() => {
       expect(loginMock).toHaveBeenCalledWith('test@example.com')
-      expect(localStorage.getItem('user_id')).toBe('8charid1')
-      expect(onLogin).toHaveBeenCalledWith('8charid1')
+      expect(localStorage.getItem('user_id')).toBe('abcdef12')
+      expect(onLogin).toHaveBeenCalledWith('abcdef12')
     })
   })
 

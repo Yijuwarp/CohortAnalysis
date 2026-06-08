@@ -45,7 +45,7 @@ def test_user_explorer_returns_summary_timeline_and_navigation(client):
     )
     assert created.status_code == 200, created.text
 
-    response = client.get('/user-explorer?user_id=u1&page=1&page_size=2')
+    response = client.get('/user-explorer?target_user_id=u1&page=1&page_size=2')
     assert response.status_code == 200, response.text
 
     payload = response.json()
@@ -57,7 +57,7 @@ def test_user_explorer_returns_summary_timeline_and_navigation(client):
     assert [row['event_name'] for row in payload['events']] == ['signup', 'open']
 
     nav_next = client.get(
-        '/user-explorer?user_id=u1&page_size=2&event_search=open&direction=next&from_event_time=2026-01-01T10:00:00'
+        '/user-explorer?target_user_id=u1&page_size=2&event_search=open&direction=next&from_event_time=2026-01-01T10:00:00'
     )
     assert nav_next.status_code == 200, nav_next.text
     next_payload = nav_next.json()
@@ -73,7 +73,7 @@ def test_user_explorer_jump_datetime_and_cohort_join_tagging(client):
     )
     assert created.status_code == 200, created.text
 
-    jumped = client.get('/user-explorer?user_id=u1&page_size=10&jump_datetime=2026-01-01')
+    jumped = client.get('/user-explorer?target_user_id=u1&page_size=10&jump_datetime=2026-01-01')
     assert jumped.status_code == 200, jumped.text
     payload = jumped.json()
     tagged = [event for event in payload['events'] if event['event_name'] == 'purchase']
