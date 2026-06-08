@@ -3,6 +3,7 @@ import sys
 import logging
 from pathlib import Path
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,10 +35,8 @@ DATABASE_PATH = Path(__file__).resolve().parent.parent / "cohort_analysis.duckdb
 def get_connection():
     return app_get_connection()
 
-app = FastAPI(title="Behavioral Cohort Analysis API")
-
-@app.on_event("startup")
-async def startup_event():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     # 1. Enforce single worker on Windows
     if os.name == "nt":
         if os.environ.get("DUCKDB_SINGLE_WORKER") != "true":
@@ -46,8 +45,6 @@ async def startup_event():
             print("Please set the environment variable DUCKDB_SINGLE_WORKER=true")
             print("and ensure you are running with --workers 1.")
             print("="*60 + "\n")
-            # We don't exit(1) immediately to allow the user to see the message in some console environments,
-            # but we could raise a RuntimeError.
             raise RuntimeError("DUCKDB_SINGLE_WORKER=true must be set on Windows")
     
     # 2. Verify path integrity
@@ -61,6 +58,9 @@ async def startup_event():
     except Exception as e:
         print(f"CRITICAL ERROR: Cannot write to {BASE_USERS_PATH}: {e}")
         sys.exit(1)
+    yield
+
+app = FastAPI(title="Behavioral Cohort Analysis API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { vi } from 'vitest'
+import { vi, afterEach } from 'vitest'
 import CohortForm from '../src/components/CohortForm'
 import * as api from '../src/api'
 
@@ -12,6 +12,11 @@ vi.mock('../src/api', () => ({
   getColumns: vi.fn(),
   getColumnValues: vi.fn()
 }))
+
+afterEach(() => {
+  vi.useRealTimers()
+  vi.clearAllMocks()
+})
 
 vi.mock('../src/components/SearchableSelect', () => ({
   default: ({ value, onChange, placeholder, options }) => (
@@ -146,7 +151,7 @@ describe('CohortForm auto-add logic', () => {
 
     expect(screen.getByPlaceholderText('Cohort name (optional, defaults to description)').value).toBe('Copy of Original')
     expect(screen.getByDisplayValue('ANY conditions (OR)')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Join on first event')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Join on first qualifying event')).toBeInTheDocument()
     
     // Check if the condition event is set
     expect(screen.getByDisplayValue('signup')).toBeInTheDocument()
@@ -242,19 +247,15 @@ describe('CohortForm batch creation', () => {
   })
 
   it('shows and hides toast notification', async () => {
-    vi.useFakeTimers()
     render(<CohortForm mode="create_saved" onSave={vi.fn()} onCancel={vi.fn()} />)
     await waitFor(() => expect(screen.getByText('Save Cohort')).toBeInTheDocument())
     
     fireEvent.change(screen.getByPlaceholderText(/Cohort name/), { target: { value: 'Toast Test' } })
     fireEvent.click(screen.getByText('Save Cohort'))
     
-    await waitFor(() => expect(screen.getByText(/Cohort "Toast Test" created/)).toBeInTheDocument())
+    expect(await screen.findByText(/Cohort "Toast Test" created/)).toBeInTheDocument()
     
-    // Advance time
-    vi.advanceTimersByTime(2000)
-    expect(screen.queryByText(/Cohort "Toast Test" created/)).not.toBeInTheDocument()
-    vi.useRealTimers()
+    await waitFor(() => expect(screen.queryByText(/Cohort "Toast Test" created/)).not.toBeInTheDocument())
   })
 
   it('handles empty name correctly (no increment)', async () => {
@@ -277,8 +278,9 @@ describe('CohortForm batch creation', () => {
     fireEvent.change(nameInput, { target: { value: 'Rapid' } })
     
     // Mock multiple saves resolving
-    fireEvent.click(screen.getByText('Save Cohort'))
-    fireEvent.click(screen.getByText('Save Cohort'))
+    const saveButton = screen.getByText('Save Cohort')
+    saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+    saveButton.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
     
     await waitFor(() => expect(api.createSavedCohort).toHaveBeenCalledTimes(2))
     expect(nameInput.value).toBe('Rapid (2)')
