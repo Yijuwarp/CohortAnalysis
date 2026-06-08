@@ -7,7 +7,7 @@ from app.domains.analytics.metric_builders.revenue_vectors import build_revenue_
 def setup_test_data(conn: duckdb.DuckDBPyConnection):
     conn.execute("CREATE OR REPLACE TABLE cohorts (cohort_id INTEGER, name TEXT, logic_operator TEXT, join_type TEXT, is_active BOOLEAN, hidden BOOLEAN)")
     conn.execute("CREATE OR REPLACE TABLE cohort_membership (cohort_id INTEGER, user_id TEXT, join_time TIMESTAMP)")
-    conn.execute("CREATE OR REPLACE TABLE cohort_activity_snapshot (cohort_id INTEGER, user_id TEXT, event_time TIMESTAMP, event_name TEXT, row_id BIGINT, source_saved_id UUID, event_count DOUBLE DEFAULT 1.0, original_revenue DOUBLE DEFAULT 0.0, modified_revenue DOUBLE DEFAULT 0.0)")
+    conn.execute("CREATE OR REPLACE TABLE cohort_activity_snapshot (cohort_id INTEGER, user_id TEXT, event_time TIMESTAMP, event_name TEXT, row_id BIGINT, source_saved_id UUID)")
     conn.execute("CREATE OR REPLACE TABLE events_scoped (user_id TEXT, event_time TIMESTAMP, event_name TEXT, modified_revenue DOUBLE, event_count INTEGER, row_id BIGINT)")
     
     # Cohort 1: 2 users
@@ -16,11 +16,11 @@ def setup_test_data(conn: duckdb.DuckDBPyConnection):
     conn.execute("INSERT INTO cohort_membership VALUES (1, 'u2', '2024-01-01 10:00:00')")
     
     # u1: active Day 0 and Day 2 (Strict Day 0: 2024-01-01 10:00:00 to 2024-01-02 10:00:00)
-    conn.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id, source_saved_id) VALUES (1, 'u1', '2024-01-01 10:05:00', 'active', 1, NULL)")
-    conn.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id, source_saved_id) VALUES (1, 'u1', '2024-01-03 10:05:00', 'active', 2, NULL)")
+    conn.execute("INSERT INTO cohort_activity_snapshot VALUES (1, 'u1', '2024-01-01 10:05:00', 'active', 1, NULL)")
+    conn.execute("INSERT INTO cohort_activity_snapshot VALUES (1, 'u1', '2024-01-03 10:05:00', 'active', 2, NULL)")
     
     # u2: active Day 1
-    conn.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name, row_id, source_saved_id) VALUES (1, 'u2', '2024-01-02 10:05:00', 'active', 3, NULL)")
+    conn.execute("INSERT INTO cohort_activity_snapshot VALUES (1, 'u2', '2024-01-02 10:05:00', 'active', 3, NULL)")
 
 def test_retention_vector_completeness(db_connection):
     conn = db_connection

@@ -335,7 +335,7 @@ def _run_level_query(
     parent_depth = len(parent_path)
     if parent_depth < 1 or parent_depth >= depth:
         return [], parent_depth, 0
-    if "No further action" in parent_path or "Other" in parent_path or "__OTHER__" in parent_path:
+    if "No further action" in parent_path or "Other" in parent_path:
         return [], parent_depth, 0
     if parent_path[0].strip() != start_event.strip():
         raise HTTPException(status_code=400, detail=f"parent_path must start with start_event ({start_event}). Got: {parent_path[0]}")

@@ -45,7 +45,7 @@ def test_pipeline_integrity(conn):
     
     # --- DEBUG TABLE CONTENT ---
     print("\n--- EVENTS_RAW ---")
-    print(conn.execute("SELECT * FROM events_base").df())
+    print(conn.execute("SELECT * FROM events_raw").df())
     print("\n--- EVENTS_NORMALIZED ---")
     print(conn.execute("SELECT * FROM events_normalized").df())
     
@@ -82,10 +82,10 @@ def test_pipeline_integrity(conn):
     
     # Check if events_scoped is aggregated
     scoped_count = conn.execute("SELECT COUNT(*) FROM events_scoped").fetchone()[0]
-    raw_count = conn.execute("SELECT COUNT(*) FROM events_base").fetchone()[0]
+    raw_count = conn.execute("SELECT COUNT(*) FROM events_raw").fetchone()[0]
     print(f"Events Scoped Count: {scoped_count} (Aggregated)")
     print(f"Events Raw Count: {raw_count} (True Raw)")
     
     assert cohort_size == 1, "Cohort size inflated (likely using row-level data for logic)"
     assert scoped_count == 2, "events_scoped should be aggregated (A + B)"
-    assert raw_count == 3, "events_base should have all rows (A + B + A)"
+    assert raw_count == 3, "events_raw should have all rows (A + B + A)"

@@ -6,7 +6,7 @@ from app.utils.timestamp import (
 
 
 def test_migrate_legacy_scalar_equality_to_on() -> None:
-    op, value = migrate_legacy_timestamp_filter("=", "2026-01-03")
+    op, value = migrate_legacy_timestamp_filter("=", "2026-01-03 10:15")
     assert op == "ON"
     assert value == {"date": "2026-01-03"}
 

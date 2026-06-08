@@ -31,7 +31,7 @@ def build_retention_vector_sql(
     
     if observation_end_time:
         if isinstance(observation_end_time, datetime):
-            obs_time_str = observation_end_time.strftime('%Y-%m-%d %H:%M:%S.%f')
+            obs_time_str = observation_end_time.strftime('%Y-%m-%d %H:%M:%S')
         else:
             obs_time_str = str(observation_end_time)
         eligibility_expr = build_eligibility_expr("cm.join_time", "dg.day_offset", granularity, obs_time_str)

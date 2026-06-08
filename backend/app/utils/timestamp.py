@@ -166,8 +166,7 @@ def migrate_legacy_timestamp_filter(operator: str, value: Any) -> tuple[str, Any
     if op == "=" and isinstance(value, str):
         parsed = normalize_event_timestamp_value(value, allow_empty=False)
         assert parsed is not None
-        if parsed.time() == time(0, 0, 0):
-            return "ON", {"date": parsed.date().isoformat()}
+        return "ON", {"date": parsed.date().isoformat()}
     return op, value
 
 
@@ -176,7 +175,8 @@ def _combine_date_time(d: str, t: str) -> datetime:
 
 
 def build_sql_clause(column_sql: str, operator: str, value: Any, *, parameterized: bool) -> tuple[str, list[object]]:
-    op = str(operator or "").upper()
+    payload = validate_timestamp_payload(operator, value)
+
     params: list[object] = []
 
     def emit_param(ts: datetime) -> str:
@@ -186,13 +186,7 @@ def build_sql_clause(column_sql: str, operator: str, value: Any, *, parameterize
             return "?"
         return f"TIMESTAMP '{rendered}'"
 
-    if op in {"=", "!=", ">", "<", ">=", "<="}:
-        legacy_value = value[0] if isinstance(value, list) and value else value
-        dt = normalize_event_timestamp_value(legacy_value, allow_empty=False)
-        assert dt is not None
-        return f"{column_sql} {op} {emit_param(dt)}", params
-
-    payload = validate_timestamp_payload(operator, value)
+    op = str(operator or "").upper()
     if op == "BEFORE":
         threshold = _combine_date_time(payload["date"], payload["time"])
         return f"{column_sql} < {emit_param(threshold)}", params

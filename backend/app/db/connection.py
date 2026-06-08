@@ -158,8 +158,6 @@ def run_query(user_id: str, fn):
             _LAST_ACCESS[user_id] = time.time()
             return fn(conn)
             
-        except HTTPException:
-            raise
         except Exception as e:
             logger.exception(f"Database operation failed for user {user_id}")
             # Reset poisoned connection
@@ -192,8 +190,6 @@ async def async_run_query(user_id: str, fn):
             _LAST_ACCESS[user_id] = time.time()
             return await fn(conn)
             
-        except HTTPException:
-            raise
         except Exception as e:
             logger.exception(f"Async database operation failed for user {user_id}")
             # Reset poisoned connection

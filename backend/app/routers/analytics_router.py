@@ -109,8 +109,6 @@ async def flow_l1_endpoint(
     limit: int = Query(3, ge=1, le=50),
 ):
     depth = min(max(2, depth), MAX_DEPTH)
-    if property_column and not property_values:
-        raise HTTPException(status_code=400, detail="property_values required when property_column is specified")
     if not property_column or not property_values:
         property_values = None
     try:
@@ -138,8 +136,6 @@ async def flow_l2_endpoint(
     include_top_k: bool = Query(True),
     limit: int = Query(3, ge=1, le=50),
 ):
-    if property_column and not property_values:
-        raise HTTPException(status_code=400, detail="property_values required when property_column is specified")
     if not property_column or not property_values:
         property_values = None
     if parent_path:
