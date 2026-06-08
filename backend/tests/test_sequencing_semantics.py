@@ -17,7 +17,7 @@ def setup_sequencing_data(c):
     
     # Cohort 1: All Users
     c.execute("INSERT INTO cohorts (cohort_id, name, is_active, hidden, join_type) VALUES (1, 'All Users', true, false, 'condition_met')")
-    c.execute("INSERT INTO cohort_membership VALUES ('u1', 1, '2024-01-01 00:00:00')")
+    c.execute("INSERT INTO cohort_membership (cohort_id, user_id, join_time) VALUES (1, 'u1', '2024-01-01 00:00:00')")
 
 def test_sequencing_respects_row_id_on_same_timestamp(db_connection):
     setup_sequencing_data(db_connection)

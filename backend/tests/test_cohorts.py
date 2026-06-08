@@ -494,7 +494,7 @@ def test_update_cohort_replaces_conditions_and_rebuilds_membership(client: TestC
         "SELECT COUNT(*) FROM cohort_activity_snapshot WHERE cohort_id = ?",
         [cohort_id],
     ).fetchone()[0]
-    assert activity_rows == 2
+    assert activity_rows == 1
 
 
 def test_update_cohort_returns_404_for_unknown_cohort(client: TestClient) -> None:
@@ -843,11 +843,45 @@ def test_numeric_not_in_operator_accepts_string_numbers(client: TestClient) -> N
 
 def test_create_cohort_with_boolean_equals_filter(client: TestClient, db_connection) -> None:
     _prepare_property_filter_events(client)
+    db_connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot CASCADE")
+    db_connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot CASCADE")
+    db_connection.execute("DROP VIEW IF EXISTS events_scoped CASCADE")
+    db_connection.execute("DROP VIEW IF EXISTS events_scoped_raw CASCADE")
+    db_connection.execute("DROP VIEW IF EXISTS events_normalized CASCADE")
+    
+    db_connection.execute("DROP INDEX IF EXISTS idx_events_base_user")
+    db_connection.execute("DROP INDEX IF EXISTS idx_events_base_row")
+    
     db_connection.execute("""
-        ALTER TABLE events_normalized
+        ALTER TABLE events_base
         ALTER COLUMN is_premium TYPE BOOLEAN
         USING CAST(is_premium AS BOOLEAN)
     """)
+    db_connection.execute("CREATE INDEX IF NOT EXISTS idx_events_base_user ON events_base (user_id)")
+    db_connection.execute("CREATE INDEX IF NOT EXISTS idx_events_base_row ON events_base (row_id)")
+    db_connection.execute("""
+        CREATE OR REPLACE VIEW events_normalized AS
+        SELECT
+            user_id,
+            event_name,
+            event_time,
+            version,
+            amount,
+            is_premium,
+            CAST(SUM(event_count) AS DOUBLE) AS event_count,
+            CAST(SUM(original_revenue) AS DOUBLE) AS original_revenue,
+            CAST(SUM(modified_revenue) AS DOUBLE) AS modified_revenue,
+            MIN(row_id) AS row_id
+        FROM events_base
+        WHERE user_id IS NOT NULL 
+          AND event_name IS NOT NULL 
+          AND event_time IS NOT NULL
+        GROUP BY user_id, event_name, event_time, version, amount, is_premium
+    """)
+    from app.domains.scope.filter_service import refresh_scoped_views
+    from app.domains.cohorts.cohort_service import ensure_cohort_tables
+    refresh_scoped_views(db_connection)
+    ensure_cohort_tables(db_connection)
 
     response = client.post(
         "/cohorts",

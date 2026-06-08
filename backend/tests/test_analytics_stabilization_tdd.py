@@ -86,9 +86,12 @@ def test_retention_using_snapshot(conn):
     conn.execute("INSERT INTO cohort_membership VALUES ('user1', 1, '2024-01-01 00:00:00')")
     
     # Clear the snapshot table
-    conn.execute("DELETE FROM cohort_activity_snapshot")
+    try:
+        conn.execute("DELETE FROM cohort_activity_snapshot")
+    except duckdb.BinderException:
+        conn.execute("DELETE FROM cohort_event_link")
     
-    sql, params = build_retention_vector_sql(cohort_id=1, max_day=7)
+    sql, params = build_retention_vector_sql(cohort_id=1, max_day=7, join_type='condition_met')
     
     results = conn.execute(sql, params).fetchall()
     active_count = sum(r[3] for r in results) # index 3 is 'value'

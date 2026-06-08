@@ -82,12 +82,13 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     tables_res = connection.execute("SELECT table_name FROM information_schema.tables WHERE table_name IN ('events_base', 'events_scoped')").fetchall()
     existing_tables = {row[0] for row in tables_res}
     
-    try:
-        connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
-    except: pass
-    try:
-        connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
-    except: pass
+    if existing_tables:
+        try:
+            connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
+        except: pass
+        try:
+            connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
+        except: pass
     if "events_base" in existing_tables:
         # Optimal view for unified schema - project all columns for direct property filtering
         connection.execute(

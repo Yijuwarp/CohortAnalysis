@@ -307,6 +307,18 @@ def _build_filter_clause(filters: List[PathStepFilter], col_types: Dict[str, str
     
     return " AND " + " AND ".join(clauses)
 
+def _get_paths_source_table(conn: duckdb.DuckDBPyConnection) -> str:
+    tables = {row[0] for row in conn.execute("SELECT table_name FROM information_schema.tables WHERE table_name IN ('events_scoped_raw', 'events_base', 'cohort_activity_snapshot', 'events_scoped')").fetchall()}
+    if "events_scoped_raw" in tables:
+        return "events_scoped_raw"
+    elif "events_base" in tables:
+        return "events_base"
+    elif "cohort_activity_snapshot" in tables:
+        return "cohort_activity_snapshot"
+    else:
+        return "events_scoped"
+
+
 def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnection, cohort_id: Optional[int] = None, limit_steps: Optional[int] = None, max_step_gap_minutes: Optional[int] = None) -> str:
     """
     Refactored SQL builder for Paths sequence matching with OR support.
@@ -314,7 +326,7 @@ def _build_paths_base_query(steps: List[PathStep], conn: duckdb.DuckDBPyConnecti
     Uses the Union Candidates pattern for clean SQL and traceability.
     """
     use_filters = path_uses_filters(steps)
-    source_table = get_events_source_table(conn)
+    source_table = _get_paths_source_table(conn)
     col_types = _get_column_types(conn, source_table)
     
     # Pre-calculate which columns we need to project
@@ -575,6 +587,7 @@ def run_paths(conn: duckdb.DuckDBPyConnection, input_steps: Union[List[str], Lis
         GROUP BY cohort_id
     """).fetchall()}
 
+
     results = []
     for c_id, c_name in active_cohorts:
         c_size = cohort_sizes.get(c_id, 0)
@@ -803,7 +816,7 @@ def _materialize_paths_cohort(conn: duckdb.DuckDBPyConnection, name: str, users:
         membership_data
     )
 
-    source_table = get_events_source_table(conn)
+    source_table = _get_paths_source_table(conn)
     col_types = _get_column_types(conn, source_table)
     link_exists = conn.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'cohort_event_link'").fetchone()[0] > 0
     has_row_id = "row_id" in col_types

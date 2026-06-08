@@ -322,7 +322,7 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
             import_upper_bound = min(max_time, future_cap)
         else:
             import_upper_bound = future_cap
-        import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S')
+        import_upper_bound_str = import_upper_bound.strftime('%Y-%m-%d %H:%M:%S.%f')
 
         # ---------- MAPPING INITIALIZATION ----------
         init_mapping_timer = time_block("mapping_initialization")

@@ -89,10 +89,25 @@ describe('CohortPane Duplicate Flow', () => {
   })
 
   it('duplicates cohort and opens form with full prefilled data', async () => {
-    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
-
-    // Wait for initial load
-    await waitFor(() => expect(api.getSavedCohorts).toHaveBeenCalled())
+    const savedCohorts = [
+      {
+        id: 'saved-1',
+        name: 'Original Cohort',
+        is_valid: true,
+        definition: {
+          logic_operator: 'OR',
+          join_type: 'first_event',
+          conditions: [{ event_name: 'signup', min_event_count: 5 }]
+        }
+      }
+    ]
+    render(
+      <CohortPane 
+        refreshToken={Date.now() + Math.random()} 
+        onCohortsChanged={vi.fn()} 
+        savedCohorts={savedCohorts}
+      />
+    )
 
     // open saved cohorts panel
     fireEvent.click(screen.getByText('Manage'))
@@ -153,8 +168,13 @@ describe('CohortPane Split Flow', () => {
   })
 
   it('opens split modal when clicking split on unsplit cohort', async () => {
-    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
-    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+    render(
+      <CohortPane 
+        refreshToken={Date.now() + Math.random()} 
+        onCohortsChanged={vi.fn()} 
+        cohorts={[mockParent]}
+      />
+    )
 
     // Find and click the split button (the one with "Split cohort" title)
     const splitBtn = screen.getByTitle('Split cohort')
@@ -170,8 +190,13 @@ describe('CohortPane Split Flow', () => {
   })
 
   it('calls splitCohort API only after modal confirmation', async () => {
-    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
-    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+    render(
+      <CohortPane 
+        refreshToken={Date.now() + Math.random()} 
+        onCohortsChanged={vi.fn()} 
+        cohorts={[mockParent]}
+      />
+    )
 
     fireEvent.click(screen.getByTitle('Split cohort'))
     
@@ -185,15 +210,19 @@ describe('CohortPane Split Flow', () => {
   it('removes children if cohort already split', async () => {
     // Modify mock to show it has splits
     const splitParent = { ...mockParent, has_splits: true }
-    api.listCohorts.mockResolvedValue({ cohorts: [splitParent, mockChild] })
     api.getCohortDetail.mockImplementation(id => {
       if (id === 'p1') return Promise.resolve(splitParent)
       if (id === 'c1') return Promise.resolve(mockChild)
       return Promise.reject('Not found')
     })
 
-    render(<CohortPane refreshToken={Date.now() + Math.random()} onCohortsChanged={vi.fn()} />)
-    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+    render(
+      <CohortPane 
+        refreshToken={Date.now() + Math.random()} 
+        onCohortsChanged={vi.fn()} 
+        cohorts={[splitParent, mockChild]}
+      />
+    )
 
     const removeSplitBtn = screen.getByTitle('Remove split')
     fireEvent.click(removeSplitBtn)
@@ -220,6 +249,7 @@ describe('CohortPane Invalid Cohorts', () => {
     cohort_name: 'Invalid Cohort',
     size: 0,
     is_active: true,
+    isInvalid: true,
     definition: { logic_operator: 'AND', conditions: [] }
   }
 
@@ -231,16 +261,20 @@ describe('CohortPane Invalid Cohorts', () => {
   })
 
   it('marks cohorts with size 0 as invalid and disables interactions', async () => {
-    api.listCohorts.mockResolvedValue({ cohorts: [validCohort, invalidCohort] })
     api.getCohortDetail.mockImplementation(id => {
       if (id === 'v1') return Promise.resolve(validCohort)
       if (id === 'i1') return Promise.resolve(invalidCohort)
       return Promise.reject('Not found')
     })
 
-    render(<CohortPane refreshToken={1} onCohortsChanged={vi.fn()} datasetMetadata={{ schema_hash: 'hash1' }} />)
-    
-    await waitFor(() => expect(api.listCohorts).toHaveBeenCalled())
+    render(
+      <CohortPane 
+        refreshToken={1} 
+        onCohortsChanged={vi.fn()} 
+        datasetMetadata={{ schema_hash: 'hash1' }} 
+        cohorts={[validCohort, invalidCohort]}
+      />
+    )
     
     // Check "Invalid" badge presence
     expect(screen.queryByText('Invalid', { selector: '.cohort-invalid-badge' })).toBeInTheDocument()

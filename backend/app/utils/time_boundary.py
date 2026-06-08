@@ -6,10 +6,20 @@ def get_observation_end_time(connection: duckdb.DuckDBPyConnection) -> datetime 
     Returns a robust observation boundary for analytics.
     Uses p99.9 of event_time from events_scoped, clamped to UTC now.
     """
-    row = connection.execute("""
-        SELECT quantile_cont(event_time, 0.999)
-        FROM events_scoped
-    """).fetchone()
+    # Check dataset size to avoid interpolation clipping on small datasets
+    count_res = connection.execute("SELECT COUNT(*) FROM events_scoped").fetchone()
+    count = count_res[0] if count_res else 0
+
+    if count < 1000:
+        row = connection.execute("""
+            SELECT MAX(event_time)
+            FROM events_scoped
+        """).fetchone()
+    else:
+        row = connection.execute("""
+            SELECT quantile_cont(event_time, 0.999)
+            FROM events_scoped
+        """).fetchone()
 
     if not row or row[0] is None:
         return None
