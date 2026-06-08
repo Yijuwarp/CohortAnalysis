@@ -8,7 +8,7 @@ from app.utils.perf import time_block
 from app.utils.sql import sql_quote_value, quote_identifier, get_column_kind
 from app.models.filter_models import ApplyFiltersRequest
 from app.domains.scope.scope_metadata import upsert_dataset_scope
-from app.utils.db_utils import to_dicts
+from app.utils.db_utils import to_dicts, clear_schema_cache
 from app.utils import timestamp
 
 def build_where_clause(payload: ApplyFiltersRequest, column_types: dict[str, str]) -> str:
@@ -50,6 +50,17 @@ def build_where_clause(payload: ApplyFiltersRequest, column_types: dict[str, str
 
 
 def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
+    """Standard entry point for scope initialization. Performs full refresh."""
+    refresh_scoped_views(connection)
+    from app.domains.cohorts.activity_service import refresh_cohort_activity
+    refresh_cohort_activity(connection)
+
+def initialize_scoped_dataset_for_mapping(connection: duckdb.DuckDBPyConnection) -> None:
+    """Specialized entry point for the mapping flow. Skips activity refresh to avoid redundancy."""
+    refresh_scoped_views(connection)
+
+def refresh_scoped_views(connection: duckdb.DuckDBPyConnection) -> None:
+    """Helper to setup views and metadata. Exported for use after table schema alterations."""
     normalized_exists = connection.execute(
         """
         SELECT COUNT(*)
@@ -62,17 +73,32 @@ def initialize_scoped_dataset(connection: duckdb.DuckDBPyConnection) -> None:
     if not normalized_exists:
         return
 
-    # Use a VIEW instead of copying the dataset
     connection.execute("""
         CREATE OR REPLACE VIEW events_scoped AS
         SELECT * FROM events_normalized
     """)
 
-    upsert_dataset_scope(connection, {"date_range": None, "filters": []})
+    # Standardize events_scoped_raw (physical layer used for linking)
+    base_exists = connection.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_base' AND table_schema = 'main'"
+    ).fetchone()[0]
 
-    # Cohort activity still needs refresh
-    from app.domains.cohorts.activity_service import refresh_cohort_activity
-    refresh_cohort_activity(connection)
+    if base_exists:
+        connection.execute("""
+            CREATE OR REPLACE VIEW events_scoped_raw AS
+            SELECT * FROM events_base
+        """)
+    else:
+        # Fallback for tests or legacy data (ensure row_id exists for joins)
+        connection.execute("""
+            CREATE OR REPLACE VIEW events_scoped_raw AS
+            SELECT 
+                *,
+                (ROW_NUMBER() OVER ())::BIGINT as row_id
+            FROM events_normalized
+        """)
+
+    upsert_dataset_scope(connection, {"date_range": None, "filters": []})
 
 
 def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRequest) -> dict[str, object]:
@@ -93,7 +119,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         """
         SELECT column_name
         FROM information_schema.columns
-        WHERE table_name = 'events_normalized'
+        WHERE table_name = 'events_base'
         """
     )
     known_columns = {row["column_name"] for row in to_dicts(cursor, cursor.fetchall())}
@@ -102,7 +128,7 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
         """
         SELECT column_name, data_type
         FROM information_schema.columns
-        WHERE table_name = 'events_normalized'
+        WHERE table_name = 'events_base'
         """
     )
     column_types = {
@@ -111,7 +137,6 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
     }
 
     # ---------------- DATE VALIDATION ----------------
-
     if payload.date_range:
         try:
             start_date = date.fromisoformat(payload.date_range.start)
@@ -129,7 +154,6 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
             )
 
     # ---------------- FILTER VALIDATION ----------------
-
     numeric_types = {
         "TINYINT","SMALLINT","INTEGER","BIGINT","HUGEINT",
         "UTINYINT","USMALLINT","UINTEGER","UBIGINT",
@@ -169,33 +193,55 @@ def apply_filters(connection: duckdb.DuckDBPyConnection, payload: ApplyFiltersRe
             )
 
     # ---------------- BUILD FILTER SQL ----------------
-
     where_clause = build_where_clause(payload, column_types)
 
     end_timer = time_block("scope_rebuild")
 
-    # Recreate filtered VIEW instead of table (Atomic replace)
-    connection.execute(
-        f"""
-        CREATE OR REPLACE VIEW events_scoped AS
-        SELECT *
-        FROM events_normalized
-        {where_clause}
-        """
-    )
+    # Transactional Rebuild Flow
+    connection.execute("BEGIN TRANSACTION")
+    try:
+        # 1. Recreate views
+        end_view_timer = time_block("views_refresh")
+        connection.execute(
+            f"""
+            CREATE OR REPLACE VIEW events_scoped AS
+            SELECT *
+            FROM events_normalized
+            {where_clause}
+            """
+        )
+        connection.execute(
+            f"""
+            CREATE OR REPLACE VIEW events_scoped_raw AS
+            SELECT *
+            FROM events_base
+            {where_clause}
+            """
+        )
+        end_view_timer()
 
-    counts = upsert_dataset_scope(
-        connection,
-        {
-            "date_range": payload.date_range.model_dump() if payload.date_range else None,
-            "filters": [f.model_dump() for f in payload.filters],
-        },
-    )
+        # 2. Persist scope metadata
+        end_meta_timer = time_block("metadata_upsert")
+        counts = upsert_dataset_scope(
+            connection,
+            {
+                "date_range": payload.date_range.model_dump() if payload.date_range else None,
+                "filters": [f.model_dump() for f in payload.filters],
+            },
+        )
+        end_meta_timer()
 
-    rebuild_all_cohort_memberships(connection)
-    refresh_cohort_activity(connection)
+        rebuild_all_cohort_memberships(connection)
+        refresh_cohort_activity(connection)
+        
+        connection.commit()
+    except Exception as e:
+        connection.rollback()
+        raise e
 
-    end_timer(filtered_rows=counts["filtered_rows"])
+    end_timer(filtered_rows=counts.get("filtered_rows", 0))
+
+    clear_schema_cache()
 
     return {
         "status": "ok",

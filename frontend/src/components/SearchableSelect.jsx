@@ -30,7 +30,8 @@ export default function SearchableSelect({
   pinnedOptions: pinnedOptionsProp = [],
   // Server-side search props
   column = null,
-  eventName = null
+  eventName = null,
+  excludeValues = []
 }) {
   const rootRef = useRef(null)
   const listboxId = useId()
@@ -55,6 +56,11 @@ export default function SearchableSelect({
   const pinnedValues = useMemo(
     () => new Set(normalizedPinned.map(o => o.value)),
     [normalizedPinned]
+  )
+
+  const excludedSet = useMemo(
+    () => new Set((excludeValues || []).map(v => String(v))),
+    [excludeValues]
   )
 
   // Combined options: merge prop options with server-side results
@@ -82,8 +88,8 @@ export default function SearchableSelect({
       }
     })
     
-    return merged
-  }, [propOptions, serverOptions, pinnedValues])
+    return merged.filter(opt => !excludedSet.has(opt.value))
+  }, [propOptions, serverOptions, pinnedValues, excludedSet])
 
   const selectedOption = useMemo(
     () => [...normalizedPinned, ...allOptions].find((option) => option.value === value),

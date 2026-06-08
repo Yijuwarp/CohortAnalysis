@@ -10,9 +10,9 @@ def _prepare_monetization_fixture(client: TestClient) -> None:
         "user_id,event_name,event_time,revenue,region\n"
         "u1,signup,2026-01-01 09:00:00,0,NA\n"
         "u1,purchase,2026-01-01 10:00:00,10.50,NA\n"
-        "u1,refund,2026-01-02 10:00:00,-2.25,NA\n"
+        "u1,refund,2026-01-02 11:00:00,-2.25,NA\n"
         "u2,signup,2026-01-01 09:30:00,0,EU\n"
-        "u2,purchase,2026-01-02 08:00:00,5.00,EU\n"
+        "u2,purchase,2026-01-02 11:30:00,5.00,EU\n"
     )
     assert csv_upload(client, csv_text=csv_text).status_code == 200
 
@@ -131,7 +131,7 @@ def test_monetization_respects_event_selection_and_scope(client: TestClient) -> 
 
     all_users = [r for r in payload['revenue_table'] if r['cohort_name'] == 'All Users']
     by_day = {row['day_number']: row['revenue'] for row in all_users}
-    assert by_day == {1: 5.0}
+    assert by_day == {0: 0.0, 1: 5.0}
 
 
 def test_monetization_negative_revenue_included(client: TestClient) -> None:

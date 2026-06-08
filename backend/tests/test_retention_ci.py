@@ -77,28 +77,44 @@ def test_retention_returns_null_retention_and_ci_for_zero_sized_cohort(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _FakeConnection:
-        def execute(self, *_args, **_kwargs):
+        def execute(self, *args, **kwargs):
             class _Result:
-                @staticmethod
-                def fetchone():
+                def __init__(self, data):
+                    self.data = data
+                    # description is required for to_dicts Utility
+                    self.description = [("col", None, None, None, None, None, None)] if data else []
+                def fetchall(self):
+                    # Basic detection for cohort list needed by retention service
+                    query = args[0] if args else ""
+                    if "FROM cohorts" in query:
+                        return [(99, "Empty Cohort", "condition_met")]
+                    return self.data
+                def fetchone(self):
+                    # Default return for scoped_exists check
                     return [1]
-
-            return _Result()
+            
+            # Return empty data by default unless it's the cohort list query
+            return _Result([])
+        def cursor(self):
+            return self
 
         @staticmethod
         def close() -> None:
             return None
 
-    # Patch the service module directly
-    monkeypatch.setattr(main, 'get_connection', lambda: _FakeConnection())
-    monkeypatch.setattr(retention_service, 'ensure_cohort_tables', lambda _connection: None)
-    monkeypatch.setattr(retention_service, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort')], {99: 0}))
-    monkeypatch.setattr(retention_service, 'fetch_retention_active_rows', lambda *args, **kwargs: [])
+    import app.db.connection
+    from threading import Lock
 
-    # The router might also need its dependency patched if it's already bound
-    # But usually TestClient(main.app) will use the patched main.get_connection if called that way.
-    # However, for FastAPI dependencies, we might need to use app.dependency_overrides.
-    main.app.dependency_overrides[main.app_get_connection] = lambda: _FakeConnection()
+    # Patch the service module directly
+    monkeypatch.setattr(app.db.connection, 'get_connection', lambda *args: (_FakeConnection(), Lock()))
+    import app.db.schema_init
+    monkeypatch.setattr(app.db.schema_init, 'ensure_base_schema', lambda _conn: None)
+    monkeypatch.setattr(retention_service, 'ensure_cohort_tables', lambda _connection: None)
+    
+    # We must patch build_active_cohort_base inside the retention_service module
+    monkeypatch.setattr(retention_service, 'build_active_cohort_base', lambda _connection: ([(99, 'Empty Cohort', 'condition_met')], {99: 0}))
+    # Patch the vector builder at its source
+    monkeypatch.setattr('app.domains.analytics.metric_builders.retention_vectors.build_retention_vector_sql', lambda *args, **kwargs: ("SELECT 99 as cohort_id, 'u1' as user_id, 0 as day_offset, 1 as value, 1 as is_eligible WHERE 1=0", []))
 
     try:
         response = client.get('/retention?max_day=1&include_ci=true&confidence=0.95')

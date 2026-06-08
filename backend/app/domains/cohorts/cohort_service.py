@@ -13,6 +13,18 @@ from app.utils.db_utils import to_dict, to_dicts
 from app.utils.sql import get_column_type_map, get_column_kind
 from app.utils.timestamp import migrate_legacy_timestamp_filter, validate_timestamp_payload
 
+def recreate_membership_indexes(connection: duckdb.DuckDBPyConnection) -> None:
+    """Rebuilds indexes and constraints on cohort_membership for high-performance joins."""
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS pk_membership ON cohort_membership (cohort_id, user_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_membership_user ON cohort_membership (user_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_membership_cohort ON cohort_membership (cohort_id)")
+
+def recreate_link_indexes(connection: duckdb.DuckDBPyConnection) -> None:
+    """Rebuilds indexes and constraints on cohort_event_link for high-performance joins."""
+    connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS pk_link ON cohort_event_link (cohort_id, row_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_link_row ON cohort_event_link (row_id)")
+    connection.execute("CREATE INDEX IF NOT EXISTS idx_link_cohort ON cohort_event_link (cohort_id)")
+
 def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     connection.execute(
         """
@@ -55,14 +67,95 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     )
     connection.execute(
         """
-        CREATE TABLE IF NOT EXISTS cohort_activity_snapshot (
+        CREATE TABLE IF NOT EXISTS cohort_event_link (
             cohort_id INTEGER,
-            user_id TEXT,
-            event_time TIMESTAMP,
-            event_name TEXT
+            row_id BIGINT,
+            UNIQUE(cohort_id, row_id)
         )
         """
     )
+    # Re-apply indexes if they exist, or create them
+    recreate_membership_indexes(connection)
+    recreate_link_indexes(connection)
+
+    # Backward compatibility view 
+    tables_res = connection.execute("SELECT table_name FROM information_schema.tables WHERE table_name IN ('events_base', 'events_scoped')").fetchall()
+    existing_tables = {row[0] for row in tables_res}
+    
+    try:
+        connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
+    except: pass
+    try:
+        connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
+    except: pass
+    if "events_base" in existing_tables:
+        # Optimal view for unified schema - project all columns for direct property filtering
+        connection.execute(
+            f"""
+            CREATE OR REPLACE VIEW cohort_activity_snapshot AS
+            SELECT 
+                cel.cohort_id,
+                e.*,
+                CAST(NULL AS UUID) AS source_saved_id
+            FROM events_base e
+            JOIN cohort_event_link cel ON e.row_id = cel.row_id
+            """
+        )
+    elif "events_scoped" in existing_tables:
+        # Legacy fallback view
+        cols_res = connection.execute("PRAGMA table_info('events_scoped')").fetchall()
+        cols = {row[1] for row in cols_res}
+        rev_expr = "revenue" if "revenue" in cols else "CAST(0 AS DOUBLE)"
+        orig_rev = "original_revenue" if "original_revenue" in cols else rev_expr
+        mod_rev = "modified_revenue" if "modified_revenue" in cols else rev_expr
+        count_expr = "event_count" if "event_count" in cols else "1.0"
+        
+        raw_exists = connection.execute("SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped_raw'").fetchone()[0] > 0
+        if raw_exists:
+            connection.execute(
+                f"""
+                CREATE OR REPLACE VIEW cohort_activity_snapshot AS
+                SELECT 
+                    cel.cohort_id, e.user_id, e.event_time, e.event_name, e.row_id,
+                    CAST({count_expr} AS DOUBLE) AS event_count,
+                    CAST({orig_rev} AS DOUBLE) AS original_revenue,
+                    CAST({mod_rev} AS DOUBLE) AS modified_revenue,
+                    CAST(NULL AS UUID) AS source_saved_id
+                FROM events_scoped_raw e
+                JOIN cohort_event_link cel ON e.row_id = cel.row_id
+                """
+            )
+        else:
+            connection.execute(
+                f"""
+                CREATE OR REPLACE VIEW cohort_activity_snapshot AS
+                SELECT 
+                    cm.cohort_id, e.user_id, e.event_time, e.event_name, CAST(NULL AS BIGINT) AS row_id,
+                    CAST({count_expr} AS DOUBLE) AS event_count,
+                    CAST({orig_rev} AS DOUBLE) AS original_revenue,
+                    CAST({mod_rev} AS DOUBLE) AS modified_revenue,
+                    CAST(NULL AS UUID) AS source_saved_id
+                FROM events_scoped e
+                JOIN cohort_membership cm ON e.user_id = cm.user_id
+                """
+            )
+    else:
+        # FRESH BOOTSTRAP: Create as TABLE for backward-compatibility with tests that seed it manually
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cohort_activity_snapshot (
+                cohort_id INTEGER,
+                user_id TEXT,
+                event_time TIMESTAMP,
+                event_name TEXT,
+                row_id BIGINT,
+                event_count DOUBLE DEFAULT 1.0,
+                original_revenue DOUBLE DEFAULT 0.0,
+                modified_revenue DOUBLE DEFAULT 0.0,
+                source_saved_id UUID
+            )
+            """
+        )
     res_conditions = connection.execute(
         """
         SELECT column_name
@@ -108,42 +201,66 @@ def ensure_cohort_tables(connection: duckdb.DuckDBPyConnection) -> None:
     if "cohort_origin" not in cohort_columns:
         connection.execute("ALTER TABLE cohorts ADD COLUMN cohort_origin TEXT DEFAULT 'manual'")
 
-    # Add source_saved_id to snapshot if missing
-    res_snapshot = connection.execute(
+    snapshot_info = connection.execute(
         """
-        SELECT column_name
-        FROM information_schema.columns
-        WHERE table_name = 'cohort_activity_snapshot'
+        SELECT table_type, column_name
+        FROM information_schema.tables t
+        JOIN information_schema.columns c ON t.table_name = c.table_name
+        WHERE t.table_name = 'cohort_activity_snapshot'
         """
-    )
-    snapshot_columns = {row["column_name"] for row in to_dicts(res_snapshot, res_snapshot.fetchall())}
-    if "event_name" not in snapshot_columns:
-        connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN event_name TEXT")
-        connection.execute(
-            """
-            UPDATE cohort_activity_snapshot cas
-            SET event_name = e.event_name
-            FROM events_normalized e
-            WHERE cas.user_id = e.user_id
-              AND cas.event_time = e.event_time
-              AND cas.event_name IS NULL
-            """
-        )
+    ).fetchall()
+    snapshot_columns = {row[1] for row in snapshot_info}
+    is_view = any(row[0] == 'VIEW' for row in snapshot_info)
 
-    if "source_saved_id" not in snapshot_columns:
-        connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN source_saved_id UUID")
+    if snapshot_info and not is_view:
+        if "event_name" not in snapshot_columns:
+            connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN event_name TEXT")
+            connection.execute(
+                """
+                UPDATE cohort_activity_snapshot cas
+                SET event_name = e.event_name
+                FROM events_normalized e
+                WHERE cas.user_id = e.user_id
+                AND cas.event_time = e.event_time
+                AND cas.event_name IS NULL
+                """
+            )
+
+        if "source_saved_id" not in snapshot_columns:
+            connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN source_saved_id UUID")
+
+        if "event_count" not in snapshot_columns:
+            connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN event_count DOUBLE DEFAULT 1.0")
+        if "original_revenue" not in snapshot_columns:
+            connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN original_revenue DOUBLE DEFAULT 0.0")
+        if "modified_revenue" not in snapshot_columns:
+            connection.execute("ALTER TABLE cohort_activity_snapshot ADD COLUMN modified_revenue DOUBLE DEFAULT 0.0")
 
 
 def get_events_source_table(connection: duckdb.DuckDBPyConnection) -> str:
+    """
+    Returns the best available source table for event analytics.
+    Priority: events_scoped (filtered) > events_normalized (legacy view) > events_base (unified)
+    """
+    tables = {row[0] for row in connection.execute("SELECT table_name FROM information_schema.tables WHERE table_name IN ('events_scoped', 'events_normalized', 'events_base')").fetchall()}
+    
+    if "events_scoped" in tables:
+        return "events_scoped"
+    if "events_normalized" in tables:
+        return "events_normalized"
+    return "events_base"
+
+
+def get_raw_events_source_table(connection: duckdb.DuckDBPyConnection) -> str:
     exists = connection.execute(
         """
         SELECT COUNT(*)
         FROM information_schema.tables
-        WHERE table_name = 'events_scoped'
+        WHERE table_name = 'events_scoped_raw'
           AND table_schema = 'main'
         """
     ).fetchone()[0]
-    return "events_scoped" if exists else "events_normalized"
+    return "events_scoped_raw" if exists else "events_base"
 
 
 def normalize_values(values: object) -> list[object]:
@@ -241,7 +358,7 @@ def create_cohort(connection: duckdb.DuckDBPyConnection, payload: CreateCohortRe
             [cohort_id],
         ).fetchone()[0]
     )
-    refresh_cohort_activity(connection)
+    refresh_cohort_activity(connection, cohort_id)
     return {"cohort_id": int(cohort_id), "users_joined": users_joined}
 
 
@@ -417,7 +534,7 @@ def update_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int, payload
         )
 
     build_cohort_membership(connection, cohort_id, source_table)
-    refresh_cohort_activity(connection)
+    refresh_cohort_activity(connection, cohort_id)
 
     users_joined = int(
         connection.execute(
@@ -788,7 +905,7 @@ def delete_cohort(connection: duckdb.DuckDBPyConnection, cohort_id: int) -> dict
     connection.execute("DELETE FROM cohorts WHERE split_parent_cohort_id = ?", [cohort_id])
 
     connection.execute("DELETE FROM cohort_conditions WHERE cohort_id = ?", [cohort_id])
-    connection.execute("DELETE FROM cohort_activity_snapshot WHERE cohort_id = ?", [cohort_id])
+    connection.execute("DELETE FROM cohort_event_link WHERE cohort_id = ?", [cohort_id])
     connection.execute("DELETE FROM cohort_membership WHERE cohort_id = ?", [cohort_id])
     connection.execute("DELETE FROM cohorts WHERE cohort_id = ?", [cohort_id])
     return {"deleted": True, "cohort_id": int(cohort_id)}

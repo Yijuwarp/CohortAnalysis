@@ -9,6 +9,7 @@ from app.utils.perf import time_block
 from app.utils.sql import reset_application_state
 from app.domains.ingestion.type_detection import detect_column_type
 from app.domains.ingestion.mapping_service import suggest_column_mapping
+from app.utils.db_utils import clear_schema_cache
 
 async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) -> dict[str, object]:
     if not file.filename or not file.filename.lower().endswith(".csv"):
@@ -18,14 +19,16 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
     tmp_path = None
     try:
         file_size = 0
-
+        save_timer = time_block("upload_file_save")
         with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as tmp:
             while chunk := await file.read(1024 * 1024):
                 file_size += len(chunk)
                 tmp.write(chunk)
             tmp_path = tmp.name
+        save_timer(file_size=file_size)
 
         try:
+            db_timer = time_block("upload_db_ingestion")
             input_rows = connection.execute(
                 "SELECT COUNT(*) FROM read_csv(?, auto_detect=true, ignore_errors=false)",
                 [tmp_path],
@@ -37,7 +40,7 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                 connection.execute(
                     """
                     CREATE TABLE events AS
-                    SELECT *
+                    SELECT *, row_number() OVER () AS row_id
                     FROM read_csv(
                         ?,
                         auto_detect=true,
@@ -48,17 +51,21 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                         maximum_line_size=20000000,  -- allow very large text/JSON fields in CSV rows
                         parallel=true
                     )
+
                     """,
                     [tmp_path],
                 )
             except Exception as exc:
+                db_timer(error=str(exc))
                 end_timer(error=str(exc))
                 raise HTTPException(status_code=400, detail=f"Invalid CSV file: {str(exc)}") from exc
+            
+            db_timer(input_rows=input_rows)
 
             row_count = int(connection.execute("SELECT COUNT(*) FROM events").fetchone()[0])
             skipped_rows = max(input_rows - row_count, 0)
             column_info = connection.execute("PRAGMA table_info('events')").fetchall()
-            column_names = [row[1] for row in column_info]
+            column_names = [row[1] for row in column_info if row[1] != "row_id"]
 
             if len(column_names) < 3:
                 end_timer(error="insufficient_columns")
@@ -77,6 +84,8 @@ async def upload_csv(connection: duckdb.DuckDBPyConnection, file: UploadFile) ->
                 column_count=len(column_names),
                 file_size=file_size
             )
+
+            clear_schema_cache()
 
             return {
                 "rows_imported": row_count,

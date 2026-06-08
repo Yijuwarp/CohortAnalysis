@@ -8,20 +8,18 @@ from app.utils.perf import time_block
 from app.utils.math_utils import Z_SCORES, wilson_ci
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 from app.utils.time_boundary import get_observation_end_time
-from app.utils.db_utils import to_dict, to_dicts
+from app.utils.db_utils import to_dict, to_dicts, check_table_exists
 
-def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[list[tuple[int, str]], dict[int, int]]:
-    cursor = connection.execute(
+def build_active_cohort_base(connection: duckdb.DuckDBPyConnection) -> tuple[list[tuple[int, str, str]], dict[int, int]]:
+    rows = connection.execute(
         """
-        SELECT cohort_id, name
+        SELECT cohort_id, name, join_type
         FROM cohorts
         WHERE is_active = TRUE AND hidden = FALSE
         ORDER BY cohort_id
         """
-    )
-    cohorts_rows = cursor.fetchall()
-    dicts = to_dicts(cursor, cohorts_rows)
-    cohorts = [(row["cohort_id"], row["name"]) for row in dicts]
+    ).fetchall()
+    cohorts = [(int(row[0]), str(row[1]), str(row[2])) for row in rows]
     s_cursor = connection.execute(
         """
         SELECT c.cohort_id, COUNT(DISTINCT cm.user_id) AS cohort_size
@@ -57,13 +55,10 @@ def get_retention(
         raise HTTPException(status_code=400, detail="confidence must be one of: 0.90, 0.95, 0.99")
 
     ensure_cohort_tables(connection)
-    scoped_exists = connection.execute(
-        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = 'events_scoped' AND table_schema = 'main'"
-    ).fetchone()[0]
     
     total_buckets = max_day + 1 if granularity == "day" else (max_day * 24)
     
-    if not scoped_exists:
+    if not check_table_exists(connection, "events_scoped"):
         res: dict[str, Any] = {"max_day": int(max_day), "retention_event": retention_event or "any", "retention_table": []}
         if granularity == "hour":
             res["max_hour"] = total_buckets
@@ -80,9 +75,9 @@ def get_retention(
 
     from app.domains.analytics.metric_builders.retention_vectors import build_retention_vector_sql
     observation_end_time = get_observation_end_time(connection)
-
     retention_table: list[dict[str, Any]] = []
-    for cohort_id, cohort_name in cohorts:
+
+    for cohort_id, cohort_name, join_type in cohorts:
         cohort_id = int(cohort_id)
         cohort_size = cohort_sizes.get(cohort_id, 0)
         
@@ -93,7 +88,8 @@ def get_retention(
             retention_event=retention_event,
             retention_type=retention_type,
             granularity=granularity,
-            observation_end_time=observation_end_time
+            observation_end_time=observation_end_time,
+            join_type=join_type
         )
         
         # Aggregate per day
@@ -174,7 +170,7 @@ def get_retention(
         "max_day": int(detected_max_day),
         "retention_event": retention_event or "any",
         "retention_table": retention_table,
-        "observation_end_time": get_observation_end_time(connection).isoformat() if get_observation_end_time(connection) else None
+        "observation_end_time": observation_end_time.isoformat() if observation_end_time else None
     }
     if granularity == "hour":
         result_payload["max_hour"] = total_buckets

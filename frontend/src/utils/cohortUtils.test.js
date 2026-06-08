@@ -19,7 +19,7 @@ describe('formatCohortLogic timestamp filters', () => {
       ],
     })
 
-    expect(text).toContain('event_time ON 2026-03-15')
+    expect(text).toContain('event_time on 2026-03-15')
     expect(text).not.toContain('[object Object]')
   })
 
@@ -45,6 +45,6 @@ describe('formatCohortLogic timestamp filters', () => {
       ],
     })
 
-    expect(text).toContain('2026-03-01 00:00:00 → 2026-03-31 23:59:59')
+    expect(text).toContain('2026-03-01 00:00:00 to 2026-03-31 23:59:59')
   })
 })

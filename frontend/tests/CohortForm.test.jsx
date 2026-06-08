@@ -146,7 +146,7 @@ describe('CohortForm auto-add logic', () => {
 
     expect(screen.getByPlaceholderText('Cohort name (optional, defaults to description)').value).toBe('Copy of Original')
     expect(screen.getByDisplayValue('ANY conditions (OR)')).toBeInTheDocument()
-    expect(screen.getByDisplayValue('Join on first qualifying event')).toBeInTheDocument()
+    expect(screen.getByDisplayValue('Join on first event')).toBeInTheDocument()
     
     // Check if the condition event is set
     expect(screen.getByDisplayValue('signup')).toBeInTheDocument()

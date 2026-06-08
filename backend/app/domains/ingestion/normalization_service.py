@@ -12,6 +12,12 @@ def ensure_normalized_events_revenue_columns(connection: duckdb.DuckDBPyConnecti
     if not table_exists:
         return
 
+    # Drop dependent views that might block ALTER TABLE operations
+    connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
+    connection.execute("DROP VIEW IF EXISTS events_scoped")
+    connection.execute("DROP VIEW IF EXISTS events_scoped_raw")
+    connection.execute("DROP VIEW IF EXISTS events_normalized")
+
     existing_columns = {
         row[0]
         for row in connection.execute(

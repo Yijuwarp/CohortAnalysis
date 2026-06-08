@@ -4,47 +4,53 @@ import duckdb
 from app.domains.cohorts.cohort_service import ensure_cohort_tables
 
 def setup_test_data(conn: duckdb.DuckDBPyConnection, start_id: int = 100):
+    conn.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
     conn.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
     conn.execute("DROP TABLE IF EXISTS cohort_membership")
     conn.execute("DROP TABLE IF EXISTS cohorts")
+    conn.execute("DROP VIEW IF EXISTS events_normalized")
     conn.execute("DROP TABLE IF EXISTS events_normalized")
     conn.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
-    ensure_cohort_tables(conn)
-    # Create normalized events table
+    # Create base events table
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS events_normalized (
+        CREATE TABLE IF NOT EXISTS events_base (
             user_id TEXT,
             event_name TEXT,
-            event_time TIMESTAMP
+            event_time TIMESTAMP,
+            row_id INTEGER,
+            event_count INTEGER DEFAULT 1,
+            original_revenue DOUBLE DEFAULT 0.0,
+            modified_revenue DOUBLE DEFAULT 0.0
         )
     """)
+    ensure_cohort_tables(conn)
     
-    # insert events
+    # insert events with explicit row_ids
     events = [
         # User 1: Perfect match
-        ('u1', 'A', '2023-01-01 10:00:00'),
-        ('u1', 'B', '2023-01-01 10:05:00'),
-        ('u1', 'C', '2023-01-01 10:10:00'),
+        ('u1', 'A', '2023-01-01 10:00:00', 1),
+        ('u1', 'B', '2023-01-01 10:05:00', 2),
+        ('u1', 'C', '2023-01-01 10:10:00', 3),
         
         # User 2: Multiple A, should pick earliest
-        ('u2', 'A', '2023-01-01 10:00:00'),
-        ('u2', 'A', '2023-01-01 10:02:00'),
-        ('u2', 'B', '2023-01-01 10:05:00'),
-        ('u2', 'C', '2023-01-01 10:10:00'),
+        ('u2', 'A', '2023-01-01 10:00:00', 4),
+        ('u2', 'A', '2023-01-01 10:02:00', 5),
+        ('u2', 'B', '2023-01-01 10:05:00', 6),
+        ('u2', 'C', '2023-01-01 10:10:00', 7),
         
         # User 3: Wrong order B -> A
-        ('u3', 'B', '2023-01-01 10:00:00'),
-        ('u3', 'A', '2023-01-01 10:05:00'),
-        ('u3', 'C', '2023-01-01 10:10:00'),
+        ('u3', 'B', '2023-01-01 10:00:00', 8),
+        ('u3', 'A', '2023-01-01 10:05:00', 9),
+        ('u3', 'C', '2023-01-01 10:10:00', 10),
         
         # User 4: Only A and B
-        ('u4', 'A', '2023-01-01 10:00:00'),
-        ('u4', 'B', '2023-01-01 10:05:00'),
+        ('u4', 'A', '2023-01-01 10:00:00', 11),
+        ('u4', 'B', '2023-01-01 10:05:00', 12),
         
         # User 5: Only A
-        ('u5', 'A', '2023-01-01 10:00:00'),
+        ('u5', 'A', '2023-01-01 10:00:00', 13),
     ]
-    conn.executemany("INSERT INTO events_normalized (user_id, event_name, event_time) VALUES (?, ?, ?)", events)
+    conn.executemany("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES (?, ?, ?, ?)", events)
     
     # Create cohort
     conn.execute("INSERT INTO cohorts (cohort_id, name, is_active) VALUES (?, 'All Users', TRUE)", [start_id])
@@ -52,11 +58,12 @@ def setup_test_data(conn: duckdb.DuckDBPyConnection, start_id: int = 100):
     for u in users:
         conn.execute("INSERT INTO cohort_membership (user_id, cohort_id, join_time) VALUES (?, ?, '2023-01-01 00:00:00')", [u, start_id])
         
-    # Populate snapshot (simulating ingest)
+    # Populate link (simulating ingest)
     conn.execute("""
-        INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name)
-        SELECT ?, user_id, event_time, event_name FROM events_normalized
+        INSERT INTO cohort_event_link (cohort_id, row_id)
+        SELECT ?, row_id FROM events_base
     """, [start_id])
+
 
 def test_run_paths_basic(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
     setup_test_data(db_connection, start_id=100)
@@ -82,21 +89,27 @@ def test_run_paths_basic(client: TestClient, db_connection: duckdb.DuckDBPyConne
     assert res["steps"][2]["users"] == 2
 
 def test_run_paths_repeated_event(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    db_connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
     db_connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
     db_connection.execute("DROP TABLE IF EXISTS cohort_membership")
     db_connection.execute("DROP TABLE IF EXISTS cohorts")
-    db_connection.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
-    ensure_cohort_tables(db_connection)
+    db_connection.execute("DROP VIEW IF EXISTS events_normalized")
+    db_connection.execute("DROP TABLE IF EXISTS events_normalized")
     db_connection.execute("""
-        CREATE TABLE IF NOT EXISTS events_normalized (user_id TEXT, event_name TEXT, event_time TIMESTAMP)
+        CREATE TABLE IF NOT EXISTS events_base (
+            user_id TEXT, event_name TEXT, event_time TIMESTAMP, row_id INTEGER,
+            event_count INTEGER DEFAULT 1, original_revenue DOUBLE DEFAULT 0.0, modified_revenue DOUBLE DEFAULT 0.0
+        )
     """)
+    ensure_cohort_tables(db_connection)
     # A(t1), A(t2)
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u1', 'A', '2023-01-01 10:00:00')")
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u1', 'A', '2023-01-01 10:05:00')")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u1', 'A', '2023-01-01 10:00:00', 1)")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u1', 'A', '2023-01-01 10:05:00', 2)")
     
     db_connection.execute("INSERT INTO cohorts (cohort_id, name, is_active) VALUES (200, 'Test', TRUE)")
     db_connection.execute("INSERT INTO cohort_membership (user_id, cohort_id, join_time) VALUES ('u1', 200, '2023-01-01 00:00:00')")
-    db_connection.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name) SELECT 200, user_id, event_time, event_name FROM events_normalized")
+    db_connection.execute("INSERT INTO cohort_event_link (cohort_id, row_id) SELECT 200, row_id FROM events_base")
+
     
     # Path: A -> A
     response = client.post("/paths/run", json={"steps": ["A", "A"]})
@@ -254,9 +267,9 @@ def test_create_dropoff_step1(client: TestClient, db_connection: duckdb.DuckDBPy
     # ALL have A! So no one drops off at step 1 for "A".
     
     # Let's insert a user u6 who only has 'Z'
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u6', 'Z', '2023-01-01 10:00:00')")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u6', 'Z', '2023-01-01 10:00:00', 14)")
     db_connection.execute("INSERT INTO cohort_membership (user_id, cohort_id, join_time) VALUES ('u6', 1000, '2023-01-01 00:00:00')")
-    db_connection.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name) VALUES (1000, 'u6', '2023-01-01 10:00:00', 'Z')")
+    db_connection.execute("INSERT INTO cohort_event_link (cohort_id, row_id) VALUES (1000, 14)")
     
     response = client.post("/paths/create-dropoff-cohort", json={
         "steps": ["A", "B"],
@@ -371,12 +384,19 @@ def test_dropoff_with_time_window(client: TestClient, db_connection: duckdb.Duck
     assert data["user_count"] == 5 
 
 def test_greedy_no_backtrack_with_window(client: TestClient, db_connection: duckdb.DuckDBPyConnection):
+    db_connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
     db_connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")
     db_connection.execute("DROP TABLE IF EXISTS cohort_membership")
     db_connection.execute("DROP TABLE IF EXISTS cohorts")
-    db_connection.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
+    db_connection.execute("DROP VIEW IF EXISTS events_normalized")
+    db_connection.execute("DROP TABLE IF EXISTS events_normalized")
+    db_connection.execute("""
+        CREATE TABLE IF NOT EXISTS events_base (
+            user_id TEXT, event_name TEXT, event_time TIMESTAMP, row_id INTEGER,
+            event_count INTEGER DEFAULT 1, original_revenue DOUBLE DEFAULT 0.0, modified_revenue DOUBLE DEFAULT 0.0
+        )
+    """)
     ensure_cohort_tables(db_connection)
-    db_connection.execute("CREATE TABLE IF NOT EXISTS events_normalized (user_id TEXT, event_name TEXT, event_time TIMESTAMP)")
     
     # Edge case user:
     # A at 10:00
@@ -384,14 +404,15 @@ def test_greedy_no_backtrack_with_window(client: TestClient, db_connection: duck
     # B at 10:08 (valid if backtrack allowed, but greedy picks 10:02)
     # C at 10:09 (valid if prev_B was 10:08, but invalid since prev_B was 10:02)
     
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'A', '2023-01-01 10:00:00')")
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'B', '2023-01-01 10:02:00')")
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'B', '2023-01-01 10:08:00')")
-    db_connection.execute("INSERT INTO events_normalized VALUES ('u_greedy', 'C', '2023-01-01 10:09:00')")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u_greedy', 'A', '2023-01-01 10:00:00', 1)")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u_greedy', 'B', '2023-01-01 10:02:00', 2)")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u_greedy', 'B', '2023-01-01 10:08:00', 3)")
+    db_connection.execute("INSERT INTO events_base (user_id, event_name, event_time, row_id) VALUES ('u_greedy', 'C', '2023-01-01 10:09:00', 4)")
     
     db_connection.execute("INSERT INTO cohorts (cohort_id, name, is_active) VALUES (6000, 'Greedy Test', TRUE)")
     db_connection.execute("INSERT INTO cohort_membership (user_id, cohort_id, join_time) VALUES ('u_greedy', 6000, '2023-01-01 00:00:00')")
-    db_connection.execute("INSERT INTO cohort_activity_snapshot (cohort_id, user_id, event_time, event_name) SELECT 6000, user_id, event_time, event_name FROM events_normalized")
+    db_connection.execute("INSERT INTO cohort_event_link (cohort_id, row_id) SELECT 6000, row_id FROM events_base")
+
     
     # Run with 5-minute window
     response = client.post("/paths/run", json={
@@ -420,7 +441,10 @@ def test_run_paths_db_priority(client: TestClient, db_connection: duckdb.DuckDBP
     # 1. Create a path in DB with 60m gap
     path_res = client.post("/paths", json={
         "name": "Test Priority",
-        "steps": [{"event_name": "A", "step_order": 0}, {"event_name": "B", "step_order": 1}],
+        "steps": [
+            {"step_order": 0, "groups": [{"event_name": "A"}]},
+            {"step_order": 1, "groups": [{"event_name": "B"}]}
+        ],
         "max_step_gap_minutes": 60
     })
     path_id = path_res.json()["id"]

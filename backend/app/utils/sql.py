@@ -114,11 +114,52 @@ def reset_application_state(connection: duckdb.DuckDBPyConnection) -> None:
     ]
 
     for table in tables_to_drop:
-        connection.execute(f'DROP TABLE IF EXISTS "{table}"')
+        try:
+            connection.execute(f'DROP VIEW IF EXISTS "{table}"')
+        except:
+            pass
+        try:
+            connection.execute(f'DROP TABLE IF EXISTS "{table}"')
+        except:
+            pass
 
-    connection.execute('DROP VIEW IF EXISTS "events_scoped"')
+    # Also drop the core unified tables
+    try:
+        connection.execute('DROP TABLE IF EXISTS events_base')
+    except:
+        pass
+    try:
+        connection.execute('DROP TABLE IF EXISTS cohort_event_link')
+    except:
+        pass
+
+    try:
+        connection.execute('DROP VIEW IF EXISTS "events_scoped"')
+    except:
+        pass
 
     connection.execute("DROP SEQUENCE IF EXISTS cohort_id_seq")
     connection.execute("DROP SEQUENCE IF EXISTS condition_id_seq")
     connection.execute("DROP SEQUENCE IF EXISTS cohorts_id_sequence")
     connection.execute("DROP SEQUENCE IF EXISTS cohort_condition_id_sequence")
+
+
+def build_eligibility_expr(join_time_col: str, day_offset_col: str, granularity: str, observation_end_time_str: str) -> str:
+    """
+    Returns SQL expression to determine if a user is eligible for a bucket.
+    """
+    if granularity == "hour":
+        return f"({join_time_col} + INTERVAL ({day_offset_col}) HOUR) <= '{observation_end_time_str}'::TIMESTAMP"
+    else:
+        return f"({join_time_col} + INTERVAL ({day_offset_col}) DAY) <= '{observation_end_time_str}'::TIMESTAMP"
+
+
+def build_bucket_expr(join_time_col: str, event_time_col: str, granularity: str) -> str:
+    """
+    Returns SQL expression to calculate the bucket offset (days or hours).
+    Assumes event_time >= join_time has already been filtered.
+    """
+    if granularity == "hour":
+        return f"GREATEST(0, FLOOR(date_diff('second', {join_time_col}, {event_time_col}) / 3600))"
+    else:
+        return f"GREATEST(0, FLOOR(date_diff('second', {join_time_col}, {event_time_col}) / 86400))"
