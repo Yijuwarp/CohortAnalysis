@@ -7,20 +7,20 @@ const formatTimestampValues = (operator, values) => {
 
   const op = String(operator || '').toUpperCase()
   if (op === 'ON') {
-    return `on ${payload.date || ''}`.trim()
+    return `ON ${payload.date || ''}`.trim()
   }
   if (op === 'BEFORE') {
     const timeStr = payload.time ? ` ${payload.time}` : ''
-    return `before ${payload.date || ''}${timeStr}`.trim()
+    return `BEFORE ${payload.date || ''}${timeStr}`.trim()
   }
   if (op === 'AFTER') {
     const timeStr = payload.time ? ` ${payload.time}` : ''
-    return `after ${payload.date || ''}${timeStr}`.trim()
+    return `AFTER ${payload.date || ''}${timeStr}`.trim()
   }
   if (op === 'BETWEEN') {
     const start = payload.startTime ? `${payload.startDate || ''} ${payload.startTime}`.trim() : (payload.startDate || '')
     const end = payload.endTime ? `${payload.endDate || ''} ${payload.endTime}`.trim() : (payload.endDate || '')
-    return `${start} to ${end}`.trim()
+    return `${start} → ${end}`.trim()
   }
   return JSON.stringify(payload)
 }

@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, act } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import PathsPane from './PathsPane'
 
@@ -48,6 +48,7 @@ describe('PathsPane - Copy Path functionality', () => {
 
     // Wait for paths to load and select the path
     await screen.findByText(/Signup Funnel/)
+    await act(async () => {})
 
     // Find and click the Duplicate button
     const copyBtn = screen.getByLabelText(/Duplicate path/i)
@@ -73,6 +74,7 @@ describe('PathsPane - Copy Path functionality', () => {
     render(<PathsPane state={{ selectedPathId: 2 }} events={[]} setState={() => {}} />)
 
     await screen.findByText(/Login Funnel \(copy\)/)
+    await act(async () => {})
 
     const copyBtn = screen.getByLabelText(/Duplicate path/i)
     fireEvent.click(copyBtn)
@@ -93,6 +95,7 @@ describe('PathsPane - Copy Path functionality', () => {
     
     // Simulate selection change if not auto-selected
     fireEvent.change(screen.getByRole('combobox'), { target: { value: '3' } })
+    await act(async () => {})
 
     const copyBtn = screen.getByLabelText(/Duplicate path/i)
     fireEvent.click(copyBtn)
