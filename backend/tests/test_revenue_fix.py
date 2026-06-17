@@ -42,7 +42,7 @@ def test_revenue_recompute_raw(conn):
     # This should NOT fail anymore with ValueError: Unsupported table
     map_columns(conn, mapping)
     
-    raw_revs = conn.execute("SELECT event_name, original_revenue, modified_revenue FROM events_raw").fetchall()
+    raw_revs = conn.execute("SELECT event_name, original_revenue, modified_revenue FROM events_base").fetchall()
     print(f"\nRaw Revenues: {raw_revs}")
     
     assert len(raw_revs) == 2

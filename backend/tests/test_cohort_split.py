@@ -12,7 +12,10 @@ def cleanup_after_test(db_connection):
     db_connection.execute("DELETE FROM cohort_membership")
     db_connection.execute("DELETE FROM cohort_conditions")
     db_connection.execute("DELETE FROM cohorts")
-    db_connection.execute("DELETE FROM events_normalized")
+    try:
+        db_connection.execute("DELETE FROM events_base")
+    except Exception:
+        pass
 
 def _prepare_data(client, num_users=20):
     """Upload CSV and map columns to ensure schema exists."""

@@ -66,17 +66,16 @@ def refresh_cohort_activity(connection: duckdb.DuckDBPyConnection, cohort_id: Op
             ON CONFLICT (cohort_id, row_id) DO NOTHING
         """, params)
     else:
-        # Full refresh: Use CTAS for maximum throughput
+        # Full refresh: Use DELETE + INSERT for transactional safety
+        connection.execute("DELETE FROM cohort_event_link")
         connection.execute("""
-            CREATE OR REPLACE TABLE cohort_event_link AS
+            INSERT INTO cohort_event_link (cohort_id, row_id)
             SELECT cm.cohort_id, e.row_id
             FROM events_scoped_raw e
             JOIN cohort_membership cm ON e.user_id = cm.user_id
             WHERE e.event_time >= cm.join_time
         """)
     
-    from app.domains.cohorts.cohort_service import recreate_link_indexes
-    recreate_link_indexes(connection)
     end_link_timer()
 
     # 3. Update is_active status

@@ -50,7 +50,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
     setError('')
     try {
       await toggleCohortHide(cohortId)
-      onCohortsChanged()
+      onCohortsChanged({ skipStale: true })
     } catch (err) {
       setError(err.message)
     }
@@ -524,8 +524,9 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
            onCancel={() => setIsFormOpen(false)}
            onSave={(shouldClose = true) => {
              if (shouldClose) setIsFormOpen(false)
-             loadData({ forceDb: true })
-             onCohortsChanged()
+             const isActive = editData && cohorts.some(c => c.source_saved_id === editData.id || c.cohort_name === editData.name)
+             const skipStale = formMode === 'edit_saved' && !isActive
+             onCohortsChanged({ skipStale })
            }}
            refreshToken={refreshToken}
         />
@@ -538,7 +539,7 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
            columnsSet={columnsSet}
            onClose={() => setIsPanelOpen(false)}
            onDeleted={() => {
-              onCohortsChanged()
+              onCohortsChanged({ skipStale: true })
            }}
            onEdit={handleEditSaved}
            onDuplicate={handleDuplicate}

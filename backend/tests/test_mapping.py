@@ -254,8 +254,8 @@ def test_events_normalized_revenue_defaults_to_zero_on_manual_insert(client: Tes
 
     db_connection.execute(
         """
-        INSERT INTO events_normalized (user_id, event_name, event_time, event_count)
-        VALUES ('u2', 'session_start', TIMESTAMP '2024-01-02 00:00:00', 1.0)
+        INSERT INTO events_base (user_id, event_name, event_time, event_count, row_id)
+        VALUES ('u2', 'session_start', TIMESTAMP '2024-01-02 00:00:00', 1.0, 999)
         """
     )
 
@@ -375,3 +375,22 @@ def test_mapping_handles_hour_precision_timestamp(client: TestClient, db_connect
     )
 
     assert response.status_code == 200
+
+
+def test_mapping_succeeds_on_subsequent_attempts(client: TestClient, db_connection):
+    _upload_base_csv(client)
+
+    payload = {
+        "user_id_column": "uid",
+        "event_name_column": "event",
+        "event_time_column": "timestamp",
+        "column_types": {"uid": "TEXT", "event": "TEXT", "timestamp": "TIMESTAMP", "plan": "TEXT", "region": "TEXT"},
+    }
+
+    # First attempt
+    res1 = client.post("/map-columns", json=payload)
+    assert res1.status_code == 200, res1.text
+
+    # Second attempt
+    res2 = client.post("/map-columns", json=payload)
+    assert res2.status_code == 200, res2.text

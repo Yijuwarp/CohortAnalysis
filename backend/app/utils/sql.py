@@ -37,7 +37,7 @@ TIMESTAMP_ALLOWED_OPERATORS = {
 }
 BOOLEAN_ALLOWED_OPERATORS = {"=", "!="}
 
-CANONICAL_COLUMNS = {"user_id", "event_name", "event_time"}
+CANONICAL_COLUMNS = {"user_id", "event_name", "event_time", "row_id", "source_saved_id"}
 METRIC_COLUMNS = {"event_count", "original_revenue", "modified_revenue"}
 
 

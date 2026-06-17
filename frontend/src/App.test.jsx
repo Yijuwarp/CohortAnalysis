@@ -71,6 +71,7 @@ describe('App onboarding and workspace flow', () => {
 
     fireEvent.click(screen.getByText('Confirm Mapping'))
     expect(await screen.findByText('Retention')).toBeInTheDocument()
+    expect(screen.queryByText('Data is stale')).not.toBeInTheDocument()
   })
 
   it('restores workspace from localStorage', async () => {

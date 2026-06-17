@@ -370,13 +370,11 @@ def rebuild_all_cohort_memberships(connection: duckdb.DuckDBPyConnection) -> Non
 
         # 4. Swap staging into the real cohort_membership table
         end_swap_timer = time_block("membership_swap")
+        connection.execute("DELETE FROM cohort_membership")
         connection.execute("""
-            CREATE OR REPLACE TABLE cohort_membership AS 
+            INSERT INTO cohort_membership (user_id, cohort_id, join_time)
             SELECT user_id, cohort_id, join_time FROM cohort_membership_staging
         """)
-        
-        from app.domains.cohorts.cohort_service import recreate_membership_indexes
-        recreate_membership_indexes(connection)
         end_swap_timer()
 
     except Exception:

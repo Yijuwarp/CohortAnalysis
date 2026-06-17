@@ -292,9 +292,11 @@ function AppWorkspace({ userId, onLogout }) {
     }
   }, [TAB_KEYS])
 
-  const triggerCohortRefresh = useCallback(() => {
+  const triggerCohortRefresh = useCallback((options = {}) => {
     setCohortsRefreshToken(prev => prev + 1)
-    markTabsStale()
+    if (!options.skipStale) {
+      markTabsStale()
+    }
   }, [markTabsStale])
 
   const loadGlobalMetadata = useCallback(async () => {
@@ -529,7 +531,7 @@ function AppWorkspace({ userId, onLogout }) {
 	
     setCohorts([])
     triggerCohortRefresh()
-    markTabsStale()
+    setStaleTabs(TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
     setTimeout(() => {
