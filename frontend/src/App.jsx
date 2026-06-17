@@ -292,9 +292,11 @@ function AppWorkspace({ userId, onLogout }) {
     }
   }, [TAB_KEYS])
 
-  const triggerCohortRefresh = useCallback(() => {
+  const triggerCohortRefresh = useCallback((options = {}) => {
     setCohortsRefreshToken(prev => prev + 1)
-    markTabsStale()
+    if (!options.skipStale) {
+      markTabsStale()
+    }
   }, [markTabsStale])
 
   const loadGlobalMetadata = useCallback(async () => {

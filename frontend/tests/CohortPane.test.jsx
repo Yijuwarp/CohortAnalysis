@@ -14,6 +14,7 @@ vi.mock('../src/api', () => ({
   previewSplit: vi.fn(),
   createSavedCohort: vi.fn(),
   updateSavedCohort: vi.fn(),
+  deleteSavedCohort: vi.fn(),
   estimateCohort: vi.fn(),
   listEvents: vi.fn(),
   getColumns: vi.fn(),
@@ -311,5 +312,99 @@ describe('CohortPane Cohort Form Save Flow', () => {
     // Verify callback was called and modal was closed
     expect(onCohortsChanged).toHaveBeenCalled()
     expect(screen.queryByTestId('mock-cohort-form')).not.toBeInTheDocument()
+  })
+})
+
+describe('CohortPane skipStale behaviors', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    api.deleteSavedCohort.mockResolvedValue({ deleted: true })
+  })
+
+  it('calls onCohortsChanged with skipStale: true when deleting a saved cohort', async () => {
+    const onCohortsChanged = vi.fn()
+    const savedCohorts = [
+      { id: 's1', name: 'Saved 1', is_valid: true, definition: { conditions: [] } }
+    ]
+    render(
+      <CohortPane 
+        refreshToken={1} 
+        onCohortsChanged={onCohortsChanged} 
+        savedCohorts={savedCohorts}
+        cohorts={[]}
+      />
+    )
+
+    // Open manage panel
+    fireEvent.click(screen.getByText('Manage'))
+    
+    // Find delete button and click
+    const deleteBtn = screen.getByTitle('Delete saved cohort')
+    fireEvent.click(deleteBtn)
+
+    await waitFor(() => expect(onCohortsChanged).toHaveBeenCalledWith({ skipStale: true }))
+  })
+
+  it('calls onCohortsChanged with skipStale: true when editing an inactive saved cohort', async () => {
+    const onCohortsChanged = vi.fn()
+    const savedCohorts = [
+      { id: 's1', name: 'Saved 1', is_valid: true, definition: { conditions: [] } }
+    ]
+    render(
+      <CohortPane 
+        refreshToken={1} 
+        onCohortsChanged={onCohortsChanged} 
+        savedCohorts={savedCohorts}
+        cohorts={[]}
+      />
+    )
+
+    // Open manage panel
+    fireEvent.click(screen.getByText('Manage'))
+
+    // Find edit button and click
+    const editBtn = screen.getByTitle('Edit global saved cohort')
+    fireEvent.click(editBtn)
+
+    // Confirm edit modal is open
+    expect(screen.getByTestId('mock-cohort-form')).toBeInTheDocument()
+
+    // Save
+    fireEvent.click(screen.getByText('Save Cohort'))
+
+    await waitFor(() => expect(onCohortsChanged).toHaveBeenCalledWith({ skipStale: true }))
+  })
+
+  it('calls onCohortsChanged with skipStale: false when editing an active saved cohort', async () => {
+    const onCohortsChanged = vi.fn()
+    const savedCohorts = [
+      { id: 's1', name: 'Saved 1', is_valid: true, definition: { conditions: [] } }
+    ]
+    const activeCohorts = [
+      { cohort_id: 'a1', cohort_name: 'Saved 1', source_saved_id: 's1', is_active: true }
+    ]
+    render(
+      <CohortPane 
+        refreshToken={1} 
+        onCohortsChanged={onCohortsChanged} 
+        savedCohorts={savedCohorts}
+        cohorts={activeCohorts}
+      />
+    )
+
+    // Open manage panel
+    fireEvent.click(screen.getByText('Manage'))
+
+    // Find edit button and click
+    const editBtn = screen.getByTitle('Edit global saved cohort')
+    fireEvent.click(editBtn)
+
+    // Confirm edit modal is open
+    expect(screen.getByTestId('mock-cohort-form')).toBeInTheDocument()
+
+    // Save
+    fireEvent.click(screen.getByText('Save Cohort'))
+
+    await waitFor(() => expect(onCohortsChanged).toHaveBeenCalledWith({ skipStale: false }))
   })
 })
