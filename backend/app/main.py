@@ -1,6 +1,13 @@
 import os
 import sys
 import logging
+import asyncio
+
+if os.name == 'nt':
+    try:
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    except Exception:
+        pass
 from pathlib import Path
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
