@@ -529,7 +529,7 @@ function AppWorkspace({ userId, onLogout }) {
 	
     setCohorts([])
     triggerCohortRefresh()
-    markTabsStale()
+    setStaleTabs(TAB_KEYS.reduce((acc, tab) => ({ ...acc, [tab]: false }), {}))
     setBanner('Mapping complete. Opening Explore Data...')
     setIsExploreTransitioning(true)
     setTimeout(() => {
