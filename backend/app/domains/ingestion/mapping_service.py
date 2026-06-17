@@ -231,16 +231,28 @@ def map_columns(connection: duckdb.DuckDBPyConnection, mapping: ColumnMappingReq
         connection.execute("DROP TABLE IF EXISTS events_base")
         connection.execute("DROP VIEW IF EXISTS events_normalized")
         
-        # Explicit State Reset: Remove ghost data and potential blocking views
-        connection.execute("DROP INDEX IF EXISTS pk_membership")
-        connection.execute("DROP INDEX IF EXISTS idx_membership_user")
-        connection.execute("DROP INDEX IF EXISTS idx_membership_cohort")
-        connection.execute("DROP TABLE IF EXISTS cohort_membership")
-        
-        connection.execute("DROP INDEX IF EXISTS pk_link")
-        connection.execute("DROP INDEX IF EXISTS idx_link_row")
-        connection.execute("DROP INDEX IF EXISTS idx_link_cohort")
-        connection.execute("DROP TABLE IF EXISTS cohort_event_link")
+        # Explicit State Reset: Ensure cohort tables exist and delete their contents
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cohort_membership (
+                user_id TEXT,
+                cohort_id INTEGER,
+                join_time TIMESTAMP,
+                UNIQUE(cohort_id, user_id)
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cohort_event_link (
+                cohort_id INTEGER,
+                row_id BIGINT,
+                UNIQUE(cohort_id, row_id)
+            )
+            """
+        )
+        connection.execute("DELETE FROM cohort_membership")
+        connection.execute("DELETE FROM cohort_event_link")
         
         connection.execute("DROP VIEW IF EXISTS cohort_activity_snapshot")
         connection.execute("DROP TABLE IF EXISTS cohort_activity_snapshot")

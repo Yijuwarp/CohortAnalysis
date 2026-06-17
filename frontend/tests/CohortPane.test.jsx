@@ -288,3 +288,28 @@ describe('CohortPane Invalid Cohorts', () => {
     expect(invalidRow.querySelector('.cohort-invalid-badge')).toBeInTheDocument()
   })
 })
+
+describe('CohortPane Cohort Form Save Flow', () => {
+  it('opens new cohort form, saves it, and triggers onCohortsChanged', async () => {
+    const onCohortsChanged = vi.fn()
+    render(
+      <CohortPane 
+        refreshToken={1} 
+        onCohortsChanged={onCohortsChanged} 
+        savedCohorts={[]}
+        cohorts={[]}
+      />
+    )
+
+    // Open form
+    fireEvent.click(screen.getByText('+ New Cohort'))
+    expect(screen.getByTestId('mock-cohort-form')).toBeInTheDocument()
+
+    // Save cohort
+    fireEvent.click(screen.getByText('Save Cohort'))
+
+    // Verify callback was called and modal was closed
+    expect(onCohortsChanged).toHaveBeenCalled()
+    expect(screen.queryByTestId('mock-cohort-form')).not.toBeInTheDocument()
+  })
+})

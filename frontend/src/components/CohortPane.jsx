@@ -524,7 +524,6 @@ export default function CohortPane({ refreshToken, onCohortsChanged, datasetMeta
            onCancel={() => setIsFormOpen(false)}
            onSave={(shouldClose = true) => {
              if (shouldClose) setIsFormOpen(false)
-             loadData({ forceDb: true })
              onCohortsChanged()
            }}
            refreshToken={refreshToken}
